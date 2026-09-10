@@ -17,6 +17,7 @@
 #include <cmath>
 using std::cosf;
 using std::fabsf;
+using std::remainderf;
 using std::sinf;
 using std::sqrtf;
 #endif
@@ -103,16 +104,16 @@ DEVICE HOST INLINE state operator*(const float a, const state &b)
 #ifdef SOLVER_PARAMS_DEFINED
 
 // Fundamental magnetic constants
-#define MU_R 10000.0f
-#define ALPHA_JA 0.9f
-#define C 0.9f
-#define K_HYSTER 1.0f
+#define MU_R 2.2926667e3f
+#define ALPHA_JA 3.2e-3f
+#define C 0.38f  
+#define K_HYSTER 1.0909091e-3f
 // Fundamental magnetic constants
 
 #define XI_JA (1.0f - (1.0f / (1.0f + ALPHA_JA * (MU_R - 1.0f))))
 
 // Magetic field strength
-#define H_EXT 1.0f
+#define H_EXT 1.4661546e-1f
 // Magetic field strength
 
 // Mechanical params
@@ -134,10 +135,12 @@ struct solver_params {
 DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params &params, const bool sliding,
                                 float slip_sign, bool &transit)
 {
-    vec2 q_rotated = rotate(in.q, in.theta);
-    vec2 h_0 = {H_EXT * cosf(in.t - in.x), H_EXT * sinf(in.t - in.x)};
+    // ============================================================================
+    vec2 h_ext = {cosf(in.phase) * H_EXT, sinf(in.phase) * H_EXT};
+    // ============================================================================
     float N = params.gamma_g -
-              params.gamma / (2.0f + MU_R) * (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
+              params.gamma / (2.0f + MU_R) *
+                  (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
     // the ball can fly
     // CHINESE CAN FLY TOO!!!
     if (N < 0)
@@ -145,14 +148,14 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     if (sliding) {
         // friction
         float F = -slip_sign * MU * N;
-        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
         float F_magnet = ETA * params.alpha * params.alpha * M_magnet;
         out.xdot = F_magnet + F - params.delta * in.xdot * fabsf(in.xdot);
         out.theta_dot = M_magnet + F / (ETA * params.alpha);
         // in the sliding scenario we do not have dt so we cannot check transition
         // when (sliding == true) the value of transit is UNDEFINED!
     } else {
-        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
         out.theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
                         params.alpha / (1 + ETA) * params.delta * in.theta_dot * fabsf(in.theta_dot);
         // to reduce recomputation we can check transition in this step
@@ -166,7 +169,6 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     out.theta = in.theta_dot;
     out.t = 1.0f;
     out.phase = 1.0f - in.xdot - in.theta_dot;
-    vec2 h_ext = {cosf(in.phase) * H_EXT, sinf(in.phase) * H_EXT};
     vec2 h_ext_dot = out.phase * make_vec2(-sinf(in.phase) * H_EXT, cosf(in.phase) * H_EXT);
     // assume ReLU use the 0 branch
     vec2 q_dot = XI_JA / ALPHA_JA / (1 - C * XI_JA) * h_ext_dot * (3.0f / (MU_R + 2.0f));
@@ -212,6 +214,8 @@ DEVICE HOST INLINE rk2_res rk2(const state &ball, const float dt, const solver_p
 DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params &params, bool &sliding,
                                 float &slip_sign)
 {
+    ball.phase = remainderf(ball.phase, 6.28318530717958647692f);
+    ball.theta = remainderf(ball.theta, 6.28318530717958647692f);
     float step_slip_sign = slip_sign;
     if (sliding && step_slip_sign == 0.0f) {
         step_slip_sign = signum(ball.xdot + params.alpha * ball.theta_dot);
@@ -239,14 +243,14 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params
             state_dttrans.xdot += impulse;
             state_dttrans.theta_dot += impulse / (ETA * params.alpha);
             // calc N and Freq at this transit point
-            vec2 q_rotated = rotate(state_dttrans.q, state_dttrans.theta);
-            vec2 h_0 = {H_EXT * cosf(state_dttrans.t - state_dttrans.x),
-                        H_EXT * sinf(state_dttrans.t - state_dttrans.x)};
+            vec2 h_ext = {H_EXT * cosf(state_dttrans.phase), H_EXT * sinf(state_dttrans.phase)};
             float N = params.gamma_g - params.gamma / (2.0f + MU_R) *
-                                           (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
+                                           (-(MU_R - 1) * H_EXT * H_EXT +
+                                            (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
             if (N < 0.0f)
                 return 1;
-            float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+            float M_magnet =
+                -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(state_dttrans.q, h_ext);
             float theta_dot =
                 ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
                 params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot * fabsf(state_dttrans.theta_dot);
@@ -278,13 +282,14 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params
     } else {
         // check if still stick at the end of the step
         // calc N and Freq at this point
-        vec2 q_rotated = rotate(trial_final.q, trial_final.theta);
-        vec2 h_0 = {H_EXT * cosf(trial_final.t - trial_final.x), H_EXT * sinf(trial_final.t - trial_final.x)};
+        vec2 h_ext = {H_EXT * cosf(trial_final.phase), H_EXT * sinf(trial_final.phase)};
         float N = params.gamma_g - params.gamma / (2.0f + MU_R) *
-                                       (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
+                                       (-(MU_R - 1) * H_EXT * H_EXT +
+                                        (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
         if (N < 0.0f)
             return 1;
-        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+        float M_magnet =
+            -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(trial_final.q, h_ext);
         float theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet - params.alpha / (1 + ETA) * params.delta *
                                                                                 trial_final.theta_dot *
                                                                                 fabsf(trial_final.theta_dot);
@@ -292,13 +297,13 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params
         if (g_final > 0) {
             // turn into sliding. lerp the transit time.
             // i think shading the outer vars is ok here because we do not use outer vars
-            vec2 q_rotated_init = rotate(ball.q, ball.theta);
-            vec2 h_0_init = {H_EXT * cosf(ball.t - ball.x), H_EXT * sinf(ball.t - ball.x)};
+            vec2 h_ext_init = {H_EXT * cosf(ball.phase), H_EXT * sinf(ball.phase)};
             float N_init = params.gamma_g -
                            params.gamma / (2.0f + MU_R) *
-                               (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated_init * h_0_init));
+                               (-(MU_R - 1) * H_EXT * H_EXT +
+                                (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));
             float M_magnet_init =
-                -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated_init, h_0_init);
+                -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext_init);
             float theta_dot_init = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet_init -
                                    params.alpha / (1 + ETA) * params.delta * ball.theta_dot * fabsf(ball.theta_dot);
             float g_init = fabsf(theta_dot_init - M_magnet_init) * ETA * params.alpha - MU * N_init;
