@@ -5,27 +5,46 @@
 
 namespace py = pybind11;
 
-py::array_t<float> evolve_numpy(
-    const py::array_t<float, py::array::c_style | py::array::forcecast> &initial, const float dt, const int steps,
-    const solver_params &params)
+state evolve_with_mode(const state &initial, float dt, int steps, const solver_params &params, bool &sliding);
+
+state state_from_numpy(const py::array_t<float, py::array::c_style | py::array::forcecast> &initial)
 {
     if (initial.ndim() != 1 || initial.shape(0) != 8)
         throw py::value_error("initial must be a one-dimensional array of length 8");
 
     const auto in = initial.unchecked<1>();
-    const state initial_state = {in(0), in(1), in(2), in(3), in(4), in(5), {in(6), in(7)}};
-    const state final_state = evolve(initial_state, dt, steps, params);
+    return {in(0), in(1), in(2), in(3), in(4), in(5), {in(6), in(7)}};
+}
+
+py::array_t<float> state_to_numpy(const state &value)
+{
     py::array_t<float> result(8);
     auto out = result.mutable_unchecked<1>();
-    out(0) = final_state.t;
-    out(1) = final_state.x;
-    out(2) = final_state.xdot;
-    out(3) = final_state.theta;
-    out(4) = final_state.theta_dot;
-    out(5) = final_state.phase;
-    out(6) = final_state.q.x;
-    out(7) = final_state.q.y;
+    out(0) = value.t;
+    out(1) = value.x;
+    out(2) = value.xdot;
+    out(3) = value.theta;
+    out(4) = value.theta_dot;
+    out(5) = value.phase;
+    out(6) = value.q.x;
+    out(7) = value.q.y;
     return result;
+}
+
+py::array_t<float> evolve_numpy(
+    const py::array_t<float, py::array::c_style | py::array::forcecast> &initial, const float dt, const int steps,
+    const solver_params &params)
+{
+    return state_to_numpy(evolve(state_from_numpy(initial), dt, steps, params));
+}
+
+py::tuple evolve_with_mode_numpy(
+    const py::array_t<float, py::array::c_style | py::array::forcecast> &initial, const float dt, const int steps,
+    const solver_params &params)
+{
+    bool sliding;
+    const state final_state = evolve_with_mode(state_from_numpy(initial), dt, steps, params, sliding);
+    return py::make_tuple(state_to_numpy(final_state), sliding);
 }
 
 PYBIND11_MODULE(hysteresis, m)
@@ -43,4 +62,6 @@ PYBIND11_MODULE(hysteresis, m)
 
     m.def("evolve", &evolve_numpy, py::arg("initial"), py::arg("dt"), py::arg("steps"), py::arg("params"),
           "Evolve [t, x, xdot, theta, theta_dot, phase, qx, qy] and return the final float32 state.");
+    m.def("evolve_with_mode", &evolve_with_mode_numpy, py::arg("initial"), py::arg("dt"), py::arg("steps"),
+          py::arg("params"), "Evolve the float32 state and return (state, sliding).");
 }

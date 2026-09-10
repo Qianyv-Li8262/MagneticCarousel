@@ -3,14 +3,16 @@
 #include <stdexcept>
 #include <string>
 
-state evolve(const state &initial, const float dt, const int steps, const solver_params &params)
+namespace {
+
+state evolve_impl(const state &initial, const float dt, const int steps, const solver_params &params, bool &sliding)
 {
     if (dt <= 0.0f) throw std::invalid_argument("evolve: dt must be positive");
     if (steps < 0) throw std::invalid_argument("evolve: steps must be non-negative");
 
     state ball = initial;
     const float slip_velocity = ball.xdot + params.alpha * ball.theta_dot;
-    bool sliding = fabsf(slip_velocity) > 1.0e-10f;
+    sliding = fabsf(slip_velocity) > 1.0e-10f;
     float slip_sign = sliding ? signum(slip_velocity) : 0.0f;
     if (!sliding) {
         vec2 h_ext = {H_EXT * cosf(ball.phase), H_EXT * sinf(ball.phase)};
@@ -37,4 +39,18 @@ state evolve(const state &initial, const float dt, const int steps, const solver
                                      std::to_string(flag));
     }
     return ball;
+}
+
+} // namespace
+
+state evolve(const state &initial, const float dt, const int steps, const solver_params &params)
+{
+    bool sliding;
+    return evolve_impl(initial, dt, steps, params, sliding);
+}
+
+state evolve_with_mode(const state &initial, const float dt, const int steps, const solver_params &params,
+                       bool &sliding)
+{
+    return evolve_impl(initial, dt, steps, params, sliding);
 }
