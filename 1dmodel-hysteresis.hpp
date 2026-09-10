@@ -152,7 +152,6 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
         // when (sliding == true) the value of transit is UNDEFINED!
     } else {
         float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
-        float F_magnet = ETA * params.alpha * params.alpha * M_magnet;
         out.theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
                         params.alpha / (1 + ETA) * params.delta * in.theta_dot * fabsf(in.theta_dot);
         // to reduce recomputation we can check transition in this step
