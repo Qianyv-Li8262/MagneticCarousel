@@ -139,6 +139,7 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     float N = params.gamma_g -
               params.gamma / (2.0f + MU_R) * (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
     // the ball can fly
+    // CHINESE CAN FLY TOO!!!
     if (N < 0)
         return false;
     if (sliding) {
