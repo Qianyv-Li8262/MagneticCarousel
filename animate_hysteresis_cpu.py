@@ -17,10 +17,18 @@ import numpy as np
 import hysteresis
 
 
-# Simulation settings.  Each displayed frame advances exactly 1000 CPU steps.
+# Simulation settings.  The normal path advances one solver chunk per frame;
+# --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
 STEPS_PER_FRAME = 5000
 FPS = 30
+
+# Fast display settings.  The full sampled history is retained; only rendering
+# is batched and downsampled.
+FAST_BATCH_SIZE = 5
+FAST_GRAPH_UPDATE_EVERY = 5
+FAST_RESCALE_EVERY = 20
+FAST_MAX_PLOT_POINTS = 2000
 
 # Model parameters.
 ALPHA = 0.33333333
@@ -34,7 +42,35 @@ GAMMA_M = 11011.419
 INITIAL_STATE = np.zeros(8, dtype=np.float32)
 
 
-def animate(*, show_graphs: bool = True, show_velocity: bool = False):
+def minmax_downsample(
+    times: list[float], values: list[float], max_points: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Downsample a trace while retaining each time bucket's extrema."""
+    count = len(times)
+    if count <= max_points:
+        return np.asarray(times), np.asarray(values)
+
+    values_array = np.asarray(values)
+    bucket_count = max(1, max_points // 2)
+    edges = np.linspace(0, count, bucket_count + 1, dtype=np.int64)
+    indices = []
+    for start, stop in zip(edges[:-1], edges[1:]):
+        bucket = values_array[start:stop]
+        if bucket.size == 0:
+            continue
+        minimum = int(start + np.argmin(bucket))
+        maximum = int(start + np.argmax(bucket))
+        if minimum == maximum:
+            indices.append(minimum)
+        else:
+            indices.extend(sorted((minimum, maximum)))
+    if indices[-1] != count - 1:
+        indices.append(count - 1)
+
+    return np.asarray(times)[indices], values_array[indices]
+
+
+def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool = False):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -59,14 +95,16 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False):
     if show_graphs:
         graph_rows = 3 if show_velocity else 2
         figure_height = 6.8 if show_velocity else 5.2
-        fig = plt.figure(figsize=(12.5, figure_height), layout="constrained")
+        figure_options = {} if fast else {"layout": "constrained"}
+        fig = plt.figure(figsize=(12.5, figure_height), **figure_options)
         grid = fig.add_gridspec(graph_rows, 2, width_ratios=(1.7, 1.0))
         ax_scene = fig.add_subplot(grid[:, 0])
         ax_x = fig.add_subplot(grid[0, 1])
         ax_theta = fig.add_subplot(grid[1, 1], sharex=ax_x)
         ax_velocity = fig.add_subplot(grid[2, 1], sharex=ax_x) if show_velocity else None
     else:
-        fig, ax_scene = plt.subplots(figsize=(8.5, 4.5), layout="constrained")
+        figure_options = {} if fast else {"layout": "constrained"}
+        fig, ax_scene = plt.subplots(figsize=(8.5, 4.5), **figure_options)
         ax_x = None
         ax_theta = None
         ax_velocity = None
@@ -148,16 +186,17 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False):
 
     def update(_frame_number: int):
         nonlocal state
-        state, sliding = hysteresis.evolve_with_mode(state, DT, STEPS_PER_FRAME, params)
+        batch_size = FAST_BATCH_SIZE if fast else 1
+        for _ in range(batch_size):
+            state, sliding = hysteresis.evolve_with_mode(state, DT, STEPS_PER_FRAME, params)
+            times.append(float(state[0]))
+            positions.append(float(state[1]))
+            angles.append(float(state[3]))
+            velocities.append(float(state[2]))
 
-        t = float(state[0])
-        x = float(state[1])
-        theta = float(state[3])
-
-        times.append(t)
-        positions.append(x)
-        angles.append(theta)
-        velocities.append(float(state[2]))
+        t = times[-1]
+        x = positions[-1]
+        theta = angles[-1]
 
         # Keep the ball centered while the wave travels past it.
         left = x - view_half_width
@@ -178,14 +217,23 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False):
         mode = "SLIDING" if sliding else "STICKING"
         status.set_text(f"t = {t:7.3f}\nx = {x:9.4f}\ntheta = {theta:9.4f}\n{mode}")
 
-        for _axis, trace, point, values in traces:
-            trace.set_data(times, values)
-            point.set_data([t], [values[-1]])
-        if show_graphs:
+        update_graphs = not fast or _frame_number % FAST_GRAPH_UPDATE_EVERY == 0
+        if update_graphs:
+            for _axis, trace, point, values in traces:
+                if fast:
+                    display_times, display_values = minmax_downsample(times, values, FAST_MAX_PLOT_POINTS)
+                else:
+                    display_times, display_values = times, values
+                trace.set_data(display_times, display_values)
+                point.set_data([t], [values[-1]])
+        if show_graphs and (not fast or _frame_number % FAST_RESCALE_EVERY == 0):
             rescale_history_axes()
 
         trace_artists = [artist for _axis, trace, point, _values in traces for artist in (trace, point)]
         return wave, ball, radius_line, status, *trace_artists
+
+    if fast:
+        fig.tight_layout()
 
     # interval=1000/FPS guarantees a requested display rate no higher than 30 FPS.
     animation = FuncAnimation(
@@ -209,7 +257,8 @@ if __name__ == "__main__":
         action="store_true",
         help="show the center-of-mass velocity graph in addition to x(t) and theta(t)",
     )
+    parser.add_argument("--fast", action="store_true", help="reduce real-time rendering overhead")
     args = parser.parse_args()
 
-    figure, animation = animate(show_graphs=not args.no_graph, show_velocity=args.show_v)
+    figure, animation = animate(show_graphs=not args.no_graph, show_velocity=args.show_v, fast=args.fast)
     plt.show()
