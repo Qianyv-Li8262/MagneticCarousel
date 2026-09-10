@@ -101,21 +101,30 @@ DEVICE HOST INLINE state operator*(const float a, const state &b)
 #define SOLVER_PARAMS_DEFINED
 // parameter macros
 #ifdef SOLVER_PARAMS_DEFINED
-#define GAMMA_G 2.5f
-#define GAMMA 1.0f
+
+// Fundamental magnetic constants
 #define MU_R 10000.0f
+#define ALPHA_JA 0.9f
 #define C 0.9f
-#define GAMMA_M 1.0f
+#define K_HYSTER 1.0f
+// Fundamental magnetic constants
+
+#define XI_JA (1.0f-(1.0f/(1.0f+ALPHA_JA * (MU_R-1.0f))))
+
+// Magetic field strength
+#define H_EXT 1.0f
+// Magetic field strength
+
+// Mechanical params
+#define ALPHA 0.918f
 #define ETA 0.4f
+#define GAMMA_G 2.5f
+#define GAMMA_M 1.0f
+#define GAMMA (ETA * ALPHA * ALPHA * GAMMA_M)
 #define DELTA 6.4e-5f
 #define MU 0.02f
-#define K_HYSTER 1.0f
-#define ALPHA_JA 0.9f
-// these should be runtime params. let ai change.
-#define ALPHA 0.918f
-#define H_EXT 1.0f
-// these should be runtime params. let ai change.
-#define SMALL_KHI_JA (1.0f-(1.0f/(1.0f+ALPHA_JA * (MU_R-1.0f))))
+// Mechanical params
+
 #endif
 // parameter macros
 
@@ -124,21 +133,21 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const bool sliding,
     vec2 q_rotated = rotate(in.q, in.theta);
     vec2 h_0 = {H_EXT * cosf(in.t - in.x), H_EXT * sinf(in.t - in.x)};
     float N = GAMMA_G -
-              GAMMA / (2.0f + MU_R) * (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - SMALL_KHI_JA) * (q_rotated * h_0));
+              GAMMA / (2.0f + MU_R) * (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
     // the ball can fly
     if (N < 0)
         return false;
     if (sliding) {
         // friction
         float F = -slip_sign * MU * N;
-        float M_magnet = -GAMMA_M * (1 - C) / ((1 - SMALL_KHI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+        float M_magnet = -GAMMA_M * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
         float F_magnet = ETA * ALPHA * ALPHA * M_magnet;
         out.xdot = F_magnet + F - DELTA * in.xdot * fabsf(in.xdot);
         out.theta_dot = M_magnet + F / (ETA * ALPHA);
         // in the sliding scenario we do not have dt so we cannot check transition
         // when (sliding == true) the value of transit is UNDEFINED!
     } else {
-        float M_magnet = -GAMMA_M * (1 - C) / ((1 - SMALL_KHI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+        float M_magnet = -GAMMA_M * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
         float F_magnet = ETA * ALPHA * ALPHA * M_magnet;
         out.theta_dot =
             ETA / (1 + ETA) * (1 - ALPHA) * M_magnet - ALPHA / (1 + ETA) * DELTA * in.theta_dot * fabsf(in.theta_dot);
@@ -156,16 +165,16 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const bool sliding,
     vec2 h_ext = {cosf(in.phase) * H_EXT, sinf(in.phase) * H_EXT};
     vec2 h_ext_dot = out.phase * make_vec2(-sinf(in.phase) * H_EXT, cosf(in.phase) * H_EXT);
     // assume ReLU use the 0 branch
-    vec2 q_dot = SMALL_KHI_JA / ALPHA_JA / (1 - C * SMALL_KHI_JA) * h_ext_dot * (3.0f / (MU_R + 2.0f));
+    vec2 q_dot = XI_JA / ALPHA_JA / (1 - C * XI_JA) * h_ext_dot * (3.0f / (MU_R + 2.0f));
     vec2 he_dot =
         h_ext_dot * (3.0f / (MU_R + 2.0f)) + ALPHA_JA * (3.0f * (MU_R - 1.0f) / (MU_R + 2.0f) * h_ext_dot -
-                                                         (1 - C) / (1 - SMALL_KHI_JA) * q_dot);
+                                                         (1 - C) / (1 - XI_JA) * q_dot);
     // if reject we should select ReLU x branch
     if (in.q * he_dot > 0) {
         // reject
-        float a = 1.0f - C * SMALL_KHI_JA;
+        float a = 1.0f - C * XI_JA;
         float b = -ALPHA_JA * (1.0f - C) / K_HYSTER * length(in.q);
-        float c = SMALL_KHI_JA / ALPHA_JA;
+        float c = XI_JA / ALPHA_JA;
         float d = -length(in.q) / K_HYSTER;
         float a_final = c / a;
         float b_final = d / a - b * (c + d) / a / (a + b);
@@ -227,10 +236,10 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, bool &sliding, floa
             vec2 h_0 = {H_EXT * cosf(state_dttrans.t - state_dttrans.x),
                         H_EXT * sinf(state_dttrans.t - state_dttrans.x)};
             float N = GAMMA_G - GAMMA / (2.0f + MU_R) *
-                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - SMALL_KHI_JA) * (q_rotated * h_0));
+                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
             if (N < 0.0f)
                 return 1;
-            float M_magnet = -GAMMA_M * (1 - C) / ((1 - SMALL_KHI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+            float M_magnet = -GAMMA_M * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
             float theta_dot = ETA / (1 + ETA) * (1 - ALPHA) * M_magnet -
                               ALPHA / (1 + ETA) * DELTA * state_dttrans.theta_dot * fabsf(state_dttrans.theta_dot);
             bool next_sliding = sliding;
@@ -264,10 +273,10 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, bool &sliding, floa
         vec2 q_rotated = rotate(trial_final.q, trial_final.theta);
         vec2 h_0 = {H_EXT * cosf(trial_final.t - trial_final.x), H_EXT * sinf(trial_final.t - trial_final.x)};
         float N = GAMMA_G - GAMMA / (2.0f + MU_R) *
-                                (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - SMALL_KHI_JA) * (q_rotated * h_0));
+                                (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated * h_0));
         if (N < 0.0f)
             return 1;
-        float M_magnet = -GAMMA_M * (1 - C) / ((1 - SMALL_KHI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
+        float M_magnet = -GAMMA_M * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated, h_0);
         float theta_dot = ETA / (1 + ETA) * (1 - ALPHA) * M_magnet -
                           ALPHA / (1 + ETA) * DELTA * trial_final.theta_dot * fabsf(trial_final.theta_dot);
         float g_final = fabsf(theta_dot - M_magnet) * ETA * ALPHA - MU * N;
@@ -277,8 +286,8 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, bool &sliding, floa
             vec2 q_rotated_init = rotate(ball.q, ball.theta);
             vec2 h_0_init = {H_EXT * cosf(ball.t - ball.x), H_EXT * sinf(ball.t - ball.x)};
             float N_init = GAMMA_G - GAMMA / (2.0f + MU_R) *
-                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - SMALL_KHI_JA) * (q_rotated_init * h_0_init));
-            float M_magnet_init = -GAMMA_M * (1 - C) / ((1 - SMALL_KHI_JA) * (MU_R + 2)) * cross(q_rotated_init, h_0_init);
+                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (q_rotated_init * h_0_init));
+            float M_magnet_init = -GAMMA_M * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(q_rotated_init, h_0_init);
             float theta_dot_init = ETA / (1 + ETA) * (1 - ALPHA) * M_magnet_init -
                                ALPHA / (1 + ETA) * DELTA * ball.theta_dot * fabsf(ball.theta_dot);
             float g_init = fabsf(theta_dot_init - M_magnet_init) * ETA * ALPHA - MU * N_init;
@@ -303,3 +312,7 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, bool &sliding, floa
         }
     }
 }
+
+#ifndef __CUDACC__
+state evolve(const state &initial, const float dt, const int steps);
+#endif
