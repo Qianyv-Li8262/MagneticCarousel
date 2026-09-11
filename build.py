@@ -11,6 +11,12 @@ import pybind11
 
 parser = argparse.ArgumentParser(description="Build the CPU hysteresis extension")
 parser.add_argument("--fp64", action="store_true", help="build with double-precision real_t")
+parser.add_argument(
+    "--output-dir",
+    type=Path,
+    default=None,
+    help="place the extension in this directory instead of next to the sources",
+)
 args = parser.parse_args()
 
 root = Path(__file__).resolve().parent
@@ -27,7 +33,9 @@ python_lib = Path(sys.prefix) / "libs" / f"python{sys.version_info.major}{sys.ve
 if not python_lib.is_file():
     raise RuntimeError(f"Python import library was not found: {python_lib}")
 
-output = root / f"hysteresis{suffix}"
+output_dir = args.output_dir.resolve() if args.output_dir is not None else root
+output_dir.mkdir(parents=True, exist_ok=True)
+output = output_dir / f"hysteresis{suffix}"
 command = [
     clang,
     "-std=c++17",
