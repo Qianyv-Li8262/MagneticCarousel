@@ -6,3 +6,7 @@ tmp/
 *.ncu-rep
 unused/
 experiment/
+*.log
+*.txt
+*.csv
+*.png

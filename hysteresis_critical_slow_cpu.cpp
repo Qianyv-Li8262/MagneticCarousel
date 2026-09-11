@@ -51,8 +51,9 @@ critical_slow_result evolve_critical_slow(const double v0, const double dt,
         ball.theta_dot = -ball.xdot / params.alpha;
     }
 
-    // Recovery matches analyze_critical_slowing_fp64.detect_outcome, including endpoint
-    // timestamps and the earliest global minimum on ties. Keep only one window.
+    // Recovery uses the criteria from analyze_critical_slowing_detailed.detect_outcome,
+    // with a finer sampling grid and the same physical window at dt=0.001.
+    // Keep endpoint timestamps and the earliest global minimum on ties.
     struct sample { double t, v, phase_rate, slip; };
     constexpr int window = critical_slow_confirm_window;
     std::array<sample, window> history{};

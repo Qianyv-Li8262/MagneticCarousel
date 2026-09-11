@@ -14,6 +14,22 @@ struct critical_slow_result {
     double transit_time; // locked: midpoint of first in-band 1000-time-unit mean in final run; rising: global minimum endpoint; -1 if unconfirmed
 };
 
+// At dt=0.001, sample every 1 time unit (formerly 50). Preserve the
+// physical confirmation durations: 5000 for recovery and 2500 for locking.
+
+// Detector sampling parameters.
+// Assumes integration timestep dt = 0.001.
+//
+// One detector sample spans:
+//   sample_dt = dt * critical_slow_confirm_evolve_steps
+//
+// Keep the physical confirmation durations fixed:
+//   recovery: 5000  -> confirm_window      * sample_dt = 5000
+//   locking : 2500  -> lock_confirm_window * sample_dt = 2500
+//
+// Therefore, when changing evolve_steps, scale both window sizes inversely.
+// Current values: evolve_steps = 50000 -> sample_dt = 50,
+//                 recovery window = 100, lock window = 50.
 inline constexpr int critical_slow_confirm_evolve_steps = 50000;
 inline constexpr int critical_slow_confirm_window = 100; // recovery
 inline constexpr int critical_slow_lock_confirm_window = 50;

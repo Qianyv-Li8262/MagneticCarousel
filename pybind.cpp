@@ -106,7 +106,7 @@ PYBIND11_MODULE(hysteresis, m)
         return py::make_tuple(result.answer_state, result.transit_time);
     }, py::arg("v0"), py::arg("dt"), py::arg("max_confirm"), py::arg("params"),
        "FP64 single trajectory. Return (classification, event time): locked final in-band smoothed run start (1000 time units, midpoint timestamps) or recovery minimum endpoint. "
-       "Each frame contains 50000 steps; lock after 50 consecutive frames within 1e-3 of target and an in-band full smoothing window; recovery uses a 100-frame analysis window. "
+       "Each frame contains 1000 steps; lock after 2500 consecutive frames within 1e-3 of target and an in-band full smoothing window; recovery uses a 5000-frame analysis window. "
        "Classification: -1 error, 0 undecided, 1 locked, 2 rising. No v0 interpolation.");
 #endif
     py::class_<solver_params>(m, "SolverParams")
