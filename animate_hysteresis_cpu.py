@@ -20,7 +20,7 @@ import hysteresis
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
-STEPS_PER_FRAME = 5000
+STEPS_PER_FRAME = 1000
 FPS = 30
 
 # Fast display settings.  The full sampled history is retained; only rendering
@@ -30,7 +30,11 @@ FAST_GRAPH_UPDATE_EVERY = 5
 FAST_RESCALE_EVERY = 20
 FAST_MAX_PLOT_POINTS = 2000
 
-# Model parameters.
+# GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
+# relative to the five reference values below, using exactly the same scaling
+# as scaled_params() in 1dmodel-hysteresis.cu.
+SR = 0.8
+SOMEGA = 0.6
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356
@@ -40,6 +44,24 @@ GAMMA_M = 11011.419
 # State layout: [t, x, x_dot, theta, theta_dot, phase, q_x, q_y].
 # In particular, the initial hysteresis vector q is the zero vector.
 INITIAL_STATE = np.zeros(8, dtype=np.float32)
+
+
+def scaled_model_parameters() -> tuple[float, float, float, float, float]:
+    """Return the effective CPU parameters for the selected GPU sweep point."""
+    if not np.isfinite(SR) or SR <= 0.0:
+        raise ValueError("SR must be finite and positive")
+    if not np.isfinite(SOMEGA) or SOMEGA <= 0.0:
+        raise ValueError("SOMEGA must be finite and positive")
+
+    inverse_sr = 1.0 / SR
+    inverse_somega_squared = 1.0 / (SOMEGA * SOMEGA)
+    return (
+        ALPHA * SR,
+        DELTA * inverse_sr,
+        GAMMA_G * inverse_somega_squared,
+        GAMMA * inverse_somega_squared,
+        GAMMA_M * inverse_sr * inverse_sr * inverse_somega_squared,
+    )
 
 
 def minmax_downsample(
@@ -78,13 +100,8 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool
     if not show_graphs and show_velocity:
         raise ValueError("show_velocity requires show_graphs")
 
-    params = hysteresis.SolverParams(
-        ALPHA,
-        DELTA,
-        GAMMA_G,
-        GAMMA,
-        GAMMA_M,
-    )
+    alpha, delta, gamma_g, gamma, gamma_m = scaled_model_parameters()
+    params = hysteresis.SolverParams(alpha, delta, gamma_g, gamma, gamma_m)
     state = INITIAL_STATE.copy()
 
     times = [float(state[0])]
@@ -111,12 +128,12 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool
 
     # Left: a ball on the ground with a right-moving sinusoidal wave above it.
     view_half_width = 2.0 * np.pi
-    wave_height = 1.25 * ALPHA
-    wave_amplitude = 0.18 * ALPHA
+    wave_height = 1.25 * alpha
+    wave_amplitude = 0.18 * alpha
     scene_x = np.linspace(-view_half_width, view_half_width, 700)
 
     ax_scene.set_aspect("equal", adjustable="box")
-    ax_scene.set_ylim(-0.18 * ALPHA, 1.65 * ALPHA)
+    ax_scene.set_ylim(-0.18 * alpha, 1.65 * alpha)
     ax_scene.set_xlim(-view_half_width, view_half_width)
     ax_scene.set_yticks([])
     ax_scene.set_xlabel("x")
@@ -129,7 +146,7 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool
         color="tab:cyan",
         linewidth=2.0,
     )
-    ball = Circle((0.0, ALPHA), ALPHA, edgecolor="0.15", linewidth=1.6)
+    ball = Circle((0.0, alpha), alpha, edgecolor="0.15", linewidth=1.6)
     ax_scene.add_patch(ball)
     (radius_line,) = ax_scene.plot([], [], color="0.12", linewidth=2.0)
     status = ax_scene.text(
@@ -208,11 +225,11 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool
             wave_height + wave_amplitude * np.sin(t - scene_x),
         )
 
-        ball.center = (x, ALPHA)
+        ball.center = (x, alpha)
         ball.set_facecolor("tab:orange" if sliding else "tab:blue")
         radius_line.set_data(
-            [x, x + 0.78 * ALPHA * np.cos(theta)],
-            [ALPHA, ALPHA + 0.78 * ALPHA * np.sin(theta)],
+            [x, x + 0.78 * alpha * np.cos(theta)],
+            [alpha, alpha + 0.78 * alpha * np.sin(theta)],
         )
         mode = "SLIDING" if sliding else "STICKING"
         status.set_text(f"t = {t:7.3f}\nx = {x:9.4f}\ntheta = {theta:9.4f}\n{mode}")
