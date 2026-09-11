@@ -80,7 +80,7 @@ DEVICE INLINE int initialize_gpu_mode(state &ball, const solver_params &params, 
             return kGpuEvolveStepFailed;
     } else {
         slip_sign = 0.0f;
-        ball.theta_dot = -ball.xdot / params.alpha;
+        project_pure_rolling(ball, params);
     }
 
     return kGpuEvolveOk;

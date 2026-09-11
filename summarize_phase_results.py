@@ -14,7 +14,7 @@ from matplotlib.colors import LogNorm
 import numpy as np
 from scipy.optimize import brentq
 
-from analyze_phase_behavior_gpu import _cell_edges
+from scan_sr_somega_gpu import _cell_edges
 
 
 ALPHA_REF = 0.33333333

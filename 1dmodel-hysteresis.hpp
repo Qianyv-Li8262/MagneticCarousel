@@ -190,6 +190,16 @@ struct solver_params {
     real_t gamma_m;
 };
 
+// Remove roundoff drift from the sticking constraint while preserving the
+// contact impulse balance used at a sliding-to-sticking event.
+DEVICE HOST INLINE void project_pure_rolling(state &ball, const solver_params &params)
+{
+    const real_t slip = ball.xdot + params.alpha * ball.theta_dot;
+    const real_t impulse = -ETA / (REAL_LITERAL(1.0) + ETA) * slip;
+    ball.xdot += impulse;
+    ball.theta_dot += impulse / (ETA * params.alpha);
+}
+
 DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params &params, const bool sliding,
                                 real_t slip_sign, bool &transit)
 {
@@ -300,10 +310,7 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
             if (transit_error != 0)
                 return transit_error;
             // project the event state onto the pure-rolling constraint
-            const real_t S_event = state_dttrans.xdot + params.alpha * state_dttrans.theta_dot;
-            const real_t impulse = -ETA / (REAL_LITERAL(1.0) + ETA) * S_event;
-            state_dttrans.xdot += impulse;
-            state_dttrans.theta_dot += impulse / (ETA * params.alpha);
+            project_pure_rolling(state_dttrans, params);
             // calc N and Freq at this transit point
             vec2 h_ext = {H_EXT * real_cos(state_dttrans.phase), H_EXT * real_sin(state_dttrans.phase)};
             real_t N =
@@ -334,6 +341,8 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
             ball = final_state;
             sliding = next_sliding;
             slip_sign = next_slip_sign;
+            if (!sliding)
+                project_pure_rolling(ball, params);
             return 0;
         } else {
             ball = trial_final;
@@ -381,6 +390,7 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
         } else {
             // keep sticking
             ball = trial_final;
+            project_pure_rolling(ball, params);
             return 0;
         }
     }

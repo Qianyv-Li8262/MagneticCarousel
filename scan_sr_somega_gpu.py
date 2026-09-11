@@ -1,12 +1,9 @@
-"""Run the hysteresis ``sr``/``somega`` sweep on CUDA and plot its velocity minimum.
+"""Run the long-time ``(sr, somega)`` phase sweep on CUDA.
 
-Run from the repository root in an environment containing CuPy with::
+The default run focuses on the locking boundary and saves both the raw
+observables and a phase diagram::
 
-    conda run -n daily python src/run_hysteresis_phase.py
-
-CuPy compiles ``1dmodel-hysteresis.cu`` on first use and manages all device
-allocations. The five reference parameters below are kernel arguments, not
-CUDA compile-time constants.
+    conda run -n daily python scan_sr_somega_gpu.py
 """
 
 from __future__ import annotations
@@ -18,20 +15,23 @@ import numpy as np
 
 
 # ============================= Run settings =============================
-SR_LOWER = 0.01
-SR_UPPER = 5.0
-SOMEGA_LOWER = 0.01
-SOMEGA_UPPER = 5.0
+SR_LOWER = 1.5
+SR_UPPER = 4.5
+SOMEGA_LOWER = 0.1
+SOMEGA_UPPER = 3.0
 K = 128
 DT = 1.0e-3
-TOTAL_TIME = 4000.0
+TOTAL_TIME = 16000.0
+OBSERVATION_WINDOW = 4000.0
+SAMPLE_TIME = 0.2
 
 BLOCK_X = 16
 BLOCK_Y = 16
 
-SHOW_PLOT = True
-SAVE_PATH: str | Path | None = None
-SAVE_DPI = 180
+SHOW_PLOT = False
+SAVE_PATH: str | Path | None = Path(__file__).with_name("tmp") / "sr_somega_phase.png"
+SAVE_DATA_PATH: str | Path | None = Path(__file__).with_name("tmp") / "sr_somega_phase.npz"
+SAVE_DPI = 220
 
 # Same reference point as animate_hysteresis_cpu.py.
 REFERENCE_ALPHA = 0.33333333
@@ -39,12 +39,52 @@ REFERENCE_DELTA = 1.7212357e-4
 REFERENCE_GAMMA_G = 0.16560356
 REFERENCE_GAMMA = 489.39639
 REFERENCE_GAMMA_M = 11011.419
+
+# Material constants used only for the analytic torque-limit overlay.
+MU_R = 2.2926667e3
+ALPHA_JA = 3.2e-3
+C = 0.38
+K_HYSTER = 1.0909091e-3
+H_EXT = 1.4661546e-1
+ETA = 0.4
+XI_JA = 1.0 - 1.0 / (1.0 + ALPHA_JA * (MU_R - 1.0))
+Q_LIMIT = XI_JA / ALPHA_JA * K_HYSTER
+E_DEMAG = (1.0 - C) / ((MU_R + 2.0) * (1.0 - XI_JA))
+BOUNDARY_SCALE = np.sqrt(
+    REFERENCE_GAMMA_M * E_DEMAG * Q_LIMIT * H_EXT * ETA
+    / (REFERENCE_ALPHA * REFERENCE_DELTA)
+)
 # ========================================================================
 
 
-CUDA_SOURCE = Path(__file__).with_name("1dmodel-hysteresis.cu")
-CUDA_HEADER = Path(__file__).with_name("1dmodel-hysteresis.hpp")
+ROOT = Path(__file__).resolve().parent
+CUDA_SOURCE = ROOT / "1dmodel-hysteresis.cu"
+PHASE_CUDA_SOURCE = ROOT / "phase_behavior.cu"
+CUDA_HEADER = ROOT / "1dmodel-hysteresis.hpp"
 _CUDA_MODULE = None
+
+METRIC_NAMES = (
+    "mean_v",
+    "std_v",
+    "mean_omega",
+    "mean_phase_rate",
+    "std_phase_rate",
+    "mean_abs_slip",
+    "sliding_fraction",
+    "mean_abs_q",
+    "final_v",
+    "final_omega",
+    "final_phase_rate",
+    "final_abs_q",
+    "delta_mean_v",
+    "delta_mean_phase_rate",
+    "min_v",
+    "max_v",
+    "sample_count",
+    "global_minimum_step",
+    "velocity_recovered",
+)
+METRIC_INDEX = {name: index for index, name in enumerate(METRIC_NAMES)}
 
 
 @dataclass(frozen=True)
@@ -77,75 +117,59 @@ def _get_cupy():
 
 
 def _get_cuda_module(cp):
+    """Compile both legacy-minimum and long-time phase kernels in one module."""
     global _CUDA_MODULE
     if _CUDA_MODULE is None:
-        if not CUDA_HEADER.is_file():
-            raise FileNotFoundError(f"CUDA header not found: {CUDA_HEADER}")
+        for path in (CUDA_HEADER, CUDA_SOURCE, PHASE_CUDA_SOURCE):
+            if not path.is_file():
+                raise FileNotFoundError(f"CUDA source not found: {path}")
         header = CUDA_HEADER.read_text(encoding="utf-8")
-        source = CUDA_SOURCE.read_text(encoding="utf-8")
+        legacy = CUDA_SOURCE.read_text(encoding="utf-8")
+        phase = PHASE_CUDA_SOURCE.read_text(encoding="utf-8")
         include_line = '#include "1dmodel-hysteresis.hpp"'
-        if include_line not in source:
-            raise RuntimeError(f"Expected {include_line!r} in {CUDA_SOURCE}")
-        # Embedding the shared header makes CuPy's cache depend on its contents
-        # and avoids platform-specific include-path quoting problems.
-        source = source.replace(include_line, header, 1)
-        _CUDA_MODULE = cp.RawModule(
-            code=source,
-            options=("--std=c++17",),
-            backend="nvrtc",
-        )
+        if include_line not in legacy or include_line not in phase:
+            raise RuntimeError("Expected shared-header include was not found")
+        source = legacy.replace(include_line, header, 1)
+        source += "\n" + phase.replace(include_line, "", 1)
+        _CUDA_MODULE = cp.RawModule(code=source, options=("--std=c++17",), backend="nvrtc")
     return _CUDA_MODULE
 
 
-def _validate_inputs(
-    sr_lower: float,
-    sr_upper: float,
-    somega_lower: float,
-    somega_upper: float,
-    k: int,
-    dt: float,
-    total_time: float,
-    reference: ReferenceParams,
-    block_shape: tuple[int, int],
-) -> None:
-    scalars = np.asarray(
-        (
-            sr_lower,
-            sr_upper,
-            somega_lower,
-            somega_upper,
-            dt,
-            total_time,
-            reference.alpha,
-            reference.delta,
-            reference.gamma_g,
-            reference.gamma,
-            reference.gamma_m,
-        ),
-        dtype=np.float32,
+def _cell_edges(points: np.ndarray) -> np.ndarray:
+    if points.size == 1:
+        half_width = max(0.05 * abs(float(points[0])), 0.05)
+        return np.asarray((points[0] - half_width, points[0] + half_width))
+    midpoints = 0.5 * (points[:-1] + points[1:])
+    return np.concatenate(
+        ((points[0] - (midpoints[0] - points[0]),), midpoints, (points[-1] + (points[-1] - midpoints[-1]),))
     )
-    if not np.all(np.isfinite(scalars)):
-        raise ValueError("All scalar inputs must be finite when converted to float32.")
-    if sr_lower <= 0.0 or sr_upper <= 0.0:
-        raise ValueError("sr bounds must be positive.")
-    if somega_lower <= 0.0 or somega_upper <= 0.0:
-        raise ValueError("somega bounds must be positive.")
-    if k <= 0:
-        raise ValueError("k must be positive.")
-    if k > 46340:
-        raise ValueError("k is too large for the kernel's int32 flattened index.")
-    if dt <= 0.0:
-        raise ValueError("dt must be positive.")
-    if total_time < 0.0:
-        raise ValueError("total_time must be nonnegative.")
-    if reference.alpha <= 0.0:
-        raise ValueError("reference.alpha must be positive.")
-    if reference.delta < 0.0:
-        raise ValueError("reference.delta must be nonnegative.")
 
-    block_x, block_y = block_shape
-    if block_x <= 0 or block_y <= 0 or block_x * block_y > 1024:
-        raise ValueError("block_shape must be positive and contain at most 1024 threads.")
+
+def _symmetric_limit(values: np.ndarray, valid: np.ndarray) -> float:
+    finite_values = values[valid & np.isfinite(values)]
+    if finite_values.size == 0:
+        return 1.0
+    limit = float(np.max(np.abs(finite_values)))
+    return limit if limit > 0.0 else 1.0
+
+
+def locking_limit(sr):
+    sr = np.asarray(sr)
+    return BOUNDARY_SCALE * np.abs(1.0 - REFERENCE_ALPHA * sr) ** 1.5 / sr
+
+
+def _time_arguments(dt: float, total_time: float, window: float, sample_time: float):
+    values = np.asarray((dt, total_time, window, sample_time), dtype=np.float64)
+    if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+        raise ValueError("time settings must be positive and finite")
+    steps = round(total_time / dt)
+    window_steps = min(steps, round(window / dt))
+    sample_stride = max(1, round(sample_time / dt))
+    if steps > np.iinfo(np.int32).max:
+        raise ValueError("step count exceeds int32")
+    if window_steps < 2 * sample_stride:
+        raise ValueError("observation window must contain at least two samples")
+    return steps, window_steps, sample_stride
 
 
 def run_sweep(
@@ -158,41 +182,25 @@ def run_sweep(
     total_time: float,
     reference: ReferenceParams = DEFAULT_REFERENCE,
     block_shape: tuple[int, int] = (BLOCK_X, BLOCK_Y),
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return five CPU arrays, each with shape ``(somega, sr)``.
+    observation_window: float = OBSERVATION_WINDOW,
+    sample_time: float = SAMPLE_TIME,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return ``sr``, ``somega``, status and long-time metrics arrays."""
+    if not (0.0 < sr_lower < sr_upper and 0.0 < somega_lower < somega_upper):
+        raise ValueError("parameter bounds must be positive and increasing")
+    if not 2 <= k <= 46340:
+        raise ValueError("k must be between 2 and 46340")
+    steps, window_steps, sample_stride = _time_arguments(dt, total_time, observation_window, sample_time)
+    sr = np.linspace(sr_lower, sr_upper, k, dtype=np.float32)
+    somega = np.linspace(somega_lower, somega_upper, k, dtype=np.float32)
 
-    The arrays are status, whether velocity recovered after its global signed
-    minimum, x at that minimum, its completed-step index, and the minimum
-    velocity. Failed points retain zero/NaN/-1 sentinels outside status.
-    """
-    _validate_inputs(
-        sr_lower,
-        sr_upper,
-        somega_lower,
-        somega_upper,
-        k,
-        dt,
-        total_time,
-        reference,
-        block_shape,
-    )
     cp = _get_cupy()
-    kernel = _get_cuda_module(cp).get_function("EvolveHysteresisGrid")
-
-    # Rows are somega and columns are sr, matching the kernel's flat index.
-    status_gpu = cp.ones((k, k), dtype=cp.int32)
-    recovered_gpu = cp.zeros((k, k), dtype=cp.int32)
-    minimum_x_gpu = cp.full((k, k), cp.nan, dtype=cp.float32)
-    minimum_step_gpu = cp.full((k, k), -1, dtype=cp.int32)
-    minimum_velocity_gpu = cp.full((k, k), cp.nan, dtype=cp.float32)
-
+    kernel = _get_cuda_module(cp).get_function("AnalyzeParameterGrid")
+    status_gpu = cp.full((k, k), 4, dtype=cp.int32)
+    metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=cp.float32)
     block_x, block_y = block_shape
     block = (block_x, block_y, 1)
-    grid = (
-        (k + block_x - 1) // block_x,
-        (k + block_y - 1) // block_y,
-        1,
-    )
+    grid = ((k + block_x - 1) // block_x, (k + block_y - 1) // block_y, 1)
 
     start = cp.cuda.Event()
     stop = cp.cuda.Event()
@@ -201,218 +209,175 @@ def run_sweep(
         grid,
         block,
         (
-            np.float32(sr_lower),
-            np.float32(sr_upper),
-            np.float32(somega_lower),
-            np.float32(somega_upper),
-            np.int32(k),
-            np.float32(dt),
-            np.float32(total_time),
-            np.float32(reference.alpha),
-            np.float32(reference.delta),
-            np.float32(reference.gamma_g),
-            np.float32(reference.gamma),
-            np.float32(reference.gamma_m),
-            status_gpu,
-            recovered_gpu,
-            minimum_x_gpu,
-            minimum_step_gpu,
-            minimum_velocity_gpu,
+            cp.asarray(sr), cp.asarray(somega), np.int32(k), np.float32(dt), np.int32(steps),
+            np.int32(window_steps), np.int32(sample_stride), np.float32(reference.alpha),
+            np.float32(reference.delta), np.float32(reference.gamma_g), np.float32(reference.gamma),
+            np.float32(reference.gamma_m), status_gpu, metrics_gpu,
         ),
     )
     stop.record()
     stop.synchronize()
-    elapsed_seconds = cp.cuda.get_elapsed_time(start, stop) / 1000.0
-
+    elapsed = cp.cuda.get_elapsed_time(start, stop) / 1000.0
     status = cp.asnumpy(status_gpu)
-    recovered = cp.asnumpy(recovered_gpu)
-    minimum_x = cp.asnumpy(minimum_x_gpu)
-    minimum_step = cp.asnumpy(minimum_step_gpu)
-    minimum_velocity = cp.asnumpy(minimum_velocity_gpu)
-
-    if not np.all(np.isin(status, (0, 1))):
-        raise RuntimeError("CUDA returned a status value other than zero or one.")
-    succeeded = status == 0
-    invalid_recovered = succeeded & ~np.isin(recovered, (0, 1))
-    invalid_minimum = succeeded & (
-        ~np.isfinite(minimum_x) | ~np.isfinite(minimum_velocity) | (minimum_step < 0)
-    )
-    if np.any(invalid_recovered | invalid_minimum):
-        count = int(np.count_nonzero(invalid_recovered | invalid_minimum))
-        raise RuntimeError(f"CUDA returned invalid minimum data for {count} successful points.")
-
-    success_count = int(np.count_nonzero(succeeded))
-    print(
-        f"CUDA sweep finished in {elapsed_seconds:.3f} s: "
-        f"{success_count}/{k * k} points succeeded.",
-        flush=True,
-    )
-    return status, recovered, minimum_x, minimum_step, minimum_velocity
+    metrics = cp.asnumpy(metrics_gpu)
+    success = status == 0
+    if np.any(success & ~np.all(np.isfinite(metrics), axis=-1)):
+        raise RuntimeError("CUDA returned non-finite metrics for a successful trajectory")
+    print(f"CUDA phase sweep finished in {elapsed:.3f} s: {np.count_nonzero(success)}/{k*k} succeeded.")
+    return sr, somega, status, metrics
 
 
-def _cell_edges(points: np.ndarray) -> np.ndarray:
-    if points.size == 1:
-        half_width = max(0.05 * abs(float(points[0])), 0.05)
-        return np.asarray((points[0] - half_width, points[0] + half_width))
-
-    midpoints = 0.5 * (points[:-1] + points[1:])
-    return np.concatenate(
-        (
-            (points[0] - (midpoints[0] - points[0]),),
-            midpoints,
-            (points[-1] + (points[-1] - midpoints[-1]),),
-        )
-    )
+def _collapse(ratio: np.ndarray, phase_rate: np.ndarray):
+    edges = np.geomspace(0.1, 20.0, 36)
+    centers = np.sqrt(edges[:-1] * edges[1:])
+    quantiles = np.full((centers.size, 3), np.nan)
+    for index, (lower, upper) in enumerate(zip(edges[:-1], edges[1:])):
+        selected = phase_rate[(ratio >= lower) & (ratio < upper) & np.isfinite(phase_rate)]
+        if selected.size:
+            quantiles[index] = np.quantile(selected, (0.1, 0.5, 0.9))
+    return centers, quantiles
 
 
-def _symmetric_limit(values: np.ndarray, valid: np.ndarray) -> float:
-    finite_values = values[valid & np.isfinite(values)]
-    if finite_values.size == 0:
-        return 1.0
-    limit = float(np.max(np.abs(finite_values)))
-    return limit if limit > 0.0 else 1.0
-
-
-def plot_results(
-    status: np.ndarray,
-    recovered: np.ndarray,
-    minimum_x: np.ndarray,
-    minimum_step: np.ndarray,
-    minimum_velocity: np.ndarray,
-    sr_lower: float,
-    sr_upper: float,
-    somega_lower: float,
-    somega_upper: float,
-):
-    """Create five panels for status and the signed velocity minimum."""
+def plot_results(sr: np.ndarray, somega: np.ndarray, status: np.ndarray, metrics: np.ndarray):
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
 
-    arrays = (status, recovered, minimum_x, minimum_step, minimum_velocity)
-    if any(array.shape != status.shape for array in arrays[1:]):
-        raise ValueError("All five output arrays must have the same shape.")
-    if status.ndim != 2 or status.shape[0] != status.shape[1]:
-        raise ValueError("Output arrays must have shape (k, k).")
-
-    k = status.shape[0]
-    sr = np.linspace(sr_lower, sr_upper, k, dtype=np.float32)
-    somega = np.linspace(somega_lower, somega_upper, k, dtype=np.float32)
-    sr_edges = _cell_edges(sr)
-    somega_edges = _cell_edges(somega)
     valid = status == 0
+    phase_rate = np.where(valid, metrics[..., METRIC_INDEX["mean_phase_rate"]], np.nan)
+    ratio = somega[:, None] / locking_limit(sr[None, :])
 
-    recovered_masked = np.ma.masked_where(~valid, recovered)
-    minimum_x_masked = np.ma.masked_where(~valid, minimum_x)
-    minimum_step_masked = np.ma.masked_where(~valid, minimum_step)
-    minimum_velocity_masked = np.ma.masked_where(~valid, minimum_velocity)
-    x_limit = _symmetric_limit(minimum_x, valid)
-    velocity_limit = _symmetric_limit(minimum_velocity, valid)
-
-    figure, grid_axes = plt.subplots(2, 3, figsize=(15.6, 9.2), constrained_layout=True)
+    figure, grid_axes = plt.subplots(2, 3, figsize=(18.0, 10.2), constrained_layout=True)
     axes = grid_axes.ravel()
     figure.delaxes(axes[5])
+    phase_image = axes[0].pcolormesh(
+        _cell_edges(sr), _cell_edges(somega), np.clip(phase_rate, 0.0, 1.0),
+        shading="flat", cmap="magma", vmin=0.0, vmax=1.0,
+    )
+    left = np.linspace(float(sr.min()), 1.0 / REFERENCE_ALPHA - 1.0e-4, 1000)
+    right = np.linspace(1.0 / REFERENCE_ALPHA + 1.0e-4, float(sr.max()), 1000)
+    axes[0].plot(left, locking_limit(left), "w--", lw=2.0, label="analytic torque limit")
+    axes[0].plot(right, locking_limit(right), "w--", lw=2.0)
+    axes[0].set(xlabel=r"$s_r$", ylabel=r"$s_\omega$", title=r"Order parameter $\langle\dot\phi\rangle$")
+    axes[0].set_ylim(float(somega.min()), float(somega.max()))
+    axes[0].legend(loc="upper left")
+    figure.colorbar(phase_image, ax=axes[0], label=r"$\langle\dot\phi\rangle$ (clipped)")
 
+    centers, quantiles = _collapse(ratio, phase_rate)
+    selected = np.all(np.isfinite(quantiles), axis=1)
+    axes[1].fill_between(centers[selected], quantiles[selected, 0], quantiles[selected, 2], alpha=0.25, label="10--90%")
+    axes[1].plot(centers[selected], quantiles[selected, 1], "o-", ms=4, label="median")
+    axes[1].axvline(1.0, color="0.2", ls="--", label="analytic threshold")
+    axes[1].set(
+        xscale="log", xlabel=r"$\Lambda=s_\omega/s_\omega^{\max}(s_r)$",
+        ylabel=r"$\langle\dot\phi\rangle$", title="Collapse onto the torque ratio", ylim=(-0.03, 1.03),
+    )
+    axes[1].legend()
+
+    observed_left = np.full(somega.size, np.nan)
+    observed_right = np.full(somega.size, np.nan)
+    for row_index, row in enumerate(phase_rate):
+        unlocked = np.flatnonzero(row > 0.05)
+        if unlocked.size >= 2:
+            observed_left[row_index] = sr[unlocked[0]]
+            observed_right[row_index] = sr[unlocked[-1]]
+    axes[2].plot(left, locking_limit(left), "k--", lw=2.0, label="analytic torque limit")
+    axes[2].plot(right, locking_limit(right), "k--", lw=2.0)
+    axes[2].plot(observed_left, somega, "o", ms=3.0, label="CUDA left boundary")
+    axes[2].plot(observed_right, somega, "o", ms=3.0, label="CUDA right boundary")
+    axes[2].set(
+        xlabel=r"boundary $s_r$", ylabel=r"$s_\omega$", title="Numerical and analytic phase boundary",
+        xlim=(float(sr.min()), float(sr.max())),
+        ylim=(float(somega.min()), float(somega.max())),
+    )
+    axes[2].legend(loc="upper left")
+
+    minimum_step = np.ma.masked_where(
+        ~valid, metrics[..., METRIC_INDEX["global_minimum_step"]]
+    )
+    step_cmap = plt.get_cmap("viridis").copy()
+    step_cmap.set_bad("0.65")
+    step_image = axes[3].pcolormesh(
+        _cell_edges(sr),
+        _cell_edges(somega),
+        minimum_step,
+        cmap=step_cmap,
+        norm=Normalize(vmin=0.0, vmax=TOTAL_TIME / DT),
+        shading="flat",
+    )
+    figure.colorbar(step_image, ax=axes[3], label="completed step")
+    axes[3].set(
+        xlabel=r"$s_r=r/r_{\mathrm{ref}}$",
+        ylabel=r"$s_\omega=\omega/\omega_{\mathrm{ref}}$",
+        title="Step of minimum velocity",
+    )
+
+    recovered = np.ma.masked_where(
+        ~valid, metrics[..., METRIC_INDEX["velocity_recovered"]]
+    )
     binary_cmap = ListedColormap(("white", "black"))
+    binary_cmap.set_bad("0.65")
     binary_norm = BoundaryNorm((-0.5, 0.5, 1.5), binary_cmap.N)
-    status_image = axes[0].pcolormesh(
-        sr_edges,
-        somega_edges,
-        status,
+    recovered_image = axes[4].pcolormesh(
+        _cell_edges(sr),
+        _cell_edges(somega),
+        recovered,
         cmap=binary_cmap,
         norm=binary_norm,
         shading="flat",
     )
-    status_bar = figure.colorbar(status_image, ax=axes[0], ticks=(0, 1))
-    status_bar.ax.set_yticklabels(("success", "failed"))
-    axes[0].set_title("Evolution status")
-
-    recovered_cmap = binary_cmap.copy()
-    recovered_cmap.set_bad("0.65")
-    recovered_image = axes[1].pcolormesh(
-        sr_edges,
-        somega_edges,
-        recovered_masked,
-        cmap=recovered_cmap,
-        norm=binary_norm,
-        shading="flat",
-    )
-    recovered_bar = figure.colorbar(recovered_image, ax=axes[1], ticks=(0, 1))
+    recovered_bar = figure.colorbar(recovered_image, ax=axes[4], ticks=(0, 1))
     recovered_bar.ax.set_yticklabels(("no", "yes"))
-    axes[1].set_title("Velocity recovered after minimum")
-
-    state_cmap = plt.get_cmap("coolwarm").copy()
-    state_cmap.set_bad("0.65")
-    x_image = axes[2].pcolormesh(
-        sr_edges,
-        somega_edges,
-        minimum_x_masked,
-        cmap=state_cmap,
-        norm=Normalize(vmin=-x_limit, vmax=x_limit),
-        shading="flat",
+    axes[4].set(
+        xlabel=r"$s_r=r/r_{\mathrm{ref}}$",
+        ylabel=r"$s_\omega=\omega/\omega_{\mathrm{ref}}$",
+        title="Velocity recovered after minimum",
     )
-    figure.colorbar(x_image, ax=axes[2], label=r"$x$ at minimum $\dot{x}$")
-    axes[2].set_title("Position at minimum velocity")
-
-    step_cmap = plt.get_cmap("viridis").copy()
-    step_cmap.set_bad("0.65")
-    step_image = axes[3].pcolormesh(
-        sr_edges,
-        somega_edges,
-        minimum_step_masked,
-        cmap=step_cmap,
-        shading="flat",
-    )
-    figure.colorbar(step_image, ax=axes[3], label="completed step")
-    axes[3].set_title("Step of minimum velocity")
-
-    velocity_image = axes[4].pcolormesh(
-        sr_edges,
-        somega_edges,
-        minimum_velocity_masked,
-        cmap=state_cmap,
-        norm=Normalize(vmin=-velocity_limit, vmax=velocity_limit),
-        shading="flat",
-    )
-    figure.colorbar(velocity_image, ax=axes[4], label=r"minimum $\dot{x}$")
-    axes[4].set_title("Minimum center-of-mass velocity")
 
     for axis in axes[:5]:
-        axis.set_xlabel(r"$s_r=r/r_{\mathrm{ref}}$")
-        axis.set_ylabel(r"$s_\omega=\omega/\omega_{\mathrm{ref}}$")
-
-    figure.suptitle(f"Hysteresis velocity-minimum sweep: k={k}, {k * k} trajectories")
+        axis.grid(alpha=0.2)
+    figure.suptitle(
+        f"Self-consistent hysteresis model: locked phase and running wedge (k={sr.size}, T={TOTAL_TIME:g})",
+        fontsize=15,
+    )
     return figure
 
 
-def main() -> None:
-    arrays = run_sweep(
-        SR_LOWER,
-        SR_UPPER,
-        SOMEGA_LOWER,
-        SOMEGA_UPPER,
-        K,
-        DT,
-        TOTAL_TIME,
-        reference=DEFAULT_REFERENCE,
-        block_shape=(BLOCK_X, BLOCK_Y),
-    )
-    figure = plot_results(
-        *arrays,
-        SR_LOWER,
-        SR_UPPER,
-        SOMEGA_LOWER,
-        SOMEGA_UPPER,
-    )
+def _print_phase_summary(sr, somega, status, metrics):
+    valid = status == 0
+    phase_rate = metrics[..., METRIC_INDEX["mean_phase_rate"]]
+    observed = valid & (phase_rate > 0.05)
+    predicted = valid & (somega[:, None] > locking_limit(sr[None, :]))
+    accuracy = np.mean(observed[valid] == predicted[valid]) if np.any(valid) else np.nan
+    slip = metrics[..., METRIC_INDEX["mean_abs_slip"]]
+    print(f"Locked cells: {np.count_nonzero(valid & (np.abs(phase_rate) < 0.05))}/{np.count_nonzero(valid)}")
+    print(f"Analytic-boundary classification accuracy: {accuracy:.3%}")
+    print(f"Mean rolling residual: median={np.nanmedian(slip[valid]):.3e}, max={np.nanmax(slip[valid]):.3e}")
 
+
+def main() -> None:
+    sr, somega, status, metrics = run_sweep(
+        SR_LOWER, SR_UPPER, SOMEGA_LOWER, SOMEGA_UPPER, K, DT, TOTAL_TIME,
+        reference=DEFAULT_REFERENCE, block_shape=(BLOCK_X, BLOCK_Y),
+        observation_window=OBSERVATION_WINDOW, sample_time=SAMPLE_TIME,
+    )
+    _print_phase_summary(sr, somega, status, metrics)
+    figure = plot_results(sr, somega, status, metrics)
+
+    if SAVE_DATA_PATH is not None:
+        data_path = Path(SAVE_DATA_PATH)
+        data_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            data_path, sr=sr, somega=somega, status=status, metrics=metrics,
+            metric_names=np.asarray(METRIC_NAMES),
+        )
+        print(f"Saved data to {data_path.resolve()}")
     if SAVE_PATH is not None:
         save_path = Path(SAVE_PATH)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(save_path, dpi=SAVE_DPI)
-        print(f"Saved figure to {save_path.resolve()}", flush=True)
-
+        print(f"Saved figure to {save_path.resolve()}")
     if SHOW_PLOT:
         import matplotlib.pyplot as plt
-
         plt.show()
 
 

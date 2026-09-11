@@ -1,5 +1,9 @@
 # 自洽退磁场磁滞模型的相行为
 
+![最终相图与收敛诊断](tmp/sr_somega_phase.png)
+
+上排依次给出相位漂移序参量、力矩比数据塌缩以及数值/解析相边界。下排左图给出全程最小速度所在的完成步数；顶到总步数的同色区域表示在当前积分时间内仍不断刷新最小速度。下排中图以黑白显示最小速度之后是否发生恢复，用于标记相分类的有限时间可信度。
+
 分析对应分支 `fully_consistent_hys`、提交 `9817275`。相图不再用“积分成功/失败”或全程最小速度分类，主序参量取末时间窗内的平均相位漂移率
 
 \[
@@ -104,18 +108,14 @@ FP32 在 `(3.2,1)` 的超长积分中会停在少数离散速度平台；FP64 �
 \frac{dt}{s_rs_\omega}\lesssim0.2.
 \]
 
-若两个参数都扫到 `0.01`，应使用约 `dt≤2×10^-5`，或在 CUDA 核中按格点缩放步长。原图低参数角落的失败率爆炸属于时间步长失稳。
+若两个参数都扫到 `0.01`，需手动使用约 `dt≤2×10^-5`。正式相图默认不覆盖这一极端区域，也不在 CUDA 内核中自动改变用户给定的步长。原图低参数角落的失败率爆炸属于时间步长失稳。
 
 ## 复现
 
-相行为 CUDA 内核在 `phase_behavior.cu`，驱动程序在 `analyze_phase_behavior_gpu.py`。原始场强的长时间相图可用：
+相行为 CUDA 内核在 `phase_behavior.cu`，正式驱动程序在 `scan_sr_somega_gpu.py`。默认设置已经聚焦于原始场强的长时间相图，可直接运行：
 
 ```powershell
-conda run -n daily python analyze_phase_behavior_gpu.py parameter `
-  --sr-lower 2 --sr-upper 4.5 `
-  --somega-lower 0.05 --somega-upper 5 --scale linear `
-  --k 128 --dt 0.001 --time 16000 --window 4000 --sample-time 0.2 `
-  --project-sticking --output tmp/phase_analysis/resonance_T16000.npz
+conda run -n daily python scan_sr_somega_gpu.py
 ```
 
-`--field-scale 0.1` 或 `0.01` 可复现降场扫描。`--project-sticking` 只修改传给 NVRTC 的内存副本，用来抑制 FP32 长时间约束漂移，不会改写模型头文件。
+扫描范围、时长、采样窗和输出路径均在该程序顶部集中设置。滚动约束修复已经位于共享模型头文件中，因此 CPU 与 CUDA 后端使用同一实现。

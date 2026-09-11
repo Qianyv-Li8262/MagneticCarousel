@@ -28,7 +28,7 @@ state evolve_impl(const state &initial, const real_t dt, const int steps, const 
             slip_sign = -signum(theta_dot - M_magnet);
         } else {
             slip_sign = REAL_LITERAL(0.0);
-            ball.theta_dot = -ball.xdot / params.alpha;
+            project_pure_rolling(ball, params);
         }
     }
 

@@ -62,7 +62,7 @@ DEVICE INLINE int phase_initialize(state &ball, const solver_params &params, boo
         if (slip_sign == 0.0f)
             return kPhaseUndefinedSlip;
     } else {
-        ball.theta_dot = -ball.xdot / params.alpha;
+        project_pure_rolling(ball, params);
     }
     return kPhaseOk;
 }
@@ -80,7 +80,8 @@ DEVICE INLINE void update_mean_variance(const float value, const int count, floa
 //  7 mean(abs(q)), 8 final(v), 9 final(omega), 10 final(phase rate),
 // 11 final(abs(q)), 12 second-half minus first-half mean(v),
 // 13 second-half minus first-half mean(phase rate), 14 min(v), 15 max(v),
-// 16 sample count.
+// 16 sample count, 17 completed step of the global minimum(v),
+// 18 whether v rose after that minimum.
 DEVICE INLINE int phase_analyze(state &ball, const float dt, const int steps, const int window_steps,
                                 const int sample_stride, const solver_params &params, float *metrics)
 {
@@ -109,6 +110,9 @@ DEVICE INLINE int phase_analyze(state &ball, const float dt, const int steps, co
     float second_mean_phase_rate = 0.0f;
     float minimum_v = 3.402823466e38f;
     float maximum_v = -3.402823466e38f;
+    float global_minimum_v = ball.xdot;
+    int global_minimum_step = 0;
+    bool velocity_recovered = false;
 
     for (int step = 0; step < steps; ++step) {
         const int flag = fwd1step(ball, dt, params, sliding, slip_sign);
@@ -118,6 +122,13 @@ DEVICE INLINE int phase_analyze(state &ball, const float dt, const int steps, co
             return kPhaseNonFinite;
 
         const int completed = step + 1;
+        if (ball.xdot < global_minimum_v) {
+            global_minimum_v = ball.xdot;
+            global_minimum_step = completed;
+            velocity_recovered = false;
+        } else if (ball.xdot > global_minimum_v) {
+            velocity_recovered = true;
+        }
         if (completed < window_start || (completed - window_start) % sample_stride != 0)
             continue;
 
@@ -165,6 +176,8 @@ DEVICE INLINE int phase_analyze(state &ball, const float dt, const int steps, co
     metrics[14] = minimum_v;
     metrics[15] = maximum_v;
     metrics[16] = static_cast<float>(count);
+    metrics[17] = static_cast<float>(global_minimum_step);
+    metrics[18] = velocity_recovered ? 1.0f : 0.0f;
     return kPhaseOk;
 }
 
@@ -194,7 +207,7 @@ extern "C" GLOBAL void AnalyzeParameterGrid(const float *sr_values, const float 
     const solver_params params = phase_scaled_params(sr, somega, reference);
     state ball = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, {0.0f, 0.0f}};
     output_status[index] =
-        phase_analyze(ball, dt, steps, window_steps, sample_stride, params, output_metrics + 17 * index);
+        phase_analyze(ball, dt, steps, window_steps, sample_stride, params, output_metrics + 19 * index);
 }
 
 extern "C" GLOBAL void AnalyzeInitialGrid(
@@ -223,5 +236,5 @@ extern "C" GLOBAL void AnalyzeInitialGrid(
         return;
     state ball = {0.0f, 0.0f, v0, 0.0f, omega0, 0.0f, {0.0f, 0.0f}};
     output_status[index] =
-        phase_analyze(ball, dt, steps, window_steps, sample_stride, params, output_metrics + 17 * index);
+        phase_analyze(ball, dt, steps, window_steps, sample_stride, params, output_metrics + 19 * index);
 }
