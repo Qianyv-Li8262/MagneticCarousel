@@ -42,14 +42,26 @@ using real_t = float;
 #define REAL_SQRT_IMPL sqrtf
 #endif
 
-DEVICE HOST INLINE real_t real_cos(const real_t value) { return REAL_COS_IMPL(value); }
-DEVICE HOST INLINE real_t real_fabs(const real_t value) { return REAL_FABS_IMPL(value); }
+DEVICE HOST INLINE real_t real_cos(const real_t value)
+{
+    return REAL_COS_IMPL(value);
+}
+DEVICE HOST INLINE real_t real_fabs(const real_t value)
+{
+    return REAL_FABS_IMPL(value);
+}
 DEVICE HOST INLINE real_t real_remainder(const real_t value, const real_t divisor)
 {
     return REAL_REMAINDER_IMPL(value, divisor);
 }
-DEVICE HOST INLINE real_t real_sin(const real_t value) { return REAL_SIN_IMPL(value); }
-DEVICE HOST INLINE real_t real_sqrt(const real_t value) { return REAL_SQRT_IMPL(value); }
+DEVICE HOST INLINE real_t real_sin(const real_t value)
+{
+    return REAL_SIN_IMPL(value);
+}
+DEVICE HOST INLINE real_t real_sqrt(const real_t value)
+{
+    return REAL_SQRT_IMPL(value);
+}
 
 #undef REAL_COS_IMPL
 #undef REAL_FABS_IMPL
@@ -179,9 +191,8 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     // ============================================================================
     vec2 h_ext = {real_cos(in.phase) * H_EXT, real_sin(in.phase) * H_EXT};
     // ============================================================================
-    real_t N = params.gamma_g -
-              params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                  (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
+    real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
+                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
     // the ball can fly
     // CHINESE CAN FLY TOO!!!
     if (N < 0)
@@ -212,19 +223,21 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     out.phase = REAL_LITERAL(1.0) - in.xdot - in.theta_dot;
     vec2 h_ext_dot = out.phase * make_vec2(-real_sin(in.phase) * H_EXT, real_cos(in.phase) * H_EXT);
     // assume ReLU use the 0 branch
-    vec2 q_dot = XI_JA / ALPHA_JA / (1 - C * XI_JA) * h_ext_dot *
-                 (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
+    real_t interme = ALPHA_JA * (REAL_LITERAL(1.0) - C * XI_JA) / XI_JA -
+                     (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+    vec2 q_dot = 1 / interme * h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
     vec2 he_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0))) +
-                  ALPHA_JA * (REAL_LITERAL(3.0) * (MU_R - REAL_LITERAL(1.0)) /
-                                  (MU_R + REAL_LITERAL(2.0)) * h_ext_dot -
+                  ALPHA_JA * (REAL_LITERAL(3.0) * (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0)) * h_ext_dot -
                               (1 - C) / (1 - XI_JA) * q_dot);
     // if reject we should select ReLU x branch
     if (in.q * he_dot > 0) {
         // reject
-        real_t a = REAL_LITERAL(1.0) - C * XI_JA;
-        real_t b = -ALPHA_JA * (REAL_LITERAL(1.0) - C) / K_HYSTER * length(in.q);
         real_t c = XI_JA / ALPHA_JA;
         real_t d = -length(in.q) / K_HYSTER;
+        real_t E = (REAL_LITERAL(1.0)-C)/(MU_R+REAL_LITERAL(2.0))/(REAL_LITERAL(1.0)-XI_JA);
+        real_t a = REAL_LITERAL(1.0) - C * XI_JA - E * c;
+        real_t b = -ALPHA_JA * (REAL_LITERAL(1.0) - C) / K_HYSTER * length(in.q) - E * d;
+
         real_t a_final = c / a;
         real_t b_final = d / a - b * (c + d) / a / (a + b);
         vec2 qnorm = in.q * (1 / length(in.q));
@@ -273,8 +286,8 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
     if (sliding) {
         real_t s1 = ball.xdot + params.alpha * ball.theta_dot;
         real_t s2 = trial_final.xdot + params.alpha * trial_final.theta_dot;
-        const bool crossed = (s1 > REAL_LITERAL(0.0) && s2 <= REAL_LITERAL(0.0)) ||
-                             (s1 < REAL_LITERAL(0.0) && s2 >= REAL_LITERAL(0.0));
+        const bool crossed =
+            (s1 > REAL_LITERAL(0.0) && s2 <= REAL_LITERAL(0.0)) || (s1 < REAL_LITERAL(0.0) && s2 >= REAL_LITERAL(0.0));
         if (crossed) {
             const bool event_at_step_end = s2 == REAL_LITERAL(0.0);
             real_t dt_transit = dt * s1 / (s1 - s2);
@@ -289,17 +302,15 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
             state_dttrans.theta_dot += impulse / (ETA * params.alpha);
             // calc N and Freq at this transit point
             vec2 h_ext = {H_EXT * real_cos(state_dttrans.phase), H_EXT * real_sin(state_dttrans.phase)};
-            real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                           (-(MU_R - 1) * H_EXT * H_EXT +
-                                            (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
+            real_t N =
+                params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
+                                     (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
             if (N < REAL_LITERAL(0.0))
                 return 1;
-            real_t M_magnet =
-                -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(state_dttrans.q, h_ext);
+            real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(state_dttrans.q, h_ext);
             real_t theta_dot =
                 ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot *
-                    real_fabs(state_dttrans.theta_dot);
+                params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot * real_fabs(state_dttrans.theta_dot);
             bool next_sliding = sliding;
             real_t next_slip_sign = step_slip_sign;
             if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
@@ -330,29 +341,25 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
         // calc N and Freq at this point
         vec2 h_ext = {H_EXT * real_cos(trial_final.phase), H_EXT * real_sin(trial_final.phase)};
         real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                       (-(MU_R - 1) * H_EXT * H_EXT +
-                                        (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
+                                        (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
         if (N < REAL_LITERAL(0.0))
             return 1;
-        real_t M_magnet =
-            -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(trial_final.q, h_ext);
-        real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                           params.alpha / (1 + ETA) * params.delta * trial_final.theta_dot *
-                               real_fabs(trial_final.theta_dot);
+        real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(trial_final.q, h_ext);
+        real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet - params.alpha / (1 + ETA) * params.delta *
+                                                                                 trial_final.theta_dot *
+                                                                                 real_fabs(trial_final.theta_dot);
         real_t g_final = real_fabs(theta_dot - M_magnet) * ETA * params.alpha - MU * N;
         if (g_final > 0) {
             // turn into sliding. lerp the transit time.
             // i think shading the outer vars is ok here because we do not use outer vars
             vec2 h_ext_init = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
-            real_t N_init = params.gamma_g -
-                           params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                               (-(MU_R - 1) * H_EXT * H_EXT +
-                                (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));
-            real_t M_magnet_init =
-                -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext_init);
-            real_t theta_dot_init = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet_init -
-                                    params.alpha / (1 + ETA) * params.delta * ball.theta_dot *
-                                        real_fabs(ball.theta_dot);
+            real_t N_init =
+                params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
+                                     (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));
+            real_t M_magnet_init = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext_init);
+            real_t theta_dot_init =
+                ETA / (1 + ETA) * (1 - params.alpha) * M_magnet_init -
+                params.alpha / (1 + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
             real_t g_init = real_fabs(theta_dot_init - M_magnet_init) * ETA * params.alpha - MU * N_init;
             real_t dt_transit = dt * g_init / (g_init - g_final);
             const auto [final1, transit_error] = rk2(ball, dt_transit, params, sliding, step_slip_sign);
