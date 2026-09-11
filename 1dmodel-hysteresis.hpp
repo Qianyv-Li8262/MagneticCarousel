@@ -100,6 +100,11 @@ DEVICE HOST INLINE vec2 operator*(const vec2 &a, const real_t b)
     return {b * a.x, b * a.y};
 }
 
+DEVICE HOST INLINE vec2 operator/(const vec2 &a, const real_t b)
+{
+    return {a.x / b, a.y / b};
+}
+
 DEVICE HOST INLINE vec2 operator*(const real_t b, const vec2 &a)
 {
     return a * b;
@@ -222,27 +227,26 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     out.t = REAL_LITERAL(1.0);
     out.phase = REAL_LITERAL(1.0) - in.xdot - in.theta_dot;
     vec2 h_ext_dot = out.phase * make_vec2(-real_sin(in.phase) * H_EXT, real_cos(in.phase) * H_EXT);
-    // assume ReLU use the 0 branch
-    real_t interme = ALPHA_JA * (REAL_LITERAL(1.0) - C * XI_JA) / XI_JA -
-                     (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
-    vec2 q_dot = 1 / interme * h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
-    vec2 he_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0))) +
-                  ALPHA_JA * (REAL_LITERAL(3.0) * (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0)) * h_ext_dot -
-                              (1 - C) / (1 - XI_JA) * q_dot);
-    // if reject we should select ReLU x branch
-    if (in.q * he_dot > 0) {
-        // reject
-        real_t c = XI_JA / ALPHA_JA;
-        real_t d = -length(in.q) / K_HYSTER;
-        real_t E = (REAL_LITERAL(1.0)-C)/(MU_R+REAL_LITERAL(2.0))/(REAL_LITERAL(1.0)-XI_JA);
-        real_t a = REAL_LITERAL(1.0) - C * XI_JA - E * c;
-        real_t b = -ALPHA_JA * (REAL_LITERAL(1.0) - C) / K_HYSTER * length(in.q) - E * d;
 
-        real_t a_final = c / a;
-        real_t b_final = d / a - b * (c + d) / a / (a + b);
-        vec2 qnorm = in.q * (1 / length(in.q));
-        q_dot = a_final * h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0))) +
-                b_final * (qnorm * h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)))) * qnorm;
+    const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+
+    vec2 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
+    // assume ReLU use the 0 branch
+    real_t interme = ALPHA_JA * (REAL_LITERAL(1.0) - C * XI_JA) / XI_JA - E;
+    vec2 q_dot = (REAL_LITERAL(1.0) / interme) * h0_dot;
+    // IMPORTANT: self-consistent H_e_dot
+    vec2 he_dot = (h0_dot + (E - ALPHA_JA * (REAL_LITERAL(1.0) - C)) * q_dot) / (REAL_LITERAL(1.0) - XI_JA);
+
+    // if reject we should select ReLU x branch
+    if (in.q * he_dot > REAL_LITERAL(0.0)) {
+        const real_t c = XI_JA / ALPHA_JA;
+        const real_t d = -length(in.q) / K_HYSTER;
+        const real_t a = REAL_LITERAL(1.0) - C * XI_JA - E * c;
+        const real_t b = -ALPHA_JA * (REAL_LITERAL(1.0) - C) / K_HYSTER * length(in.q) - E * d;
+        const real_t a_final = c / a;
+        const real_t b_final = d / a - b * (c + d) / a / (a + b);
+        const vec2 qnorm = in.q * (REAL_LITERAL(1.0) / length(in.q));
+        q_dot = a_final * h0_dot + b_final * (qnorm * h0_dot) * qnorm;
     }
     out.q = q_dot;
     return true;
