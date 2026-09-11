@@ -2,8 +2,44 @@
 #include <pybind11/pybind11.h>
 
 #include "1dmodel-hysteresis.hpp"
+#ifdef USE_FP64
+#include "hysteresis_critical_slow_cpu.hpp"
+#endif
 
 namespace py = pybind11;
+
+#ifdef USE_FP64
+void calc_slow_cpu_numpy(py::array_t<std::int32_t, py::array::c_style> answer,
+                         py::array_t<double, py::array::c_style> times,
+                         py::array_t<double, py::array::c_style> velocities,
+                         double dt, std::int64_t max_confirm, solver_params params, int num_threads)
+{
+    if (answer.ndim() != 1 || times.ndim() != 1 || velocities.ndim() != 1 ||
+        answer.size() != velocities.size() || times.size() != velocities.size())
+        throw py::value_error("answer_state, transit_time and v0 must be 1D arrays of equal length");
+    if (!answer.writeable() || !times.writeable())
+        throw py::value_error("output arrays must be writable");
+    const auto overlaps = [](const py::array &a, const py::array &b) {
+        const auto start_a = reinterpret_cast<std::uintptr_t>(a.data());
+        const auto start_b = reinterpret_cast<std::uintptr_t>(b.data());
+        return a.nbytes() && b.nbytes() &&
+               (start_a <= start_b ? start_b - start_a < static_cast<std::uintptr_t>(a.nbytes())
+                                   : start_a - start_b < static_cast<std::uintptr_t>(b.nbytes()));
+    };
+    if (overlaps(answer, times) || overlaps(answer, velocities) || overlaps(times, velocities))
+        throw py::value_error("input and output arrays must not overlap");
+    auto *answer_ptr = answer.mutable_data();
+    auto *time_ptr = times.mutable_data();
+    const auto *v0_ptr = velocities.data();
+    if (reinterpret_cast<std::uintptr_t>(answer_ptr) % alignof(std::int32_t) ||
+        reinterpret_cast<std::uintptr_t>(time_ptr) % alignof(double) ||
+        reinterpret_cast<std::uintptr_t>(v0_ptr) % alignof(double))
+        throw py::value_error("arrays must be naturally aligned");
+    const auto k = static_cast<std::size_t>(velocities.size());
+    py::gil_scoped_release release;
+    calc_slow_cpu(answer_ptr, time_ptr, v0_ptr, k, dt, max_confirm, params, num_threads);
+}
+#endif
 
 state state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial)
 {
@@ -49,6 +85,30 @@ PYBIND11_MODULE(hysteresis, m)
 {
     m.doc() = "CPU evolution for the one-dimensional hysteresis model";
     m.attr("real_dtype") = py::dtype::of<real_t>();
+#ifdef USE_FP64
+    m.attr("critical_slow_confirm_evolve_steps") = critical_slow_confirm_evolve_steps;
+    m.attr("critical_slow_lock_confirm_window") = critical_slow_lock_confirm_window;
+    m.attr("critical_slow_confirm_window") = critical_slow_confirm_window;
+    m.def("calc_slow_cpu", &calc_slow_cpu_numpy,
+          py::arg("answer_state").noconvert(), py::arg("transit_time").noconvert(),
+          py::arg("v0").noconvert(), py::arg("dt"), py::arg("max_confirm"),
+          py::arg("params"), py::arg("num_threads"),
+          "Synchronous FP64 CPU kernel; fills int32 answer_state and float64 transit_time in place. "
+          "v0 must be float64; all arrays must be contiguous, aligned, non-overlapping 1D arrays. "
+          "Do not access outputs or mutate/resize any arrays concurrently with this call. "
+          "C++ workers dynamically claim whole trajectories using a mutex; results retain input order.");
+    m.def("evolve_critical_slow", [](double v0, double dt, std::int64_t max_confirm, solver_params params) {
+        critical_slow_result result;
+        {
+            py::gil_scoped_release release;
+            result = evolve_critical_slow(v0, dt, max_confirm, params);
+        }
+        return py::make_tuple(result.answer_state, result.transit_time);
+    }, py::arg("v0"), py::arg("dt"), py::arg("max_confirm"), py::arg("params"),
+       "FP64 single trajectory. Return (classification, event time): locked final in-band smoothed run start (1000 time units, midpoint timestamps) or recovery minimum endpoint. "
+       "Each frame contains 50000 steps; lock after 50 consecutive frames within 1e-3 of target and an in-band full smoothing window; recovery uses a 100-frame analysis window. "
+       "Classification: -1 error, 0 undecided, 1 locked, 2 rising. No v0 interpolation.");
+#endif
     py::class_<solver_params>(m, "SolverParams")
         .def(py::init([](const real_t alpha, const real_t delta, const real_t gamma_g, const real_t gamma,
                          const real_t gamma_m) { return solver_params{alpha, delta, gamma_g, gamma, gamma_m}; }),

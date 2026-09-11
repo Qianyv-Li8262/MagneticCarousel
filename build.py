@@ -44,6 +44,7 @@ command = [
     "-shared",
     str(root / "pybind.cpp"),
     str(root / "1dmodel-hysteresis.cpp"),
+    *([str(root / "hysteresis_critical_slow_cpu.cpp")] if args.fp64 else []),
     f"-I{pybind11.get_include()}",
     f"-I{numpy.get_include()}",
     f"-I{python_include}",
