@@ -20,7 +20,7 @@ import hysteresis
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
-STEPS_PER_FRAME = 1000
+STEPS_PER_FRAME = 5000
 FPS = 30
 
 # Fast display settings.  The full sampled history is retained; only rendering
@@ -43,7 +43,7 @@ GAMMA_M = 11011.419
 
 # State layout: [t, x, x_dot, theta, theta_dot, phase, q_x, q_y].
 # In particular, the initial hysteresis vector q is the zero vector.
-INITIAL_STATE = np.zeros(8, dtype=np.float32)
+INITIAL_STATE = np.zeros(8, dtype=hysteresis.real_dtype)
 
 
 def scaled_model_parameters() -> tuple[float, float, float, float, float]:

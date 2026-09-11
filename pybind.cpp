@@ -5,9 +5,7 @@
 
 namespace py = pybind11;
 
-state evolve_with_mode(const state &initial, float dt, int steps, const solver_params &params, bool &sliding);
-
-state state_from_numpy(const py::array_t<float, py::array::c_style | py::array::forcecast> &initial)
+state state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial)
 {
     if (initial.ndim() != 1 || initial.shape(0) != 8)
         throw py::value_error("initial must be a one-dimensional array of length 8");
@@ -16,9 +14,9 @@ state state_from_numpy(const py::array_t<float, py::array::c_style | py::array::
     return {in(0), in(1), in(2), in(3), in(4), in(5), {in(6), in(7)}};
 }
 
-py::array_t<float> state_to_numpy(const state &value)
+py::array_t<real_t> state_to_numpy(const state &value)
 {
-    py::array_t<float> result(8);
+    py::array_t<real_t> result(8);
     auto out = result.mutable_unchecked<1>();
     out(0) = value.t;
     out(1) = value.x;
@@ -31,15 +29,15 @@ py::array_t<float> state_to_numpy(const state &value)
     return result;
 }
 
-py::array_t<float> evolve_numpy(
-    const py::array_t<float, py::array::c_style | py::array::forcecast> &initial, const float dt, const int steps,
+py::array_t<real_t> evolve_numpy(
+    const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial, const real_t dt, const int steps,
     const solver_params &params)
 {
     return state_to_numpy(evolve(state_from_numpy(initial), dt, steps, params));
 }
 
 py::tuple evolve_with_mode_numpy(
-    const py::array_t<float, py::array::c_style | py::array::forcecast> &initial, const float dt, const int steps,
+    const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial, const real_t dt, const int steps,
     const solver_params &params)
 {
     bool sliding;
@@ -50,9 +48,10 @@ py::tuple evolve_with_mode_numpy(
 PYBIND11_MODULE(hysteresis, m)
 {
     m.doc() = "CPU evolution for the one-dimensional hysteresis model";
+    m.attr("real_dtype") = py::dtype::of<real_t>();
     py::class_<solver_params>(m, "SolverParams")
-        .def(py::init([](const float alpha, const float delta, const float gamma_g, const float gamma,
-                         const float gamma_m) { return solver_params{alpha, delta, gamma_g, gamma, gamma_m}; }),
+        .def(py::init([](const real_t alpha, const real_t delta, const real_t gamma_g, const real_t gamma,
+                         const real_t gamma_m) { return solver_params{alpha, delta, gamma_g, gamma, gamma_m}; }),
              py::arg("alpha"), py::arg("delta"), py::arg("gamma_g"), py::arg("gamma"), py::arg("gamma_m"))
         .def_readwrite("alpha", &solver_params::alpha)
         .def_readwrite("delta", &solver_params::delta)
@@ -61,7 +60,7 @@ PYBIND11_MODULE(hysteresis, m)
         .def_readwrite("gamma_m", &solver_params::gamma_m);
 
     m.def("evolve", &evolve_numpy, py::arg("initial"), py::arg("dt"), py::arg("steps"), py::arg("params"),
-          "Evolve [t, x, xdot, theta, theta_dot, phase, qx, qy] and return the final float32 state.");
+          "Evolve [t, x, xdot, theta, theta_dot, phase, qx, qy] and return the final state.");
     m.def("evolve_with_mode", &evolve_with_mode_numpy, py::arg("initial"), py::arg("dt"), py::arg("steps"),
-          py::arg("params"), "Evolve the float32 state and return (state, sliding).");
+          py::arg("params"), "Evolve the state and return (state, sliding).");
 }

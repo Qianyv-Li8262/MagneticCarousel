@@ -1,5 +1,9 @@
 #pragma once
 
+#if defined(USE_FP64) && defined(__CUDACC__)
+#error "USE_FP64 is only supported by the CPU backend; CUDA must use FP32"
+#endif
+
 // macros for cuda / cpu c++ backends
 #ifdef __CUDACC__
 #define DEVICE __device__
@@ -22,9 +26,46 @@ using std::sinf;
 using std::sqrtf;
 #endif
 
+#if defined(USE_FP64) && !defined(__CUDACC__)
+using real_t = double;
+#define REAL_COS_IMPL std::cos
+#define REAL_FABS_IMPL std::fabs
+#define REAL_REMAINDER_IMPL std::remainder
+#define REAL_SIN_IMPL std::sin
+#define REAL_SQRT_IMPL std::sqrt
+#else
+using real_t = float;
+#define REAL_COS_IMPL cosf
+#define REAL_FABS_IMPL fabsf
+#define REAL_REMAINDER_IMPL remainderf
+#define REAL_SIN_IMPL sinf
+#define REAL_SQRT_IMPL sqrtf
+#endif
+
+DEVICE HOST INLINE real_t real_cos(const real_t value) { return REAL_COS_IMPL(value); }
+DEVICE HOST INLINE real_t real_fabs(const real_t value) { return REAL_FABS_IMPL(value); }
+DEVICE HOST INLINE real_t real_remainder(const real_t value, const real_t divisor)
+{
+    return REAL_REMAINDER_IMPL(value, divisor);
+}
+DEVICE HOST INLINE real_t real_sin(const real_t value) { return REAL_SIN_IMPL(value); }
+DEVICE HOST INLINE real_t real_sqrt(const real_t value) { return REAL_SQRT_IMPL(value); }
+
+#undef REAL_COS_IMPL
+#undef REAL_FABS_IMPL
+#undef REAL_REMAINDER_IMPL
+#undef REAL_SIN_IMPL
+#undef REAL_SQRT_IMPL
+
+#if defined(USE_FP64) && !defined(__CUDACC__)
+#define REAL_LITERAL(value) value
+#else
+#define REAL_LITERAL(value) value##f
+#endif
+
 struct vec2 {
-    float x;
-    float y;
+    real_t x;
+    real_t y;
 };
 
 DEVICE HOST INLINE vec2 operator+(const vec2 &a, const vec2 &b)
@@ -37,54 +78,54 @@ DEVICE HOST INLINE vec2 operator-(const vec2 &a, const vec2 &b)
     return {a.x - b.x, a.y - b.y};
 }
 
-DEVICE HOST INLINE float operator*(const vec2 &a, const vec2 &b)
+DEVICE HOST INLINE real_t operator*(const vec2 &a, const vec2 &b)
 {
     return a.x * b.x + a.y * b.y;
 }
 
-DEVICE HOST INLINE vec2 operator*(const vec2 &a, const float b)
+DEVICE HOST INLINE vec2 operator*(const vec2 &a, const real_t b)
 {
     return {b * a.x, b * a.y};
 }
 
-DEVICE HOST INLINE vec2 operator*(const float b, const vec2 &a)
+DEVICE HOST INLINE vec2 operator*(const real_t b, const vec2 &a)
 {
     return a * b;
 }
 
-DEVICE HOST INLINE vec2 make_vec2(const float a, const float b)
+DEVICE HOST INLINE vec2 make_vec2(const real_t a, const real_t b)
 {
     return {a, b};
 }
 
-DEVICE HOST INLINE float cross(const vec2 &a, const vec2 &b)
+DEVICE HOST INLINE real_t cross(const vec2 &a, const vec2 &b)
 {
     return a.x * b.y - a.y * b.x;
 }
 
-DEVICE HOST INLINE float signum(const float value)
+DEVICE HOST INLINE real_t signum(const real_t value)
 {
-    return static_cast<float>((value > 0.0f) - (value < 0.0f));
+    return static_cast<real_t>((value > REAL_LITERAL(0.0)) - (value < REAL_LITERAL(0.0)));
 }
 
-DEVICE HOST INLINE vec2 rotate(const vec2 vec, const float angle)
+DEVICE HOST INLINE vec2 rotate(const vec2 vec, const real_t angle)
 {
     // 逆时针旋转矢量angle弧度
-    return {cosf(angle) * vec.x - sinf(angle) * vec.y, sinf(angle) * vec.x + cosf(angle) * vec.y};
+    return {real_cos(angle) * vec.x - real_sin(angle) * vec.y, real_sin(angle) * vec.x + real_cos(angle) * vec.y};
 }
 
-DEVICE HOST INLINE float length(const vec2 &a)
+DEVICE HOST INLINE real_t length(const vec2 &a)
 {
-    return sqrtf(a.x * a.x + a.y * a.y);
+    return real_sqrt(a.x * a.x + a.y * a.y);
 }
 
 struct state {
-    float t;
-    float x;
-    float xdot;
-    float theta;
-    float theta_dot;
-    float phase;
+    real_t t;
+    real_t x;
+    real_t xdot;
+    real_t theta;
+    real_t theta_dot;
+    real_t phase;
     vec2 q;
 };
 
@@ -94,7 +135,7 @@ DEVICE HOST INLINE state operator+(const state &a, const state &b)
             a.phase + b.phase, a.q + b.q};
 }
 
-DEVICE HOST INLINE state operator*(const float a, const state &b)
+DEVICE HOST INLINE state operator*(const real_t a, const state &b)
 {
     return {a * b.t, a * b.x, a * b.xdot, a * b.theta, a * b.theta_dot, a * b.phase, a * b.q};
 }
@@ -104,42 +145,42 @@ DEVICE HOST INLINE state operator*(const float a, const state &b)
 #ifdef SOLVER_PARAMS_DEFINED
 
 // Fundamental magnetic constants
-#define MU_R 2.2926667e3f
-#define ALPHA_JA 3.2e-3f
-#define C 0.38f  
-#define K_HYSTER 1.0909091e-3f
+#define MU_R REAL_LITERAL(2.2926667e3)
+#define ALPHA_JA REAL_LITERAL(3.2e-3)
+#define C REAL_LITERAL(0.38)
+#define K_HYSTER REAL_LITERAL(1.0909091e-3)
 // Fundamental magnetic constants
 
-#define XI_JA (1.0f - (1.0f / (1.0f + ALPHA_JA * (MU_R - 1.0f))))
+#define XI_JA (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITERAL(1.0) + ALPHA_JA * (MU_R - REAL_LITERAL(1.0)))))
 
 // Magetic field strength
-#define H_EXT 1.4661546e-1f
+#define H_EXT REAL_LITERAL(1.4661546e-1)
 // Magetic field strength
 
 // Mechanical params
-#define ETA 0.4f
-#define MU 0.02f
+#define ETA REAL_LITERAL(0.4)
+#define MU REAL_LITERAL(0.02)
 // Mechanical params
 
 #endif
 // parameter macros
 
 struct solver_params {
-    float alpha;
-    float delta;
-    float gamma_g;
-    float gamma;
-    float gamma_m;
+    real_t alpha;
+    real_t delta;
+    real_t gamma_g;
+    real_t gamma;
+    real_t gamma_m;
 };
 
 DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params &params, const bool sliding,
-                                float slip_sign, bool &transit)
+                                real_t slip_sign, bool &transit)
 {
     // ============================================================================
-    vec2 h_ext = {cosf(in.phase) * H_EXT, sinf(in.phase) * H_EXT};
+    vec2 h_ext = {real_cos(in.phase) * H_EXT, real_sin(in.phase) * H_EXT};
     // ============================================================================
-    float N = params.gamma_g -
-              params.gamma / (2.0f + MU_R) *
+    real_t N = params.gamma_g -
+              params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                   (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
     // the ball can fly
     // CHINESE CAN FLY TOO!!!
@@ -147,45 +188,48 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
         return false;
     if (sliding) {
         // friction
-        float F = -slip_sign * MU * N;
-        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
-        float F_magnet = ETA * params.alpha * params.alpha * M_magnet;
-        out.xdot = F_magnet + F - params.delta * in.xdot * fabsf(in.xdot);
+        real_t F = -slip_sign * MU * N;
+        real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
+        real_t F_magnet = ETA * params.alpha * params.alpha * M_magnet;
+        out.xdot = F_magnet + F - params.delta * in.xdot * real_fabs(in.xdot);
         out.theta_dot = M_magnet + F / (ETA * params.alpha);
         // in the sliding scenario we do not have dt so we cannot check transition
         // when (sliding == true) the value of transit is UNDEFINED!
     } else {
-        float M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
+        real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
         out.theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                        params.alpha / (1 + ETA) * params.delta * in.theta_dot * fabsf(in.theta_dot);
+                        params.alpha / (1 + ETA) * params.delta * in.theta_dot * real_fabs(in.theta_dot);
         // to reduce recomputation we can check transition in this step
 
-        // if (fabsf(out.theta_dot - M_magnet) * ETA * params.alpha > MU * N)
+        // if (real_fabs(out.theta_dot - M_magnet) * ETA * params.alpha > MU * N)
         //     transit = 1;
 
         out.xdot = -params.alpha * out.theta_dot;
     }
     out.x = in.xdot;
     out.theta = in.theta_dot;
-    out.t = 1.0f;
-    out.phase = 1.0f - in.xdot - in.theta_dot;
-    vec2 h_ext_dot = out.phase * make_vec2(-sinf(in.phase) * H_EXT, cosf(in.phase) * H_EXT);
+    out.t = REAL_LITERAL(1.0);
+    out.phase = REAL_LITERAL(1.0) - in.xdot - in.theta_dot;
+    vec2 h_ext_dot = out.phase * make_vec2(-real_sin(in.phase) * H_EXT, real_cos(in.phase) * H_EXT);
     // assume ReLU use the 0 branch
-    vec2 q_dot = XI_JA / ALPHA_JA / (1 - C * XI_JA) * h_ext_dot * (3.0f / (MU_R + 2.0f));
-    vec2 he_dot = h_ext_dot * (3.0f / (MU_R + 2.0f)) +
-                  ALPHA_JA * (3.0f * (MU_R - 1.0f) / (MU_R + 2.0f) * h_ext_dot - (1 - C) / (1 - XI_JA) * q_dot);
+    vec2 q_dot = XI_JA / ALPHA_JA / (1 - C * XI_JA) * h_ext_dot *
+                 (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
+    vec2 he_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0))) +
+                  ALPHA_JA * (REAL_LITERAL(3.0) * (MU_R - REAL_LITERAL(1.0)) /
+                                  (MU_R + REAL_LITERAL(2.0)) * h_ext_dot -
+                              (1 - C) / (1 - XI_JA) * q_dot);
     // if reject we should select ReLU x branch
     if (in.q * he_dot > 0) {
         // reject
-        float a = 1.0f - C * XI_JA;
-        float b = -ALPHA_JA * (1.0f - C) / K_HYSTER * length(in.q);
-        float c = XI_JA / ALPHA_JA;
-        float d = -length(in.q) / K_HYSTER;
-        float a_final = c / a;
-        float b_final = d / a - b * (c + d) / a / (a + b);
+        real_t a = REAL_LITERAL(1.0) - C * XI_JA;
+        real_t b = -ALPHA_JA * (REAL_LITERAL(1.0) - C) / K_HYSTER * length(in.q);
+        real_t c = XI_JA / ALPHA_JA;
+        real_t d = -length(in.q) / K_HYSTER;
+        real_t a_final = c / a;
+        real_t b_final = d / a - b * (c + d) / a / (a + b);
         vec2 qnorm = in.q * (1 / length(in.q));
-        q_dot = a_final * h_ext_dot * (3.0f / (MU_R + 2.0f)) +
-                b_final * (qnorm * h_ext_dot * (3.0f / (MU_R + 2.0f))) * qnorm;
+        q_dot = a_final * h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0))) +
+                b_final * (qnorm * h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)))) * qnorm;
     }
     out.q = q_dot;
     return true;
@@ -196,8 +240,8 @@ struct rk2_res {
     int flag;
 };
 // 0 is ok, 1 is fly
-DEVICE HOST INLINE rk2_res rk2(const state &ball, const float dt, const solver_params &params, bool sliding,
-                               float slip_sign)
+DEVICE HOST INLINE rk2_res rk2(const state &ball, const real_t dt, const solver_params &params, bool sliding,
+                               real_t slip_sign)
 {
     state trial;
     bool transit = false;
@@ -211,15 +255,15 @@ DEVICE HOST INLINE rk2_res rk2(const state &ball, const float dt, const solver_p
 }
 
 // use int for result. 0=normal, 1=N<0, 2=undefined sliding direction
-DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params &params, bool &sliding,
-                                float &slip_sign)
+DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sliding,
+                                real_t &slip_sign)
 {
-    ball.phase = remainderf(ball.phase, 6.28318530717958647692f);
-    ball.theta = remainderf(ball.theta, 6.28318530717958647692f);
-    float step_slip_sign = slip_sign;
-    if (sliding && step_slip_sign == 0.0f) {
+    ball.phase = real_remainder(ball.phase, REAL_LITERAL(6.28318530717958647692));
+    ball.theta = real_remainder(ball.theta, REAL_LITERAL(6.28318530717958647692));
+    real_t step_slip_sign = slip_sign;
+    if (sliding && step_slip_sign == REAL_LITERAL(0.0)) {
         step_slip_sign = signum(ball.xdot + params.alpha * ball.theta_dot);
-        if (step_slip_sign == 0.0f)
+        if (step_slip_sign == REAL_LITERAL(0.0))
             return 2;
     }
     // trial rk2 step
@@ -227,42 +271,44 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params
     if (trial_error != 0)
         return trial_error;
     if (sliding) {
-        float s1 = ball.xdot + params.alpha * ball.theta_dot;
-        float s2 = trial_final.xdot + params.alpha * trial_final.theta_dot;
-        const bool crossed = (s1 > 0.0f && s2 <= 0.0f) || (s1 < 0.0f && s2 >= 0.0f);
+        real_t s1 = ball.xdot + params.alpha * ball.theta_dot;
+        real_t s2 = trial_final.xdot + params.alpha * trial_final.theta_dot;
+        const bool crossed = (s1 > REAL_LITERAL(0.0) && s2 <= REAL_LITERAL(0.0)) ||
+                             (s1 < REAL_LITERAL(0.0) && s2 >= REAL_LITERAL(0.0));
         if (crossed) {
-            const bool event_at_step_end = s2 == 0.0f;
-            float dt_transit = dt * s1 / (s1 - s2);
+            const bool event_at_step_end = s2 == REAL_LITERAL(0.0);
+            real_t dt_transit = dt * s1 / (s1 - s2);
             auto [state_dttrans, transit_error] =
                 event_at_step_end ? rk2_res{trial_final, 0} : rk2(ball, dt_transit, params, sliding, step_slip_sign);
             if (transit_error != 0)
                 return transit_error;
             // project the event state onto the pure-rolling constraint
-            const float S_event = state_dttrans.xdot + params.alpha * state_dttrans.theta_dot;
-            const float impulse = -ETA / (1.0f + ETA) * S_event;
+            const real_t S_event = state_dttrans.xdot + params.alpha * state_dttrans.theta_dot;
+            const real_t impulse = -ETA / (REAL_LITERAL(1.0) + ETA) * S_event;
             state_dttrans.xdot += impulse;
             state_dttrans.theta_dot += impulse / (ETA * params.alpha);
             // calc N and Freq at this transit point
-            vec2 h_ext = {H_EXT * cosf(state_dttrans.phase), H_EXT * sinf(state_dttrans.phase)};
-            float N = params.gamma_g - params.gamma / (2.0f + MU_R) *
+            vec2 h_ext = {H_EXT * real_cos(state_dttrans.phase), H_EXT * real_sin(state_dttrans.phase)};
+            real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                            (-(MU_R - 1) * H_EXT * H_EXT +
                                             (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
-            if (N < 0.0f)
+            if (N < REAL_LITERAL(0.0))
                 return 1;
-            float M_magnet =
+            real_t M_magnet =
                 -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(state_dttrans.q, h_ext);
-            float theta_dot =
+            real_t theta_dot =
                 ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot * fabsf(state_dttrans.theta_dot);
+                params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot *
+                    real_fabs(state_dttrans.theta_dot);
             bool next_sliding = sliding;
-            float next_slip_sign = step_slip_sign;
-            if (fabsf(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
+            real_t next_slip_sign = step_slip_sign;
+            if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
                 // keep sliding but slip_sign reverses
-                next_slip_sign *= -1.0f;
+                next_slip_sign *= REAL_LITERAL(-1.0);
             } else {
                 // turn into sticking
                 next_sliding = false;
-                next_slip_sign = 0.0f;
+                next_slip_sign = REAL_LITERAL(0.0);
             }
             // complete rk2 step after transition
             const auto [final_state, final_error] =
@@ -282,37 +328,38 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params
     } else {
         // check if still stick at the end of the step
         // calc N and Freq at this point
-        vec2 h_ext = {H_EXT * cosf(trial_final.phase), H_EXT * sinf(trial_final.phase)};
-        float N = params.gamma_g - params.gamma / (2.0f + MU_R) *
+        vec2 h_ext = {H_EXT * real_cos(trial_final.phase), H_EXT * real_sin(trial_final.phase)};
+        real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                        (-(MU_R - 1) * H_EXT * H_EXT +
                                         (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
-        if (N < 0.0f)
+        if (N < REAL_LITERAL(0.0))
             return 1;
-        float M_magnet =
+        real_t M_magnet =
             -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(trial_final.q, h_ext);
-        float theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet - params.alpha / (1 + ETA) * params.delta *
-                                                                                trial_final.theta_dot *
-                                                                                fabsf(trial_final.theta_dot);
-        float g_final = fabsf(theta_dot - M_magnet) * ETA * params.alpha - MU * N;
+        real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
+                           params.alpha / (1 + ETA) * params.delta * trial_final.theta_dot *
+                               real_fabs(trial_final.theta_dot);
+        real_t g_final = real_fabs(theta_dot - M_magnet) * ETA * params.alpha - MU * N;
         if (g_final > 0) {
             // turn into sliding. lerp the transit time.
             // i think shading the outer vars is ok here because we do not use outer vars
-            vec2 h_ext_init = {H_EXT * cosf(ball.phase), H_EXT * sinf(ball.phase)};
-            float N_init = params.gamma_g -
-                           params.gamma / (2.0f + MU_R) *
+            vec2 h_ext_init = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
+            real_t N_init = params.gamma_g -
+                           params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                (-(MU_R - 1) * H_EXT * H_EXT +
                                 (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));
-            float M_magnet_init =
+            real_t M_magnet_init =
                 -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext_init);
-            float theta_dot_init = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet_init -
-                                   params.alpha / (1 + ETA) * params.delta * ball.theta_dot * fabsf(ball.theta_dot);
-            float g_init = fabsf(theta_dot_init - M_magnet_init) * ETA * params.alpha - MU * N_init;
-            float dt_transit = dt * g_init / (g_init - g_final);
+            real_t theta_dot_init = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet_init -
+                                    params.alpha / (1 + ETA) * params.delta * ball.theta_dot *
+                                        real_fabs(ball.theta_dot);
+            real_t g_init = real_fabs(theta_dot_init - M_magnet_init) * ETA * params.alpha - MU * N_init;
+            real_t dt_transit = dt * g_init / (g_init - g_final);
             const auto [final1, transit_error] = rk2(ball, dt_transit, params, sliding, step_slip_sign);
             if (transit_error != 0)
                 return transit_error;
             const bool next_sliding = true;
-            const float next_slip_sign = -signum(theta_dot - M_magnet);
+            const real_t next_slip_sign = -signum(theta_dot - M_magnet);
             const auto [final_state, final_error] = rk2(final1, dt - dt_transit, params, next_sliding, next_slip_sign);
             if (final_error != 0)
                 return final_error;
@@ -329,5 +376,7 @@ DEVICE HOST INLINE int fwd1step(state &ball, const float dt, const solver_params
 }
 
 #ifndef __CUDACC__
-state evolve(const state &initial, const float dt, const int steps, const solver_params &params);
+state evolve(const state &initial, const real_t dt, const int steps, const solver_params &params);
+state evolve_with_mode(const state &initial, const real_t dt, const int steps, const solver_params &params,
+                       bool &sliding);
 #endif

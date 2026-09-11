@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,6 +8,10 @@ import sysconfig
 import numpy
 import pybind11
 
+
+parser = argparse.ArgumentParser(description="Build the CPU hysteresis extension")
+parser.add_argument("--fp64", action="store_true", help="build with double-precision real_t")
+args = parser.parse_args()
 
 root = Path(__file__).resolve().parent
 clang = shutil.which("clang++")
@@ -27,6 +32,7 @@ command = [
     clang,
     "-std=c++17",
     "-O2",
+    *(["-DUSE_FP64"] if args.fp64 else []),
     "-shared",
     str(root / "pybind.cpp"),
     str(root / "1dmodel-hysteresis.cpp"),
