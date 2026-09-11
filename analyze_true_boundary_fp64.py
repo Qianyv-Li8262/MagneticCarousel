@@ -88,16 +88,26 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/true_boundary_fp64"))
     parser.add_argument("--near-time", type=float, default=100_000.0)
     parser.add_argument("--ultra-time", type=float, default=1_000_000.0)
+    parser.add_argument("--left-v0", type=float, default=0.189186667, help="Initial velocity at the left analysis point")
+    parser.add_argument("--right-v0", type=float, default=0.189213333, help="Initial velocity at the right analysis point")
+    parser.add_argument("--long-v0", type=float, default=0.19000, help="Initial velocity for the long-time analysis")
     args = parser.parse_args()
+    for name in ("left_v0", "right_v0", "long_v0"):
+        if not np.isfinite(getattr(args, name)):
+            parser.error(f"--{name.replace('_', '-')} must be finite")
+    for name, sample_time in (("near_time", 1000.0), ("ultra_time", 10_000.0)):
+        value = getattr(args, name)
+        if not np.isfinite(value) or value < sample_time:
+            parser.error(f"--{name.replace('_', '-')} must be finite and at least {sample_time:g}")
 
     hysteresis = load_fp64(args.module_dir)
     alpha, _params = parameters(hysteresis)
     locked_velocity = -alpha / (1.0 - alpha)
 
     cases = {
-        "locked_v0_0.18920": trace(hysteresis, 0.18920, 0.0, args.near_time, 1000.0),
-        "running_v0_0.18930": trace(hysteresis, 0.18930, 0.0, args.near_time, 1000.0),
-        "ultralong_v0_0.19000": trace(hysteresis, 0.19000, 0.0, args.ultra_time, 10_000.0),
+        f"left_v0_{args.left_v0}": trace(hysteresis, args.left_v0, 0.0, args.near_time, 1000.0),
+        f"right_v0_{args.right_v0}": trace(hysteresis, args.right_v0, 0.0, args.near_time, 1000.0),
+        f"ultralong_v0_{args.long_v0}": trace(hysteresis, args.long_v0, 0.0, args.ultra_time, 10_000.0),
     }
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -105,37 +115,39 @@ def main() -> None:
         save_csv(args.output_dir / f"{name}.csv", data)
 
     figure, axes = plt.subplots(2, 2, figsize=(13.2, 8.5), constrained_layout=True)
-    locked = cases["locked_v0_0.18920"]
-    running = cases["running_v0_0.18930"]
-    ultra = cases["ultralong_v0_0.19000"]
+    left, right, ultra = cases.values()
+    left_label = rf"Left: $v_0={args.left_v0}$"
+    right_label = rf"Right: $v_0={args.right_v0}$"
 
-    axes[0, 0].plot(locked[:, 0], locked[:, 3], label=r"$v_0=0.18920$: locked")
-    axes[0, 0].plot(running[:, 0], running[:, 3], label=r"$v_0=0.18930$: running")
+    axes[0, 0].plot(left[:, 0], left[:, 3], label=left_label)
+    axes[0, 0].plot(right[:, 0], right[:, 3], label=right_label)
     axes[0, 0].axhline(locked_velocity, color="0.25", ls="--", label=rf"$-\alpha/(1-\alpha)={locked_velocity:.6f}$")
-    axes[0, 0].set(xlabel="$t$", ylabel="block-mean $v$", title="Opposite outcomes only $10^{-4}$ apart")
+    axes[0, 0].set(xlabel="$t$", ylabel="block-mean $v$", title=rf"Analysis points: $|\Delta v_0|={abs(args.right_v0 - args.left_v0):.6g}$")
     axes[0, 0].legend(fontsize=8)
 
-    axes[0, 1].plot(locked[:, 0], locked[:, 4], label="locked side")
-    axes[0, 1].plot(running[:, 0], running[:, 4], label="running side")
+    axes[0, 1].plot(left[:, 0], left[:, 4], label=left_label)
+    axes[0, 1].plot(right[:, 0], right[:, 4], label=right_label)
     axes[0, 1].axhline(0.0, color="0.25", ls="--")
-    axes[0, 1].set(xlabel="$t$", ylabel=r"instantaneous $\dot\phi=1-v-\omega$", title="Phase locking versus continued winding")
+    axes[0, 1].set(xlabel="$t$", ylabel=r"instantaneous $\dot\phi=1-v-\omega$", title="Phase-rate comparison")
     axes[0, 1].legend(fontsize=8)
 
-    axes[1, 0].loglog(ultra[:, 0], np.abs(ultra[:, 2]), "o-", ms=3, label=r"$v_0=0.19000$")
+    axes[1, 0].loglog(ultra[:, 0], np.abs(ultra[:, 2]), "o-", ms=3, label=rf"Long: $v_0={args.long_v0}$")
     reference = abs(ultra[-1, 2]) * np.sqrt(ultra[-1, 0] / ultra[:, 0])
     axes[1, 0].loglog(ultra[:, 0], reference, ls="--", color="0.3", label=r"$t^{-1/2}$ guide")
-    axes[1, 0].set(xlabel="$t$", ylabel="$|v|$", title=r"Unlocked state remains unlocked to $t=10^6$")
+    axes[1, 0].set(xlabel="$t$", ylabel="$|v|$", title=rf"Long-time analysis to $t={ultra[-1, 0]:g}$")
     axes[1, 0].legend(fontsize=8)
 
     axes[1, 1].axis("off")
     summary = (
         "FP64 CPU result at $S_0=0$\n\n"
-        "$0.18922 < v_{0,c} < 0.18923$  ($\\Delta t=10^{-3}$)\n\n"
-        "$v_0 < v_{0,c}$: phase-locked pure rolling\n"
-        f"$v \\to {locked_velocity:.6f}$,  $\\dot\\phi \\to 0$\n\n"
-        "$v_0 > v_{0,c}$: unlocked rolling\n"
-        "$v \\to 0^-$ slowly,  $\\dot\\phi \\to 1$\n\n"
-        "The classification is unchanged at $\\Delta t=5\\times10^{-4}$."
+        f"Left point: $v_0={args.left_v0}$\n"
+        f"Right point: $v_0={args.right_v0}$\n"
+        f"Long-time point: $v_0={args.long_v0}$\n\n"
+        f"Left/right end time: {left[-1, 0]:g} / {right[-1, 0]:g}\n"
+        f"Long-time end time: {ultra[-1, 0]:g}\n"
+        f"Integration step: $\\Delta t={DT:g}$\n\n"
+        "Phase-locked reference:\n"
+        f"$v={locked_velocity:.6f}$,  $\\dot\\phi=0$"
     )
     axes[1, 1].text(0.03, 0.95, summary, va="top", fontsize=12)
 
