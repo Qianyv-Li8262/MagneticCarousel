@@ -20,7 +20,7 @@ import hysteresis
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
-STEPS_PER_FRAME = 5000
+STEPS_PER_FRAME = 1000
 FPS = 30
 
 # Fast display settings.  The full sampled history is retained; only rendering
@@ -43,8 +43,8 @@ GAMMA_M = 11011.419
 
 # State layout: [t, x, x_dot, theta, theta_dot, phase, q_x, q_y].
 # In particular, the initial hysteresis vector q is the zero vector.
-INITIAL_STATE = np.zeros(8, dtype=hysteresis.real_dtype)
-
+DEFAULT_INITIAL_V0 = 0.0
+DEFAULT_INITIAL_S0 = 0.0
 
 def scaled_model_parameters() -> tuple[float, float, float, float, float]:
     """Return the effective CPU parameters for the selected GPU sweep point."""
@@ -62,6 +62,19 @@ def scaled_model_parameters() -> tuple[float, float, float, float, float]:
         GAMMA * inverse_somega_squared,
         GAMMA_M * inverse_sr * inverse_sr * inverse_somega_squared,
     )
+
+
+def make_initial_state(v0: float, s0: float, alpha: float) -> np.ndarray:
+    """Build the CPU state from ``v0`` and contact-point slip ``s0``."""
+    if not np.isfinite(v0) or not np.isfinite(s0):
+        raise ValueError("v0 and s0 must be finite")
+    if not np.isfinite(alpha) or alpha <= 0.0:
+        raise ValueError("alpha must be finite and positive")
+
+    state = np.zeros(8, dtype=hysteresis.real_dtype)
+    state[2] = v0
+    state[4] = (s0 - v0) / alpha
+    return state
 
 
 def minmax_downsample(
@@ -92,7 +105,14 @@ def minmax_downsample(
     return np.asarray(times)[indices], values_array[indices]
 
 
-def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool = False):
+def animate(
+    *,
+    show_graphs: bool = True,
+    show_velocity: bool = False,
+    fast: bool = False,
+    initial_v0: float = DEFAULT_INITIAL_V0,
+    initial_s0: float = DEFAULT_INITIAL_S0,
+):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -102,7 +122,7 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool
 
     alpha, delta, gamma_g, gamma, gamma_m = scaled_model_parameters()
     params = hysteresis.SolverParams(alpha, delta, gamma_g, gamma, gamma_m)
-    state = INITIAL_STATE.copy()
+    state = make_initial_state(initial_v0, initial_s0, alpha)
 
     times = [float(state[0])]
     positions = [float(state[1])]
@@ -191,6 +211,8 @@ def animate(*, show_graphs: bool = True, show_velocity: bool = False, fast: bool
         else:
             ax_theta.set_xlabel(r"$t$")
 
+    fig.suptitle(rf"$v_0={initial_v0:g},\quad S_0={initial_s0:g}$")
+
     def rescale_history_axes() -> None:
         t_now = times[-1]
         ax_x.set_xlim(0.0, max(10.0, t_now * 1.05))
@@ -275,7 +297,20 @@ if __name__ == "__main__":
         help="show the center-of-mass velocity graph in addition to x(t) and theta(t)",
     )
     parser.add_argument("--fast", action="store_true", help="reduce real-time rendering overhead")
+    parser.add_argument("--v0", type=float, default=DEFAULT_INITIAL_V0, help="initial center-of-mass velocity")
+    parser.add_argument(
+        "--s0",
+        type=float,
+        default=DEFAULT_INITIAL_S0,
+        help="initial contact-point slip velocity, S0 = v0 + alpha * omega0",
+    )
     args = parser.parse_args()
 
-    figure, animation = animate(show_graphs=not args.no_graph, show_velocity=args.show_v, fast=args.fast)
+    figure, animation = animate(
+        show_graphs=not args.no_graph,
+        show_velocity=args.show_v,
+        fast=args.fast,
+        initial_v0=args.v0,
+        initial_s0=args.s0,
+    )
     plt.show()
