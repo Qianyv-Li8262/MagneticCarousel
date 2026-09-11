@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from run_hysteresis_phase import (
+from scan_sr_somega_gpu import (
     DEFAULT_REFERENCE,
     ReferenceParams,
     _cell_edges,
