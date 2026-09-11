@@ -29,8 +29,8 @@ from scan_sr_somega_gpu import (
 # ============================= Run settings =============================
 # Fixed physical-parameter ratios.  This is the point where the two tested
 # initial conditions were observed to approach different long-time states.
-SR = 0.8
-SOMEGA = 0.6
+SR = 1.0
+SOMEGA = 1.0
 
 # Initial-condition plane.  S0 = v0 + alpha * omega0.
 V0_LOWER = -0.4
@@ -38,9 +38,9 @@ V0_UPPER = 0.4
 S0_LOWER = -0.4
 S0_UPPER = 0.4
 
-K = 256
+K = 64
 DT = 1.0e-3
-TOTAL_TIME = 40000.0
+TOTAL_TIME = 8000.0
 
 BLOCK_X = 16
 BLOCK_Y = 16

@@ -18,13 +18,13 @@ import numpy as np
 
 
 # ============================= Run settings =============================
-SR_LOWER = 0.5
-SR_UPPER = 1.0
-SOMEGA_LOWER = 0.5
-SOMEGA_UPPER = 1.5
-K = 256
+SR_LOWER = 0.01
+SR_UPPER = 5.0
+SOMEGA_LOWER = 0.01
+SOMEGA_UPPER = 5.0
+K = 128
 DT = 1.0e-3
-TOTAL_TIME = 100.0
+TOTAL_TIME = 4000.0
 
 BLOCK_X = 16
 BLOCK_Y = 16
