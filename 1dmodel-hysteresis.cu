@@ -117,7 +117,7 @@ DEVICE INLINE int evolve_gpu(state &ball, const float dt, const float total_time
     if (status != kGpuEvolveOk)
         return status;
 
-    // The all-zero initial state is step zero and participates in the minimum.
+    // The supplied initial state is step zero and participates in the minimum.
     velocity_recovered = false;
     minimum_x = ball.x;
     minimum_step = 0;
@@ -199,6 +199,72 @@ extern "C" GLOBAL void EvolveHysteresisGrid(const float sr_lower, const float sr
     float minimum_x = 0.0f;
     int minimum_step = 0;
     float minimum_velocity = 0.0f;
+    if (evolve_gpu(ball, dt, total_time, params, velocity_recovered, minimum_x, minimum_step, minimum_velocity) !=
+        kGpuEvolveOk)
+        return;
+
+    output_velocity_recovered[output_index] = velocity_recovered ? 1 : 0;
+    output_minimum_x[output_index] = minimum_x;
+    output_minimum_step[output_index] = minimum_step;
+    output_minimum_velocity[output_index] = minimum_velocity;
+    output_status[output_index] = 0;
+}
+
+// Two-dimensional initial-condition grid layout:
+//   x thread coordinate -> initial center-of-mass velocity v0
+//   y thread coordinate -> initial contact-point slip velocity S0
+//   flat index          -> S0_index * k + v0_index
+//
+// sr and somega are fixed for the whole launch.  Each thread recovers the
+// initial angular velocity from
+//
+//     S0 = v0 + alpha * omega0.
+//
+// The initial position, body angle, magnetic phase, and hysteresis vector are
+// zero.  Outputs use exactly the same finite-time velocity-minimum criterion
+// as EvolveHysteresisGrid.
+extern "C" GLOBAL void EvolveHysteresisInitialGrid(
+    const float sr, const float somega, const float v0_lower, const float v0_upper, const float s0_lower,
+    const float s0_upper, const int k, const float dt, const float total_time, const float reference_alpha,
+    const float reference_delta, const float reference_gamma_g, const float reference_gamma,
+    const float reference_gamma_m, int *output_status, int *output_velocity_recovered, float *output_minimum_x,
+    int *output_minimum_step, float *output_minimum_velocity)
+{
+    const int v0_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int s0_index = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+    if (k <= 0 || v0_index >= k || s0_index >= k)
+        return;
+
+    const int output_index = s0_index * k + v0_index;
+    output_status[output_index] = 1;
+
+    if (!isfinite(sr) || sr <= 0.0f || !isfinite(somega) || somega <= 0.0f)
+        return;
+
+    const solver_params reference = {
+        reference_alpha, reference_delta, reference_gamma_g, reference_gamma, reference_gamma_m,
+    };
+    if (!finite_params(reference))
+        return;
+
+    const solver_params params = scaled_params(sr, somega, reference);
+    if (!finite_params(params))
+        return;
+
+    const float v0 = interpolate_grid_value(v0_lower, v0_upper, v0_index, k);
+    const float s0 = interpolate_grid_value(s0_lower, s0_upper, s0_index, k);
+    const float omega0 = (s0 - v0) / params.alpha;
+    if (!isfinite(v0) || !isfinite(s0) || !isfinite(omega0))
+        return;
+
+    state ball = {
+        0.0f, 0.0f, v0, 0.0f, omega0, 0.0f, {0.0f, 0.0f},
+    };
+
+    bool velocity_recovered = false;
+    float minimum_x = 0.0f;
+    int minimum_step = 0;
+    float minimum_velocity = v0;
     if (evolve_gpu(ball, dt, total_time, params, velocity_recovered, minimum_x, minimum_step, minimum_velocity) !=
         kGpuEvolveOk)
         return;
