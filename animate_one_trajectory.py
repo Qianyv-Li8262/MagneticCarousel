@@ -11,16 +11,38 @@ with ``python src/build.py`` if it is missing.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 
 import hysteresis
 
 
+def require_current_extension() -> None:
+    """Fail visibly when Python has loaded an extension built from older sources."""
+    extension_path = Path(hysteresis.__file__).resolve()
+    source_directory = Path(__file__).resolve().parent
+    model_sources = (
+        source_directory / "1dmodel-hysteresis.hpp",
+        source_directory / "1dmodel-hysteresis.cpp",
+        source_directory / "pybind.cpp",
+    )
+    newer_sources = [source.name for source in model_sources if source.stat().st_mtime > extension_path.stat().st_mtime]
+    if newer_sources:
+        names = ", ".join(newer_sources)
+        raise RuntimeError(
+            f"Loaded {extension_path.name}, but these model sources are newer: {names}. "
+            "Rebuild with `python build.py --fp64`, then restart Python."
+        )
+
+
+require_current_extension()
+
+
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
-STEPS_PER_FRAME = 1000
+STEPS_PER_FRAME = 10000
 FPS = 30
 
 # Fast display settings.  The full sampled history is retained; only rendering
@@ -33,8 +55,8 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 0.8
-SOMEGA = 0.6
+SR = 2.5
+SOMEGA = 2.254
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356
@@ -43,8 +65,8 @@ GAMMA_M = 11011.419
 
 # State layout: [t, x, x_dot, theta, theta_dot, phase, q_x, q_y].
 # In particular, the initial hysteresis vector q is the zero vector.
-DEFAULT_INITIAL_V0 = 0.0
-DEFAULT_INITIAL_S0 = 0.0
+DEFAULT_INITIAL_V0 = -5
+DEFAULT_INITIAL_S0 = 5
 
 def scaled_model_parameters() -> tuple[float, float, float, float, float]:
     """Return the effective CPU parameters for the selected GPU sweep point."""
@@ -128,22 +150,25 @@ def animate(
     positions = [float(state[1])]
     angles = [float(state[3])]
     velocities = [float(state[2])]
+    phase_rates = [1.0 - float(state[2]) - float(state[4])]
 
     if show_graphs:
-        graph_rows = 3 if show_velocity else 2
-        figure_height = 6.8 if show_velocity else 5.2
+        graph_rows = 4 if show_velocity else 3
+        figure_height = 8.2 if show_velocity else 6.8
         figure_options = {} if fast else {"layout": "constrained"}
         fig = plt.figure(figsize=(12.5, figure_height), **figure_options)
         grid = fig.add_gridspec(graph_rows, 2, width_ratios=(1.7, 1.0))
         ax_scene = fig.add_subplot(grid[:, 0])
         ax_x = fig.add_subplot(grid[0, 1])
         ax_theta = fig.add_subplot(grid[1, 1], sharex=ax_x)
-        ax_velocity = fig.add_subplot(grid[2, 1], sharex=ax_x) if show_velocity else None
+        ax_phase_rate = fig.add_subplot(grid[2, 1], sharex=ax_x)
+        ax_velocity = fig.add_subplot(grid[3, 1], sharex=ax_x) if show_velocity else None
     else:
         figure_options = {} if fast else {"layout": "constrained"}
         fig, ax_scene = plt.subplots(figsize=(8.5, 4.5), **figure_options)
         ax_x = None
         ax_theta = None
+        ax_phase_rate = None
         ax_velocity = None
 
     # Left: a ball on the ground with a right-moving sinusoidal wave above it.
@@ -195,11 +220,21 @@ def animate(
         (theta_point,) = ax_theta.plot(times, angles, "o", color="tab:purple", markersize=4)
         traces.extend(((ax_x, x_trace, x_point, positions), (ax_theta, theta_trace, theta_point, angles)))
 
+        (phase_rate_trace,) = ax_phase_rate.plot(
+            times, phase_rates, color="tab:red", linewidth=1.7
+        )
+        (phase_rate_point,) = ax_phase_rate.plot(
+            times, phase_rates, "o", color="tab:red", markersize=4
+        )
+        traces.append((ax_phase_rate, phase_rate_trace, phase_rate_point, phase_rates))
+
         ax_x.set_title("CPU evolution")
         ax_x.set_ylabel(r"$x(t)$")
         ax_theta.set_ylabel(r"$\theta(t)$")
+        ax_phase_rate.set_ylabel(r"$\dot{\phi}=1-v-\omega$")
         ax_x.grid(alpha=0.25)
         ax_theta.grid(alpha=0.25)
+        ax_phase_rate.grid(alpha=0.25)
 
         if show_velocity:
             (velocity_trace,) = ax_velocity.plot(times, velocities, color="tab:green", linewidth=1.7)
@@ -209,7 +244,7 @@ def animate(
             ax_velocity.set_xlabel(r"$t$")
             ax_velocity.grid(alpha=0.25)
         else:
-            ax_theta.set_xlabel(r"$t$")
+            ax_phase_rate.set_xlabel(r"$t$")
 
     fig.suptitle(rf"$v_0={initial_v0:g},\quad S_0={initial_s0:g}$")
 
@@ -232,6 +267,7 @@ def animate(
             positions.append(float(state[1]))
             angles.append(float(state[3]))
             velocities.append(float(state[2]))
+            phase_rates.append(1.0 - float(state[2]) - float(state[4]))
 
         t = times[-1]
         x = positions[-1]
