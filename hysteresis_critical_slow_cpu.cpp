@@ -9,27 +9,27 @@
 #include <vector>
 
 namespace {
-void validate_inputs(const double dt, const std::int64_t max_confirm, const solver_params &params)
+void validate_inputs(const real_t dt, const std::int64_t max_confirm, const solver_params &params)
 {
-    if (!std::isfinite(dt) || dt <= 0.0 || max_confirm < 0)
+    if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0) || max_confirm < 0)
         throw std::invalid_argument("dt must be finite and positive; max_confirm must be nonnegative");
-    if (!std::isfinite(params.alpha) || params.alpha == 0.0 || params.alpha == 1.0 ||
-        !std::isfinite(params.delta) || !std::isfinite(params.gamma_g) ||
-        !std::isfinite(params.gamma) || !std::isfinite(params.gamma_m))
+    if (!real_isfinite(params.alpha) || params.alpha == REAL_LITERAL(0.0) ||
+        params.alpha == REAL_LITERAL(1.0) || !real_isfinite(params.delta) ||
+        !real_isfinite(params.gamma_g) || !real_isfinite(params.gamma) || !real_isfinite(params.gamma_m))
         throw std::invalid_argument("parameters must be finite and alpha must differ from 0 and 1");
 
-    const double frame_time = critical_slow_confirm_evolve_steps * dt;
+    const double frame_time = static_cast<double>(real_t(critical_slow_confirm_evolve_steps) * dt);
     if (!std::isfinite(frame_time) ||
         !std::isfinite(static_cast<double>(max_confirm) * frame_time))
         throw std::invalid_argument("requested duration exceeds FP64 range");
 }
 
-solver_params scaled_params(const double sr, const double somega, const solver_params &reference)
+solver_params scaled_params(const real_t sr, const real_t somega, const solver_params &reference)
 {
-    if (!std::isfinite(sr) || sr <= 0.0 || !std::isfinite(somega) || somega <= 0.0)
+    if (!real_isfinite(sr) || sr <= REAL_LITERAL(0.0) || !real_isfinite(somega) || somega <= REAL_LITERAL(0.0))
         throw std::invalid_argument("sr and somega must be finite and positive");
-    const double inverse_sr = 1.0 / sr;
-    const double inverse_somega_squared = 1.0 / (somega * somega);
+    const real_t inverse_sr = REAL_LITERAL(1.0) / sr;
+    const real_t inverse_somega_squared = REAL_LITERAL(1.0) / (somega * somega);
     return {
         reference.alpha * sr,
         reference.delta * inverse_sr,
@@ -40,22 +40,23 @@ solver_params scaled_params(const double sr, const double somega, const solver_p
 }
 } // namespace
 
-critical_slow_result evolve_critical_slow(const double dt, const std::int64_t max_confirm,
+critical_slow_result evolve_critical_slow(const real_t dt, const std::int64_t max_confirm,
                                          const solver_params &params)
 {
     validate_inputs(dt, max_confirm, params);
-    const double frame_time = critical_slow_confirm_evolve_steps * dt;
+    const double frame_time = static_cast<double>(real_t(critical_slow_confirm_evolve_steps) * dt);
 
-    state ball = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, {0.0, 0.0}};
+    state ball = {REAL_LITERAL(0.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0),
+                  REAL_LITERAL(0.0), REAL_LITERAL(0.0), {REAL_LITERAL(0.0), REAL_LITERAL(0.0)}};
     bool sliding = false;
-    double slip_sign = 0.0;
+    real_t slip_sign = REAL_LITERAL(0.0);
     const vec2 h_ext = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
-    const double N = params.gamma_g - params.gamma / (2.0 + MU_R) *
+    const real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
         (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext));
-    if (N < 0.0 || !std::isfinite(N))
+    if (N < REAL_LITERAL(0.0) || !real_isfinite(N))
         return {-1, -1.0};
-    const double M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext);
-    const double theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
+    const real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext);
+    const real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
         params.alpha / (1 + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
     if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
         sliding = true;
@@ -81,11 +82,12 @@ critical_slow_result evolve_critical_slow(const double dt, const std::int64_t ma
         }
         // The CUDA classifier has no non-finite guard. Reject numerical failures
         // here instead of silently treating NaNs as an undecided trajectory.
-        if (!std::isfinite(ball.t) || !std::isfinite(ball.x) || !std::isfinite(ball.xdot) ||
-            !std::isfinite(ball.theta) || !std::isfinite(ball.theta_dot) ||
-            !std::isfinite(ball.phase) || !std::isfinite(ball.q.x) || !std::isfinite(ball.q.y))
+        if (!real_isfinite(ball.t) || !real_isfinite(ball.x) || !real_isfinite(ball.xdot) ||
+            !real_isfinite(ball.theta) || !real_isfinite(ball.theta_dot) ||
+            !real_isfinite(ball.phase) || !real_isfinite(ball.q.x) || !real_isfinite(ball.q.y))
             return {-1, -1.0};
-        const double phase_rate = 1.0 - ball.xdot - ball.theta_dot;
+        const real_t phase_rate_real = REAL_LITERAL(1.0) - ball.xdot - ball.theta_dot;
+        const double phase_rate = static_cast<double>(phase_rate_real);
         if (!std::isfinite(phase_rate))
             return {-1, -1.0};
         phase_history.push_back({frame_time, phase_rate});
@@ -118,14 +120,14 @@ critical_slow_result evolve_critical_slow(const double dt, const std::int64_t ma
     return {0, -1.0};
 }
 
-void calc_slow_cpu(std::int32_t *answer_state, double *transit_time, const double *scan_values,
-                   const std::size_t k, const double fixed_scale, const critical_slow_scan_mode mode,
-                   const double dt, const std::int64_t max_confirm, const solver_params reference,
+void calc_slow_cpu(std::int32_t *answer_state, double *transit_time, const real_t *scan_values,
+                   const std::size_t k, const real_t fixed_scale, const critical_slow_scan_mode mode,
+                   const real_t dt, const std::int64_t max_confirm, const solver_params reference,
                    const int num_threads)
 {
     if (num_threads <= 0)
         throw std::invalid_argument("num_threads must be positive");
-    if (!std::isfinite(fixed_scale) || fixed_scale <= 0.0)
+    if (!real_isfinite(fixed_scale) || fixed_scale <= REAL_LITERAL(0.0))
         throw std::invalid_argument("fixed_scale must be finite and positive");
     if (mode != critical_slow_scan_mode::somega && mode != critical_slow_scan_mode::sr)
         throw std::invalid_argument("invalid critical-slowing scan mode");
@@ -133,8 +135,8 @@ void calc_slow_cpu(std::int32_t *answer_state, double *transit_time, const doubl
         throw std::invalid_argument("nonempty arrays must not be null");
     // Validate the complete batch before touching any output or launching workers.
     for (std::size_t i = 0; i < k; ++i) {
-        const double sr = mode == critical_slow_scan_mode::sr ? scan_values[i] : fixed_scale;
-        const double somega = mode == critical_slow_scan_mode::somega ? scan_values[i] : fixed_scale;
+        const real_t sr = mode == critical_slow_scan_mode::sr ? scan_values[i] : fixed_scale;
+        const real_t somega = mode == critical_slow_scan_mode::somega ? scan_values[i] : fixed_scale;
         validate_inputs(dt, max_confirm, scaled_params(sr, somega, reference));
     }
     if (k == 0)
@@ -154,8 +156,8 @@ void calc_slow_cpu(std::int32_t *answer_state, double *transit_time, const doubl
                     index = next++;
                 }
                 // Each worker owns a whole trajectory and its unique output slot.
-                const double sr = mode == critical_slow_scan_mode::sr ? scan_values[index] : fixed_scale;
-                const double somega = mode == critical_slow_scan_mode::somega ? scan_values[index] : fixed_scale;
+                const real_t sr = mode == critical_slow_scan_mode::sr ? scan_values[index] : fixed_scale;
+                const real_t somega = mode == critical_slow_scan_mode::somega ? scan_values[index] : fixed_scale;
                 const auto result = evolve_critical_slow(
                     dt, max_confirm, scaled_params(sr, somega, reference));
                 answer_state[index] = result.answer_state;

@@ -1,12 +1,56 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <limits>
+#include <string>
+#include <vector>
 
 #include "1dmodel-hysteresis.hpp"
-#ifdef USE_FP64
+#if defined(USE_FP64) || defined(USE_DD)
 #include "hysteresis_critical_slow_cpu.hpp"
 #endif
 
 namespace py = pybind11;
+
+#ifndef MODULE_NAME
+#define MODULE_NAME hysteresis
+#endif
+
+#ifdef USE_DD
+using binding_real_t = double;
+
+real_t real_from_python(const py::handle &value)
+{
+    if (py::isinstance<py::str>(value))
+        return dd_real::from_string(py::cast<std::string>(value).c_str());
+    return real_t(py::cast<double>(value));
+}
+#else
+using binding_real_t = real_t;
+#endif
+
+#ifdef USE_DD
+py::tuple calc_slow_cpu_dd(const py::sequence &scan_values, const py::object &fixed_scale,
+                           const critical_slow_scan_mode mode, const py::object &dt,
+                           const std::int64_t max_confirm, const solver_params reference,
+                           const int num_threads)
+{
+    const auto k = static_cast<std::size_t>(py::len(scan_values));
+    std::vector<real_t> parsed;
+    parsed.reserve(k);
+    for (const py::handle value : scan_values)
+        parsed.push_back(real_from_python(value));
+    const real_t parsed_fixed = real_from_python(fixed_scale);
+    const real_t parsed_dt = real_from_python(dt);
+    py::array_t<std::int32_t> answer(k);
+    py::array_t<double> times(k);
+    {
+        py::gil_scoped_release release;
+        calc_slow_cpu(answer.mutable_data(), times.mutable_data(), parsed.data(), k,
+                      parsed_fixed, mode, parsed_dt, max_confirm, reference, num_threads);
+    }
+    return py::make_tuple(answer, times);
+}
+#endif
 
 #ifdef USE_FP64
 void calc_slow_cpu_numpy(py::array_t<std::int32_t, py::array::c_style> answer,
@@ -43,7 +87,7 @@ void calc_slow_cpu_numpy(py::array_t<std::int32_t, py::array::c_style> answer,
 }
 #endif
 
-state state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial)
+state state_from_numpy(const py::array_t<binding_real_t, py::array::c_style | py::array::forcecast> &initial)
 {
     if (initial.ndim() != 1 || initial.shape(0) != 8)
         throw py::value_error("initial must be a one-dimensional array of length 8");
@@ -52,42 +96,56 @@ state state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array:
     return {in(0), in(1), in(2), in(3), in(4), in(5), {in(6), in(7)}};
 }
 
-py::array_t<real_t> state_to_numpy(const state &value)
+py::array_t<binding_real_t> state_to_numpy(const state &value)
 {
-    py::array_t<real_t> result(8);
+    py::array_t<binding_real_t> result(8);
     auto out = result.mutable_unchecked<1>();
-    out(0) = value.t;
-    out(1) = value.x;
-    out(2) = value.xdot;
-    out(3) = value.theta;
-    out(4) = value.theta_dot;
-    out(5) = value.phase;
-    out(6) = value.q.x;
-    out(7) = value.q.y;
+    out(0) = static_cast<binding_real_t>(value.t);
+    out(1) = static_cast<binding_real_t>(value.x);
+    out(2) = static_cast<binding_real_t>(value.xdot);
+    out(3) = static_cast<binding_real_t>(value.theta);
+    out(4) = static_cast<binding_real_t>(value.theta_dot);
+    out(5) = static_cast<binding_real_t>(value.phase);
+    out(6) = static_cast<binding_real_t>(value.q.x);
+    out(7) = static_cast<binding_real_t>(value.q.y);
     return result;
 }
 
-py::array_t<real_t> evolve_numpy(
-    const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial, const real_t dt, const int steps,
+py::array_t<binding_real_t> evolve_numpy(
+    const py::array_t<binding_real_t, py::array::c_style | py::array::forcecast> &initial,
+    const binding_real_t dt, const int steps,
     const solver_params &params)
 {
-    return state_to_numpy(evolve(state_from_numpy(initial), dt, steps, params));
+    return state_to_numpy(evolve(state_from_numpy(initial), real_t(dt), steps, params));
 }
 
 py::tuple evolve_with_mode_numpy(
-    const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial, const real_t dt, const int steps,
+    const py::array_t<binding_real_t, py::array::c_style | py::array::forcecast> &initial,
+    const binding_real_t dt, const int steps,
     const solver_params &params)
 {
     bool sliding;
-    const state final_state = evolve_with_mode(state_from_numpy(initial), dt, steps, params, sliding);
+    const state final_state = evolve_with_mode(state_from_numpy(initial), real_t(dt), steps, params, sliding);
     return py::make_tuple(state_to_numpy(final_state), sliding);
 }
 
-PYBIND11_MODULE(hysteresis, m)
+PYBIND11_MODULE(MODULE_NAME, m)
 {
     m.doc() = "CPU evolution for the one-dimensional hysteresis model";
-    m.attr("real_dtype") = py::dtype::of<real_t>();
-#ifdef USE_FP64
+    m.attr("real_dtype") = py::dtype::of<binding_real_t>();
+#ifdef USE_DD
+    m.attr("real_backend") = "double-double";
+    m.attr("real_precision_bits") = 106;
+    m.attr("real_decimal_digits") = 31;
+    m.def("real_parts", [](const py::object &value) {
+        const real_t parsed = real_from_python(value);
+        return py::make_tuple(parsed.hi, parsed.lo);
+    }, py::arg("value"), "Return the (hi, lo) double-double representation of a float or decimal string.");
+#else
+    m.attr("real_backend") = "double";
+    m.attr("real_precision_bits") = std::numeric_limits<real_t>::digits;
+#endif
+#if defined(USE_FP64) || defined(USE_DD)
     m.attr("critical_slow_confirm_evolve_steps") = critical_slow_confirm_evolve_steps;
     m.attr("critical_slow_lock_confirm_window") = critical_slow_lock_confirm_window;
     m.attr("critical_slow_phase_rate_tolerance") = critical_slow_phase_rate_tolerance;
@@ -95,6 +153,7 @@ PYBIND11_MODULE(hysteresis, m)
         .value("SOMEGA", critical_slow_scan_mode::somega)
         .value("SR", critical_slow_scan_mode::sr)
         .export_values();
+#ifdef USE_FP64
     m.def("calc_slow_cpu", &calc_slow_cpu_numpy,
           py::arg("answer_state").noconvert(), py::arg("transit_time").noconvert(),
           py::arg("scan_values").noconvert(), py::arg("fixed_scale"), py::arg("mode"),
@@ -106,6 +165,24 @@ PYBIND11_MODULE(hysteresis, m)
           "non-overlapping 1D arrays. "
           "Do not access outputs or mutate/resize any arrays concurrently with this call. "
           "C++ workers dynamically claim whole trajectories using a mutex; results retain input order.");
+#else
+    m.def("calc_slow_cpu_dd", &calc_slow_cpu_dd,
+          py::arg("scan_values"), py::arg("fixed_scale"), py::arg("mode"), py::arg("dt"),
+          py::arg("max_confirm"), py::arg("reference_params"), py::arg("num_threads"),
+          "Run double-double critical-slow trajectories. Decimal strings preserve all input digits; "
+          "returns (int32 classifications, float64 event times).");
+#endif
+#ifdef USE_DD
+    m.def("evolve_critical_slow", [](const py::object &dt, std::int64_t max_confirm, solver_params params) {
+        critical_slow_result result;
+        const real_t parsed_dt = real_from_python(dt);
+        {
+            py::gil_scoped_release release;
+            result = evolve_critical_slow(parsed_dt, max_confirm, params);
+        }
+        return py::make_tuple(result.answer_state, result.transit_time);
+    }, py::arg("dt"), py::arg("max_confirm"), py::arg("params"));
+#else
     m.def("evolve_critical_slow", [](double dt, std::int64_t max_confirm, solver_params params) {
         critical_slow_result result;
         {
@@ -118,6 +195,26 @@ PYBIND11_MODULE(hysteresis, m)
        "Each frame contains 50000 steps and locking requires 50 consecutive qualifying frames. "
        "Classification: -1 error, 0 no confirmed phase lock, 1 phase locked.");
 #endif
+#endif
+#ifdef USE_DD
+    py::class_<solver_params>(m, "SolverParams")
+        .def(py::init([](const py::object &alpha, const py::object &delta, const py::object &gamma_g,
+                         const py::object &gamma, const py::object &gamma_m) {
+                 return solver_params{real_from_python(alpha), real_from_python(delta), real_from_python(gamma_g),
+                                      real_from_python(gamma), real_from_python(gamma_m)};
+             }),
+             py::arg("alpha"), py::arg("delta"), py::arg("gamma_g"), py::arg("gamma"), py::arg("gamma_m"))
+        .def_property("alpha", [](const solver_params &p) { return static_cast<double>(p.alpha); },
+                      [](solver_params &p, const py::object &v) { p.alpha = real_from_python(v); })
+        .def_property("delta", [](const solver_params &p) { return static_cast<double>(p.delta); },
+                      [](solver_params &p, const py::object &v) { p.delta = real_from_python(v); })
+        .def_property("gamma_g", [](const solver_params &p) { return static_cast<double>(p.gamma_g); },
+                      [](solver_params &p, const py::object &v) { p.gamma_g = real_from_python(v); })
+        .def_property("gamma", [](const solver_params &p) { return static_cast<double>(p.gamma); },
+                      [](solver_params &p, const py::object &v) { p.gamma = real_from_python(v); })
+        .def_property("gamma_m", [](const solver_params &p) { return static_cast<double>(p.gamma_m); },
+                      [](solver_params &p, const py::object &v) { p.gamma_m = real_from_python(v); });
+#else
     py::class_<solver_params>(m, "SolverParams")
         .def(py::init([](const real_t alpha, const real_t delta, const real_t gamma_g, const real_t gamma,
                          const real_t gamma_m) { return solver_params{alpha, delta, gamma_g, gamma, gamma_m}; }),
@@ -127,6 +224,7 @@ PYBIND11_MODULE(hysteresis, m)
         .def_readwrite("gamma_g", &solver_params::gamma_g)
         .def_readwrite("gamma", &solver_params::gamma)
         .def_readwrite("gamma_m", &solver_params::gamma_m);
+#endif
 
     m.def("evolve", &evolve_numpy, py::arg("initial"), py::arg("dt"), py::arg("steps"), py::arg("params"),
           "Evolve [t, x, xdot, theta, theta_dot, phase, qx, qy] and return the final state.");

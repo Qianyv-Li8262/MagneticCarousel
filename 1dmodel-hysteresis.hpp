@@ -1,7 +1,11 @@
 #pragma once
 
-#if defined(USE_FP64) && defined(__CUDACC__)
-#error "USE_FP64 is only supported by the CPU backend; CUDA must use FP32"
+#if defined(USE_FP64) && defined(USE_DD)
+#error "USE_FP64 and USE_DD are mutually exclusive"
+#endif
+
+#if (defined(USE_FP64) || defined(USE_DD)) && defined(__CUDACC__)
+#error "FP64 and double-double are only supported by the CPU backend; CUDA must use FP32"
 #endif
 
 // macros for cuda / cpu c++ backends
@@ -26,7 +30,10 @@ using std::sinf;
 using std::sqrtf;
 #endif
 
-#if defined(USE_FP64) && !defined(__CUDACC__)
+#if defined(USE_DD) && !defined(__CUDACC__)
+#include "double_double.hpp"
+using real_t = dd_real;
+#elif defined(USE_FP64) && !defined(__CUDACC__)
 using real_t = double;
 #define REAL_COS_IMPL std::cos
 #define REAL_FABS_IMPL std::fabs
@@ -49,6 +56,15 @@ using accumulator_t = kahan<real_t>;
 using accumulator_t = real_t;
 #endif
 
+#if defined(USE_DD) && !defined(__CUDACC__)
+DEVICE HOST INLINE real_t real_cos(const real_t value) { return dd_cos(value); }
+DEVICE HOST INLINE real_t real_fabs(const real_t value) { return dd_abs(value); }
+DEVICE HOST INLINE real_t real_remainder(const real_t value, const real_t divisor) { return dd_remainder(value, divisor); }
+DEVICE HOST INLINE real_t real_sin(const real_t value) { return dd_sin(value); }
+DEVICE HOST INLINE real_t real_sqrt(const real_t value) { return dd_sqrt(value); }
+DEVICE HOST INLINE bool real_isfinite(const real_t value) { return dd_isfinite(value); }
+DEVICE HOST INLINE const real_t &real_two_pi() { return dd_two_pi(); }
+#else
 DEVICE HOST INLINE real_t real_cos(const real_t value)
 {
     return REAL_COS_IMPL(value);
@@ -69,6 +85,15 @@ DEVICE HOST INLINE real_t real_sqrt(const real_t value)
 {
     return REAL_SQRT_IMPL(value);
 }
+DEVICE HOST INLINE bool real_isfinite(const real_t value)
+{
+    return std::isfinite(value);
+}
+DEVICE HOST INLINE real_t real_two_pi()
+{
+    return static_cast<real_t>(6.28318530717958647692);
+}
+#endif
 
 #undef REAL_COS_IMPL
 #undef REAL_FABS_IMPL
@@ -76,7 +101,9 @@ DEVICE HOST INLINE real_t real_sqrt(const real_t value)
 #undef REAL_SIN_IMPL
 #undef REAL_SQRT_IMPL
 
-#if defined(USE_FP64) && !defined(__CUDACC__)
+#if defined(USE_DD) && !defined(__CUDACC__)
+#define REAL_LITERAL(value) real_t(static_cast<double>(value))
+#elif defined(USE_FP64) && !defined(__CUDACC__)
 #define REAL_LITERAL(value) value
 #else
 #define REAL_LITERAL(value) value##f
@@ -329,8 +356,8 @@ DEVICE HOST INLINE rk2_res rk2(const state &ball, const real_t dt, const solver_
 DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sliding,
                                 real_t &slip_sign)
 {
-    ball.phase = real_remainder(ball.phase, REAL_LITERAL(6.28318530717958647692));
-    ball.theta = real_remainder(ball.theta, REAL_LITERAL(6.28318530717958647692));
+    ball.phase = real_remainder(ball.phase, real_two_pi());
+    ball.theta = real_remainder(ball.theta, real_two_pi());
     real_t step_slip_sign = slip_sign;
     if (sliding && step_slip_sign == REAL_LITERAL(0.0)) {
         step_slip_sign = signum(ball.xdot + params.alpha * ball.theta_dot);
