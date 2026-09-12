@@ -55,7 +55,7 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 2.9
+SR = 2.5
 SOMEGA = 1
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
@@ -65,7 +65,7 @@ GAMMA_M = 11011.419
 
 # State layout: [t, x, x_dot, theta, theta_dot, phase, q_x, q_y].
 # In particular, the initial hysteresis vector q is the zero vector.
-DEFAULT_INITIAL_V0 = -50
+DEFAULT_INITIAL_V0 = 0
 DEFAULT_INITIAL_S0 = 0
 
 def scaled_model_parameters() -> tuple[float, float, float, float, float]:
