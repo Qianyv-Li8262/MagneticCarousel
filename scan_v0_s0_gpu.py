@@ -3,6 +3,7 @@
 Run from this directory in an environment containing CuPy with::
 
     conda run -n daily python scan_v0_s0_gpu.py
+    conda run -n daily python scan_v0_s0_gpu.py --kahan
 
 Here ``S0 = v0 + alpha * omega0`` is the initial contact-point slip
 velocity.  The CUDA kernel recovers ``omega0`` separately at each grid point
@@ -17,6 +18,7 @@ the old finite-time velocity-minimum/recovery proxy.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -143,6 +145,7 @@ def run_sweep(
     observation_window: float = OBSERVATION_WINDOW,
     sample_time: float = SAMPLE_TIME,
     lock_threshold: float = LOCK_THRESHOLD,
+    use_kahan: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return ``v0``, ``S0``, status, and long-time metrics.
 
@@ -172,8 +175,12 @@ def run_sweep(
     s0 = np.linspace(s0_lower, s0_upper, k, dtype=np.float32)
 
     cp = _get_cupy()
-    print("Loading CUDA module; the first run may spend several minutes compiling it...", flush=True)
-    kernel = _get_cuda_module(cp).get_function("AnalyzeInitialGrid")
+    print(
+        f"Loading CUDA module ({'Kahan FP32' if use_kahan else 'ordinary FP32'}); "
+        "the first run may spend several minutes compiling it...",
+        flush=True,
+    )
+    kernel = _get_cuda_module(cp, use_kahan=use_kahan).get_function("AnalyzeInitialGrid")
     status_gpu = cp.full((k, k), 4, dtype=cp.int32)
     metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=cp.float32)
 
@@ -255,6 +262,7 @@ def plot_results(
     total_time: float = TOTAL_TIME,
     observation_window: float = OBSERVATION_WINDOW,
     lock_threshold: float = LOCK_THRESHOLD,
+    use_kahan: bool = False,
 ):
     """Plot the phase classification and its long-time convergence checks."""
     import matplotlib.pyplot as plt
@@ -344,12 +352,13 @@ def plot_results(
 
     figure.suptitle(
         rf"Initial-state phase-lock sweep: $s_r={sr:g}$, $s_\omega={somega:g}$, "
-        rf"$k={v0.size}$, $T={total_time:g}$, final window $={observation_window:g}$"
+        rf"$k={v0.size}$, $T={total_time:g}$, final window $={observation_window:g}$; "
+        f"{'Kahan FP32' if use_kahan else 'ordinary FP32'}"
     )
     return figure
 
 
-def main() -> None:
+def main(*, use_kahan: bool = False) -> None:
     v0, s0, status, metrics = run_sweep(
         SR,
         SOMEGA,
@@ -365,6 +374,7 @@ def main() -> None:
         observation_window=OBSERVATION_WINDOW,
         sample_time=SAMPLE_TIME,
         lock_threshold=LOCK_THRESHOLD,
+        use_kahan=use_kahan,
     )
     figure = plot_results(
         v0,
@@ -376,6 +386,7 @@ def main() -> None:
         total_time=TOTAL_TIME,
         observation_window=OBSERVATION_WINDOW,
         lock_threshold=LOCK_THRESHOLD,
+        use_kahan=use_kahan,
     )
 
     if SAVE_DATA_PATH is not None:
@@ -390,6 +401,7 @@ def main() -> None:
             metric_names=np.asarray(METRIC_NAMES),
             phase_locked=phase_locked_mask(status, metrics, LOCK_THRESHOLD),
             lock_threshold=np.asarray(LOCK_THRESHOLD),
+            kahan=np.asarray(use_kahan),
         )
         print(f"Saved data to {data_path.resolve()}", flush=True)
 
@@ -406,4 +418,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--kahan",
+        action="store_true",
+        help="use compensated FP32 accumulators for persistent CUDA state",
+    )
+    main(use_kahan=parser.parse_args().kahan)

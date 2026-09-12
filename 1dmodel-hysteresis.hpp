@@ -42,6 +42,13 @@ using real_t = float;
 #define REAL_SQRT_IMPL sqrtf
 #endif
 
+#ifdef USE_KAHAN
+#include "kahan.hpp"
+using accumulator_t = kahan<real_t>;
+#else
+using accumulator_t = real_t;
+#endif
+
 DEVICE HOST INLINE real_t real_cos(const real_t value)
 {
     return REAL_COS_IMPL(value);
@@ -136,25 +143,61 @@ DEVICE HOST INLINE real_t length(const vec2 &a)
     return real_sqrt(a.x * a.x + a.y * a.y);
 }
 
+struct state_vec2 {
+    accumulator_t x;
+    accumulator_t y;
+};
+
+DEVICE HOST INLINE real_t operator*(const state_vec2 &a, const vec2 &b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+DEVICE HOST INLINE vec2 operator*(const state_vec2 &a, const real_t b)
+{
+    return {b * a.x, b * a.y};
+}
+
+DEVICE HOST INLINE real_t cross(const state_vec2 &a, const vec2 &b)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+DEVICE HOST INLINE real_t length(const state_vec2 &a)
+{
+    return real_sqrt(a.x * a.x + a.y * a.y);
+}
+
 struct state {
-    real_t t;
-    real_t x;
-    real_t xdot;
-    real_t theta;
-    real_t theta_dot;
-    real_t phase;
-    vec2 q;
+    accumulator_t t;
+    accumulator_t x;
+    accumulator_t xdot;
+    accumulator_t theta;
+    accumulator_t theta_dot;
+    accumulator_t phase;
+    state_vec2 q;
 };
 
 DEVICE HOST INLINE state operator+(const state &a, const state &b)
 {
-    return {a.t + b.t,         a.x + b.x, a.xdot + b.xdot, a.theta + b.theta, a.theta_dot + b.theta_dot,
-            a.phase + b.phase, a.q + b.q};
+    return {a.t + b.t,
+            a.x + b.x,
+            a.xdot + b.xdot,
+            a.theta + b.theta,
+            a.theta_dot + b.theta_dot,
+            a.phase + b.phase,
+            {a.q.x + b.q.x, a.q.y + b.q.y}};
 }
 
 DEVICE HOST INLINE state operator*(const real_t a, const state &b)
 {
-    return {a * b.t, a * b.x, a * b.xdot, a * b.theta, a * b.theta_dot, a * b.phase, a * b.q};
+    return {a * b.t,
+            a * b.x,
+            a * b.xdot,
+            a * b.theta,
+            a * b.theta_dot,
+            a * b.phase,
+            {a * b.q.x, a * b.q.y}};
 }
 
 #define SOLVER_PARAMS_DEFINED
@@ -258,7 +301,8 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
         const vec2 qnorm = in.q * (REAL_LITERAL(1.0) / length(in.q));
         q_dot = a_final * h0_dot + b_final * (qnorm * h0_dot) * qnorm;
     }
-    out.q = q_dot;
+    out.q.x = q_dot.x;
+    out.q.y = q_dot.y;
     return true;
 }
 

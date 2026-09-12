@@ -4,10 +4,12 @@ The default run focuses on the locking boundary and saves both the raw
 observables and a phase diagram::
 
     conda run -n daily python scan_sr_somega_gpu.py
+    conda run -n daily python scan_sr_somega_gpu.py --kahan
 """
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +63,8 @@ ROOT = Path(__file__).resolve().parent
 CUDA_SOURCE = ROOT / "1dmodel-hysteresis.cu"
 PHASE_CUDA_SOURCE = ROOT / "phase_behavior.cu"
 CUDA_HEADER = ROOT / "1dmodel-hysteresis.hpp"
-_CUDA_MODULE = None
+KAHAN_HEADER = ROOT / "kahan.hpp"
+_CUDA_MODULES = {}
 
 METRIC_NAMES = (
     "mean_v",
@@ -116,14 +119,18 @@ def _get_cupy():
     return cp
 
 
-def _get_cuda_module(cp):
+def _get_cuda_module(cp, use_kahan: bool = False):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
-    global _CUDA_MODULE
-    if _CUDA_MODULE is None:
-        for path in (CUDA_HEADER, CUDA_SOURCE, PHASE_CUDA_SOURCE):
+    if use_kahan not in _CUDA_MODULES:
+        for path in (KAHAN_HEADER, CUDA_HEADER, CUDA_SOURCE, PHASE_CUDA_SOURCE):
             if not path.is_file():
                 raise FileNotFoundError(f"CUDA source not found: {path}")
+        kahan_header = KAHAN_HEADER.read_text(encoding="utf-8")
         header = CUDA_HEADER.read_text(encoding="utf-8")
+        kahan_include = '#include "kahan.hpp"'
+        if kahan_include not in header:
+            raise RuntimeError("Expected Kahan-header include was not found")
+        header = header.replace(kahan_include, kahan_header, 1)
         legacy = CUDA_SOURCE.read_text(encoding="utf-8")
         phase = PHASE_CUDA_SOURCE.read_text(encoding="utf-8")
         include_line = '#include "1dmodel-hysteresis.hpp"'
@@ -131,8 +138,9 @@ def _get_cuda_module(cp):
             raise RuntimeError("Expected shared-header include was not found")
         source = legacy.replace(include_line, header, 1)
         source += "\n" + phase.replace(include_line, "", 1)
-        _CUDA_MODULE = cp.RawModule(code=source, options=("--std=c++17",), backend="nvrtc")
-    return _CUDA_MODULE
+        options = ("--std=c++17", "-DUSE_KAHAN") if use_kahan else ("--std=c++17",)
+        _CUDA_MODULES[use_kahan] = cp.RawModule(code=source, options=options, backend="nvrtc")
+    return _CUDA_MODULES[use_kahan]
 
 
 def _cell_edges(points: np.ndarray) -> np.ndarray:
@@ -184,6 +192,7 @@ def run_sweep(
     block_shape: tuple[int, int] = (BLOCK_X, BLOCK_Y),
     observation_window: float = OBSERVATION_WINDOW,
     sample_time: float = SAMPLE_TIME,
+    use_kahan: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return ``sr``, ``somega``, status and long-time metrics arrays."""
     if not (0.0 < sr_lower < sr_upper and 0.0 < somega_lower < somega_upper):
@@ -195,7 +204,11 @@ def run_sweep(
     somega = np.linspace(somega_lower, somega_upper, k, dtype=np.float32)
 
     cp = _get_cupy()
-    kernel = _get_cuda_module(cp).get_function("AnalyzeParameterGrid")
+    print(
+        f"Loading CUDA module ({'Kahan FP32' if use_kahan else 'ordinary FP32'})...",
+        flush=True,
+    )
+    kernel = _get_cuda_module(cp, use_kahan=use_kahan).get_function("AnalyzeParameterGrid")
     status_gpu = cp.full((k, k), 4, dtype=cp.int32)
     metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=cp.float32)
     block_x, block_y = block_shape
@@ -238,7 +251,14 @@ def _collapse(ratio: np.ndarray, phase_rate: np.ndarray):
     return centers, quantiles
 
 
-def plot_results(sr: np.ndarray, somega: np.ndarray, status: np.ndarray, metrics: np.ndarray):
+def plot_results(
+    sr: np.ndarray,
+    somega: np.ndarray,
+    status: np.ndarray,
+    metrics: np.ndarray,
+    *,
+    use_kahan: bool = False,
+):
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
 
@@ -336,7 +356,8 @@ def plot_results(sr: np.ndarray, somega: np.ndarray, status: np.ndarray, metrics
     for axis in axes[:5]:
         axis.grid(alpha=0.2)
     figure.suptitle(
-        f"Self-consistent hysteresis model: locked phase and running wedge (k={sr.size}, T={TOTAL_TIME:g})",
+        f"Self-consistent hysteresis model: locked phase and running wedge "
+        f"(k={sr.size}, T={TOTAL_TIME:g}, {'Kahan FP32' if use_kahan else 'ordinary FP32'})",
         fontsize=15,
     )
     return figure
@@ -354,14 +375,15 @@ def _print_phase_summary(sr, somega, status, metrics):
     print(f"Mean rolling residual: median={np.nanmedian(slip[valid]):.3e}, max={np.nanmax(slip[valid]):.3e}")
 
 
-def main() -> None:
+def main(*, use_kahan: bool = False) -> None:
     sr, somega, status, metrics = run_sweep(
         SR_LOWER, SR_UPPER, SOMEGA_LOWER, SOMEGA_UPPER, K, DT, TOTAL_TIME,
         reference=DEFAULT_REFERENCE, block_shape=(BLOCK_X, BLOCK_Y),
         observation_window=OBSERVATION_WINDOW, sample_time=SAMPLE_TIME,
+        use_kahan=use_kahan,
     )
     _print_phase_summary(sr, somega, status, metrics)
-    figure = plot_results(sr, somega, status, metrics)
+    figure = plot_results(sr, somega, status, metrics, use_kahan=use_kahan)
 
     if SAVE_DATA_PATH is not None:
         data_path = Path(SAVE_DATA_PATH)
@@ -369,6 +391,7 @@ def main() -> None:
         np.savez_compressed(
             data_path, sr=sr, somega=somega, status=status, metrics=metrics,
             metric_names=np.asarray(METRIC_NAMES),
+            kahan=np.asarray(use_kahan),
         )
         print(f"Saved data to {data_path.resolve()}")
     if SAVE_PATH is not None:
@@ -382,4 +405,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--kahan",
+        action="store_true",
+        help="use compensated FP32 accumulators for persistent CUDA state",
+    )
+    main(use_kahan=parser.parse_args().kahan)

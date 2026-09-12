@@ -55,8 +55,12 @@ extern "C" __global__ void diagnose(float dt, int steps, int k, double *out) {
 '''
 
 
-def source_for(field_scale, fp64):
+def source_for(field_scale, fp64, use_kahan):
     header=(ROOT/'1dmodel-hysteresis.hpp').read_text(encoding='utf-8')
+    kahan_include='#include "kahan.hpp"'
+    if kahan_include not in header:
+        raise RuntimeError('Kahan header include changed; update diagnostic source assembly')
+    header=header.replace(kahan_include,(ROOT/'kahan.hpp').read_text(encoding='utf-8'),1)
     field_line='#define H_EXT REAL_LITERAL(1.4661546e-1)'
     if field_line not in header:
         raise RuntimeError('H_EXT definition changed; update diagnostic override')
@@ -79,15 +83,16 @@ def source_for(field_scale, fp64):
     return source.split(marker)[0]+'\n}\n'+KERNEL
 
 
-def run(field_scale, fp64, dt, total_time, k):
-    kernel=cp.RawModule(code=source_for(field_scale,fp64),options=('--std=c++17',)).get_function('diagnose')
+def run(field_scale, fp64, use_kahan, dt, total_time, k):
+    options=('--std=c++17','-DUSE_KAHAN') if use_kahan else ('--std=c++17',)
+    kernel=cp.RawModule(code=source_for(field_scale,fp64,use_kahan),options=options).get_function('diagnose')
     out=cp.zeros((k*k,14),dtype=cp.float64)
     start=time.perf_counter()
     kernel(((k*k+127)//128,),(128,),
            (np.float32(dt),np.int32(round(total_time/dt)),np.int32(k),out))
     data=out.get()
     flags,counts=np.unique(data[:,0],return_counts=True)
-    summary=dict(field_scale=field_scale,fp64=fp64,dt=dt,total_time=total_time,k=k,
+    summary=dict(field_scale=field_scale,fp64=fp64,kahan=use_kahan,dt=dt,total_time=total_time,k=k,
                  seconds=time.perf_counter()-start,
                  status_counts=dict(zip(map(int,flags),map(int,counts))),
                  time_quantiles=np.quantile(data[:,1],[0,.25,.5,.75,1]).tolist(),
@@ -95,7 +100,8 @@ def run(field_scale, fp64, dt, total_time, k):
                  invalid_event_points=int(((data[:,12]<0)|(data[:,13]>1)).sum()))
     directory=ROOT/'tmp'/'diagnostics'
     directory.mkdir(parents=True,exist_ok=True)
-    output=directory/f'field{field_scale}_fp{64 if fp64 else 32}_dt{dt}_T{total_time}_k{k}.npz'
+    kahan_suffix='_kahan' if use_kahan else ''
+    output=directory/f'field{field_scale}_fp{64 if fp64 else 32}{kahan_suffix}_dt{dt}_T{total_time}_k{k}.npz'
     np.savez(output,data=data,summary=json.dumps(summary))
     print(json.dumps(summary,indent=2))
     print(output)
@@ -106,6 +112,8 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--field-scale',type=float,default=1.)
     parser.add_argument('--fp64',action='store_true')
+    parser.add_argument('--kahan',action='store_true',
+                        help='use compensated accumulators for persistent CUDA state')
     parser.add_argument('--dt',type=float,default=.001)
     parser.add_argument('--time',type=float,default=100.)
     parser.add_argument('--k',type=int,default=16)
@@ -116,4 +124,4 @@ if __name__=='__main__':
             and args.time>=0 and args.time/args.dt<2147483000
             and np.isfinite(args.field_scale) and 0<args.field_scale<=100):
         parser.error('invalid field scale/dt/time or step count overflow')
-    run(args.field_scale,args.fp64,args.dt,args.time,args.k)
+    run(args.field_scale,args.fp64,args.kahan,args.dt,args.time,args.k)
