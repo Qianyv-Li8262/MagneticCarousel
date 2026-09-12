@@ -55,8 +55,8 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 2.5
-SOMEGA = 1
+SR = 2.8
+SOMEGA = 1.1875
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356
