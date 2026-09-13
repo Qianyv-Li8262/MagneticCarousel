@@ -17,6 +17,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from project_paths import RUNS_DIR, dump_module_dir
+
 
 ALPHA_REF = 0.33333333
 DELTA_REF = 1.7212357e-4
@@ -293,10 +295,9 @@ def output_paths(output_dir: Path, full_mode: bool) -> list[Path]:
 
 
 def main() -> None:
-    source_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--module-dir", type=Path, default=source_dir)
-    parser.add_argument("--output-dir", type=Path, default=Path("tmp/trajectory_dump"))
+    parser.add_argument("--module-dir", type=Path, default=dump_module_dir())
+    parser.add_argument("--output-dir", type=Path, default=RUNS_DIR / "trajectories" / "trajectory_dump")
     parser.add_argument("--v0", type=float, required=True)
     parser.add_argument("--s0", type=float, default=0.0)
     parser.add_argument("--sr", type=float, required=True)

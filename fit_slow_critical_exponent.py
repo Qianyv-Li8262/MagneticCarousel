@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import least_squares
 
+from project_paths import RESULTS_DIR, SOMEGA_FP64_LOG_DIR, SR_FP64_LOG_DIR
+
 
 HERE = Path(__file__).resolve().parent
 NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?\s+")
@@ -94,12 +96,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prefix", default="slow", help="log prefix, e.g. slow or slowsr")
     args = parser.parse_args()
-    logs = sorted(HERE.glob(f"{args.prefix}_fine*.log")) + [HERE / f"{args.prefix}_large.log"]
+    primary_log_dir = SR_FP64_LOG_DIR if args.prefix == "slowsr" else SOMEGA_FP64_LOG_DIR
+    log_dirs = (primary_log_dir, HERE / "slow-somega-scan", HERE)
+    logs = []
+    for log_dir in log_dirs:
+        logs.extend(sorted(log_dir.glob(f"{args.prefix}_fine*.log")))
+        large = log_dir / f"{args.prefix}_large.log"
+        if large.exists():
+            logs.append(large)
+    logs = list(dict.fromkeys(logs))
     logs = [path for path in logs if path.exists()]
     if len(logs) < 2:
         raise FileNotFoundError(f"not enough logs matching {args.prefix}_*.log in {HERE}")
-    out_csv = HERE / f"{args.prefix}_critical_fit.csv"
-    out_fig = HERE / f"{args.prefix}_critical_fit.png"
+    output_dir = RESULTS_DIR / "critical-slowing"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_csv = output_dir / f"{args.prefix}_critical_fit.csv"
+    out_fig = output_dir / f"{args.prefix}_critical_fit.png"
     blocks = [(path.name, read_log(path)) for path in logs]
     valid = np.concatenate([rows[(rows[:, 1] == 1) & (rows[:, 2] >= 0)] for _, rows in blocks])
     invalid = np.concatenate([rows[rows[:, 1] == 0] for _, rows in blocks])

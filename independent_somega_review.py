@@ -7,11 +7,16 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from project_paths import RESULTS_DIR, SOMEGA_DD_LOG_DIR, SOMEGA_FP64_LOG_DIR
+
 getcontext().prec = 60
 HERE = Path(__file__).resolve().parent
+LOG_DIR = SOMEGA_FP64_LOG_DIR
+DD_LOG_DIR = SOMEGA_DD_LOG_DIR
+OUTPUT_DIR = RESULTS_DIR / 'critical-slowing'
 BASE = Decimal('0.55413752928877091')
 UNIT = Decimal('1e-10')
-OUT = HERE / 'somega_independent_review.txt'
+OUT = OUTPUT_DIR / 'somega_independent_review.txt'
 report=[]
 def say(s):
     print(s, flush=True); report.append(str(s))
@@ -24,8 +29,8 @@ def read(path):
         try: rows.append((Decimal(q[0]),int(q[1]),float(q[2])))
         except (ValueError,ArithmeticError): pass
     return rows
-blocks={p.name:read(p) for p in (HERE/'slow-somega-scan').glob('slow_*.log')}
-dd=read(HERE/'slow_fine8dd.log')
+blocks={p.name:read(p) for p in LOG_DIR.glob('slow_*.log')}
+dd=read(DD_LOG_DIR/'slow_fine8dd.log')
 unique={}
 for name,rows in sorted(blocks.items()):
     say(f'{name}: n={len(rows)} locked={sum(r[1]==1 for r in rows)}')
@@ -121,5 +126,6 @@ ff=blocks['slow_fine8.log']; yy=np.array([r[2] for r in ff]); cc=np.array([r[1] 
 axes[2].plot(xd[cc==1],(yd-yy)[cc==1],'.')
 axes[2].set(xlabel='(somega - FP64 apparent boundary) / 1e-10',ylabel='DD minus FP64 transition time')
 for ax in axes: ax.grid(alpha=.25)
-fig.savefig(HERE/'somega_independent_review.png',dpi=180)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+fig.savefig(OUTPUT_DIR/'somega_independent_review.png',dpi=180)
 OUT.write_text('\n'.join(report),encoding='utf-8')

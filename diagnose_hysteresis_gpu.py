@@ -19,6 +19,8 @@ import time
 import cupy as cp
 import numpy as np
 
+from project_paths import RUNS_DIR
+
 ROOT = Path(__file__).resolve().parent
 INSTRUMENTATION = r'''
 __device__ double low[16384], high[16384];
@@ -98,7 +100,7 @@ def run(field_scale, fp64, use_kahan, dt, total_time, k):
                  time_quantiles=np.quantile(data[:,1],[0,.25,.5,.75,1]).tolist(),
                  max_q=float(data[:,5].max()),max_phase_rate=float(data[:,7].max()),
                  invalid_event_points=int(((data[:,12]<0)|(data[:,13]>1)).sum()))
-    directory=ROOT/'tmp'/'diagnostics'
+    directory=RUNS_DIR/'diagnostics'
     directory.mkdir(parents=True,exist_ok=True)
     kahan_suffix='_kahan' if use_kahan else ''
     output=directory/f'field{field_scale}_fp{64 if fp64 else 32}{kahan_suffix}_dt{dt}_T{total_time}_k{k}.npz'

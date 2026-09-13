@@ -6,17 +6,21 @@ from scipy.optimize import least_squares
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from project_paths import RESULTS_DIR, SOMEGA_DD_LOG_DIR, SOMEGA_FP64_LOG_DIR
 getcontext().prec=60
 root=Path(__file__).resolve().parent
+log_dir=SOMEGA_FP64_LOG_DIR
+dd_log_dir=SOMEGA_DD_LOG_DIR
+output_dir=RESULTS_DIR/'critical-slowing'
 tree=ast.parse((root/'independent_somega_review.py').read_text())
 for node in tree.body:
     if isinstance(node,ast.FunctionDef) and node.name in ('read','fit'):
         exec(compile(ast.Module(body=[node],type_ignores=[]),'<fit helpers>','exec'))
 base=Decimal('0.5541375293204'); unit=Decimal('1e-12')
-f7=read(root/'slow-somega-scan/slow_fine7.log')
-f8=read(root/'slow-somega-scan/slow_fine8.log')
-dd8=read(root/'slow_fine8dd.log')
-new=read(root/'slow_somega_dd_discriminate50.log')
+f7=read(log_dir/'slow_fine7.log')
+f8=read(log_dir/'slow_fine8.log')
+dd8=read(dd_log_dir/'slow_fine8dd.log')
+new=read(dd_log_dir/'slow_somega_dd_discriminate50.log')
 def arrays(rows):
     rows=[r for r in rows if r[1]==1]
     return np.array([float((r[0]-base)/unit) for r in rows]),np.array([r[2] for r in rows])
@@ -41,7 +45,8 @@ d=np.geomspace(7e-15,1.3e-8,600)
 a,b=fitted['coef']; axes[1].plot(d,a-b*np.log(d/1e-12),'k-',lw=1,zorder=0)
 axes[1].text(.04,.07,f'DD log fit: B = {b:.3f}\n146 points, RMSE = {fitted["rmse"]:.3f}\n4 unconfirmed points omitted',transform=axes[1].transAxes,fontsize=9,bbox=dict(facecolor='white',alpha=.85,edgecolor='none'))
 fig.suptitle('Critical slowing: the new DD scan extends the logarithmic trend',fontsize=14)
-fig.savefig(root/'somega_dd_discriminate50_linear_log.png',dpi=180)
+output_dir.mkdir(parents=True, exist_ok=True)
+fig.savefig(output_dir/'somega_dd_discriminate50_linear_log.png',dpi=180)
 plt.close(fig)
 lines=[]
 for label,rows in [('new46',new),('combined146',dd8+new)]:
@@ -52,5 +57,5 @@ for label,rows in [('new46',new),('combined146',dd8+new)]:
 for w in (1e-4,.001,.01,.1,1):
     f=fit(x,y,'cross',width=w)
     lines.append(f'cross width={w*1e-12} RMSE={f["rmse"]} sc={base+Decimal(str(f["sc"]))*unit}')
-(root/'somega_dd_discriminate50_fit.txt').write_text('\n'.join(lines),encoding='utf-8')
+(output_dir/'somega_dd_discriminate50_fit.txt').write_text('\n'.join(lines),encoding='utf-8')
 print('\n'.join(lines))

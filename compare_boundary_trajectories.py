@@ -14,6 +14,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from project_paths import RUNS_DIR, fp64_module_dir
+
 
 SR = 0.8
 SOMEGA = 0.6
@@ -84,8 +86,10 @@ def save_csv(path: Path, data: np.ndarray) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--module-dir", type=Path, default=Path("tmp/fp64"))
-    parser.add_argument("--output-dir", type=Path, default=Path("tmp/true_boundary_fp64"))
+    parser.add_argument("--module-dir", type=Path, default=fp64_module_dir())
+    parser.add_argument(
+        "--output-dir", type=Path, default=RUNS_DIR / "critical-slowing" / "boundary-trajectories"
+    )
     parser.add_argument("--near-time", type=float, default=100_000.0)
     parser.add_argument("--ultra-time", type=float, default=1_000_000.0)
     parser.add_argument("--left-v0", type=float, default=0.189186667, help="Initial velocity at the left analysis point")

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
+from project_paths import RESULTS_DIR, RUNS_DIR
+
 
 # ============================= Run settings =============================
 SR_LOWER = 1.5
@@ -31,8 +33,8 @@ BLOCK_X = 16
 BLOCK_Y = 16
 
 SHOW_PLOT = False
-SAVE_PATH: str | Path | None = Path(__file__).with_name("tmp") / "sr_somega_phase.png"
-SAVE_DATA_PATH: str | Path | None = Path(__file__).with_name("tmp") / "sr_somega_phase.npz"
+SAVE_PATH: str | Path | None = RESULTS_DIR / "phase-behavior" / "sr_somega_phase.png"
+SAVE_DATA_PATH: str | Path | None = RUNS_DIR / "phase-behavior" / "sr_somega_phase.npz"
 SAVE_DPI = 220
 
 # Same reference point as animate_hysteresis_cpu.py.

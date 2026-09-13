@@ -28,6 +28,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from project_paths import RUNS_DIR, fp64_module_dir
+
 
 # ============================ Scan configuration ============================
 # Keep the ten sampling points explicit so that changing the scan never
@@ -487,8 +489,10 @@ def validate_configuration() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--module-dir", type=Path, default=Path("tmp/fp64"))
-    parser.add_argument("--output-dir", type=Path, default=Path("tmp/critical_slowing_fp64"))
+    parser.add_argument("--module-dir", type=Path, default=fp64_module_dir())
+    parser.add_argument(
+        "--output-dir", type=Path, default=RUNS_DIR / "critical-slowing" / "fp64-trajectories"
+    )
     args = parser.parse_args()
 
     steps_per_frame = validate_configuration()

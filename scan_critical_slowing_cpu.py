@@ -31,6 +31,8 @@ from time import perf_counter
 import matplotlib.pyplot as plt
 import numpy as np
 
+from project_paths import extension_dir
+
 
 REFERENCE_ALPHA = '0.33333333'
 REFERENCE_DELTA = '1.7212357e-4'
@@ -112,6 +114,9 @@ def main():
         parser.error('--max-confirm must be nonnegative')
 
     module_name = 'hysteresis_dd' if args.dd else 'hysteresis'
+    module_dir = extension_dir('dd' if args.dd else 'fp64')
+    if module_dir.is_dir():
+        sys.path.insert(0, str(module_dir))
     try:
         hysteresis = importlib.import_module(module_name)
     except ImportError as error:

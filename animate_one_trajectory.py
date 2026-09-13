@@ -4,17 +4,24 @@ Run from this directory with::
 
     python src/animate_hysteresis_cpu.py
 
-The compiled ``hysteresis`` extension must be next to this file.  Rebuild it
-with ``python src/build.py`` if it is missing.
+The compiled ``hysteresis`` extension is loaded from ``build/extensions``.
+Rebuild it with ``python src/build.py`` if it is missing.
 """
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import numpy as np
 
+from project_paths import extension_dir, first_existing
+
+sys.path.insert(
+    0,
+    str(first_existing(extension_dir("fp32"), extension_dir("fp64"), Path(__file__).resolve().parent)),
+)
 import hysteresis
 
 
