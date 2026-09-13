@@ -27,3 +27,8 @@
 
 临界减速日志按数值后端和扫描变量分开保存在 `somega-fp64/`、`somega-dd/`
 和 `sr-fp64/`，防止宽泛的文件通配符把不同精度的数据混在同一次拟合中。
+
+两层旧 `tmp/` 均已完成迁移：原始扫描进入 `runs/`，可展示图表进入
+`results/`，旧编译产物进入 `build/archive/`，PDF 预览、缓存、基准和诊断实验进入
+`scratch/`。原 `phase_analysis/final` 的成果已提升到 `results/phase-behavior/`，
+仍可复用的小工具则放在 `scripts/` 下。
