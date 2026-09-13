@@ -29,10 +29,11 @@ def require_current_extension() -> None:
     """Fail visibly when Python has loaded an extension built from older sources."""
     extension_path = Path(hysteresis.__file__).resolve()
     source_directory = Path(__file__).resolve().parent
+    kernels = source_directory / "kernels"
     model_sources = (
-        source_directory / "1dmodel-hysteresis.hpp",
-        source_directory / "1dmodel-hysteresis.cpp",
-        source_directory / "pybind.cpp",
+        kernels / "headers" / "1dmodel-hysteresis.hpp",
+        kernels / "1dmodel-hysteresis.cpp",
+        kernels / "bindings" / "pybind.cpp",
     )
     newer_sources = [source.name for source in model_sources if source.stat().st_mtime > extension_path.stat().st_mtime]
     if newer_sources:

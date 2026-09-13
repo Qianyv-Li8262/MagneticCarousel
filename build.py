@@ -25,6 +25,8 @@ if args.fp64 and args.dd:
     parser.error("--fp64 and --dd are mutually exclusive")
 
 root = Path(__file__).resolve().parent
+kernels = root / "kernels"
+headers = kernels / "headers"
 clang = shutil.which("clang++")
 if clang is None:
     raise RuntimeError("clang++ was not found in PATH")
@@ -50,9 +52,10 @@ command = [
     *(["-DUSE_FP64"] if args.fp64 else []),
     *(["-DUSE_DD", f"-DMODULE_NAME={module_name}"] if args.dd else []),
     "-shared",
-    str(root / "pybind.cpp"),
-    str(root / "1dmodel-hysteresis.cpp"),
-    *([str(root / "hysteresis_critical_slow_cpu.cpp")] if args.fp64 or args.dd else []),
+    str(kernels / "bindings" / "pybind.cpp"),
+    str(kernels / "1dmodel-hysteresis.cpp"),
+    *([str(kernels / "hysteresis_critical_slow_cpu.cpp")] if args.fp64 or args.dd else []),
+    f"-I{headers}",
     f"-I{pybind11.get_include()}",
     f"-I{numpy.get_include()}",
     f"-I{python_include}",

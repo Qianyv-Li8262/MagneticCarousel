@@ -22,6 +22,8 @@ parser.add_argument(
 args = parser.parse_args()
 
 root = Path(__file__).resolve().parent
+kernels = root / "kernels"
+headers = kernels / "headers"
 clang = shutil.which("clang++")
 if clang is None:
     raise RuntimeError("clang++ was not found in PATH")
@@ -45,8 +47,9 @@ command = [
     "-O2",
     *(["-DUSE_FP64"] if args.fp64 else []),
     "-shared",
-    str(root / "pybind_dump.cpp"),
-    str(root / "1dmodel-hysteresis.cpp"),
+    str(kernels / "bindings" / "pybind_dump.cpp"),
+    str(kernels / "1dmodel-hysteresis.cpp"),
+    f"-I{headers}",
     f"-I{pybind11.get_include()}",
     f"-I{numpy.get_include()}",
     f"-I{python_include}",

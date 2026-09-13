@@ -62,10 +62,12 @@ BOUNDARY_SCALE = np.sqrt(
 
 
 ROOT = Path(__file__).resolve().parent
-CUDA_SOURCE = ROOT / "1dmodel-hysteresis.cu"
-PHASE_CUDA_SOURCE = ROOT / "phase_behavior.cu"
-CUDA_HEADER = ROOT / "1dmodel-hysteresis.hpp"
-KAHAN_HEADER = ROOT / "kahan.hpp"
+KERNEL_DIR = ROOT / "kernels"
+HEADER_DIR = KERNEL_DIR / "headers"
+CUDA_SOURCE = KERNEL_DIR / "1dmodel-hysteresis.cu"
+PHASE_CUDA_SOURCE = KERNEL_DIR / "phase_behavior.cu"
+CUDA_HEADER = HEADER_DIR / "1dmodel-hysteresis.hpp"
+KAHAN_HEADER = HEADER_DIR / "numeric_extensions" / "kahan.hpp"
 _CUDA_MODULES = {}
 
 METRIC_NAMES = (
@@ -129,7 +131,7 @@ def _get_cuda_module(cp, use_kahan: bool = False):
                 raise FileNotFoundError(f"CUDA source not found: {path}")
         kahan_header = KAHAN_HEADER.read_text(encoding="utf-8")
         header = CUDA_HEADER.read_text(encoding="utf-8")
-        kahan_include = '#include "kahan.hpp"'
+        kahan_include = '#include "numeric_extensions/kahan.hpp"'
         if kahan_include not in header:
             raise RuntimeError("Expected Kahan-header include was not found")
         header = header.replace(kahan_include, kahan_header, 1)

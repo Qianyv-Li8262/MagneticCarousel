@@ -22,6 +22,8 @@ import numpy as np
 from project_paths import RUNS_DIR
 
 ROOT = Path(__file__).resolve().parent
+KERNEL_DIR = ROOT / 'kernels'
+HEADER_DIR = KERNEL_DIR / 'headers'
 INSTRUMENTATION = r'''
 __device__ double low[16384], high[16384];
 __device__ void debug_transit(double v) {
@@ -58,11 +60,11 @@ extern "C" __global__ void diagnose(float dt, int steps, int k, double *out) {
 
 
 def source_for(field_scale, fp64, use_kahan):
-    header=(ROOT/'1dmodel-hysteresis.hpp').read_text(encoding='utf-8')
-    kahan_include='#include "kahan.hpp"'
+    header=(HEADER_DIR/'1dmodel-hysteresis.hpp').read_text(encoding='utf-8')
+    kahan_include='#include "numeric_extensions/kahan.hpp"'
     if kahan_include not in header:
         raise RuntimeError('Kahan header include changed; update diagnostic source assembly')
-    header=header.replace(kahan_include,(ROOT/'kahan.hpp').read_text(encoding='utf-8'),1)
+    header=header.replace(kahan_include,(HEADER_DIR/'numeric_extensions'/'kahan.hpp').read_text(encoding='utf-8'),1)
     field_line='#define H_EXT REAL_LITERAL(1.4661546e-1)'
     if field_line not in header:
         raise RuntimeError('H_EXT definition changed; update diagnostic override')
@@ -76,7 +78,7 @@ def source_for(field_scale, fp64, use_kahan):
     if event_line not in header:
         raise RuntimeError('Event interpolation changed; update diagnostic instrumentation')
     header=header.replace(event_line,event_line+' debug_transit(dt_transit/dt);')
-    source=(ROOT/'1dmodel-hysteresis.cu').read_text(encoding='utf-8')
+    source=(KERNEL_DIR/'1dmodel-hysteresis.cu').read_text(encoding='utf-8')
     source=source.replace('#include "1dmodel-hysteresis.hpp"',INSTRUMENTATION+header)
     # Retain shared initialization/scaling only, avoiding the production FP32 ABI.
     marker='DEVICE INLINE void update_velocity_minimum'

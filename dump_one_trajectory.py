@@ -147,11 +147,12 @@ def initial_state(module, v0: float, s0: float, alpha: float) -> np.ndarray:
 
 def require_current_extension(module, source_dir: Path) -> None:
     extension = Path(module.__file__).resolve()
+    kernels = source_dir / "kernels"
     sources = (
-        source_dir / "1dmodel-hysteresis.hpp",
-        source_dir / "1dmodel-hysteresis-dump.hpp",
-        source_dir / "1dmodel-hysteresis.cpp",
-        source_dir / "pybind_dump.cpp",
+        kernels / "headers" / "1dmodel-hysteresis.hpp",
+        kernels / "headers" / "1dmodel-hysteresis-dump.hpp",
+        kernels / "1dmodel-hysteresis.cpp",
+        kernels / "bindings" / "pybind_dump.cpp",
     )
     newer = [source.name for source in sources if source.stat().st_mtime > extension.stat().st_mtime]
     if newer:

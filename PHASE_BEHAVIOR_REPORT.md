@@ -112,7 +112,7 @@ FP32 在 `(3.2,1)` 的超长积分中会停在少数离散速度平台；FP64 �
 
 ## 复现
 
-相行为 CUDA 内核在 `phase_behavior.cu`，正式驱动程序在 `scan_sr_somega_gpu.py`。默认设置已经聚焦于原始场强的长时间相图，可直接运行：
+相行为 CUDA 内核在 `kernels/phase_behavior.cu`，正式驱动程序在 `scan_sr_somega_gpu.py`。默认设置已经聚焦于原始场强的长时间相图，可直接运行：
 
 ```powershell
 conda run -n daily python scan_sr_somega_gpu.py

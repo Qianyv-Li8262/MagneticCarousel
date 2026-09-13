@@ -10,6 +10,16 @@
 | `scratch/` | smoke test、一次性诊断和临时文件 | 否 |
 | `tmp/` | 尚未完成归档的历史数据，只用于兼容读取 | 否 |
 
+## 源码布局
+
+Python 入口和分析程序保留在 `src/` 范围内。主模型的 C++/CUDA 实现集中在
+`kernels/`，Python 扩展绑定放在 `kernels/bindings/`，公共模拟接口放在
+`kernels/headers/`。Kahan 累加和 double-double 等可复用数值实现位于
+`kernels/headers/numeric_extensions/`，原生代码测试位于 `tests/native/`。
+
+`toymodel/` 是独立的玩具模型，其中的 CUDA 文件与对应 Python 驱动共同保留，
+不并入主模型内核目录。
+
 ## 可配置目录
 
 可以设置 `IYPT16_BUILD_DIR`、`IYPT16_RUNS_DIR`、`IYPT16_RESULTS_DIR` 或

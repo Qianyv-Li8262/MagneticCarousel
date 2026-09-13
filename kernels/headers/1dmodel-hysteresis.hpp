@@ -14,11 +14,13 @@
 #define GLOBAL __global__
 #define HOST __host__
 #define INLINE __forceinline__
+#define REAL_ISFINITE_IMPL isfinite
 #else
 #define DEVICE
 #define GLOBAL
 #define HOST
 #define INLINE inline
+#define REAL_ISFINITE_IMPL std::isfinite
 #endif
 
 #ifndef __CUDACC__
@@ -31,7 +33,7 @@ using std::sqrtf;
 #endif
 
 #if defined(USE_DD) && !defined(__CUDACC__)
-#include "double_double.hpp"
+#include "numeric_extensions/double_double.hpp"
 using real_t = dd_real;
 #elif defined(USE_FP64) && !defined(__CUDACC__)
 using real_t = double;
@@ -50,7 +52,7 @@ using real_t = float;
 #endif
 
 #ifdef USE_KAHAN
-#include "kahan.hpp"
+#include "numeric_extensions/kahan.hpp"
 using accumulator_t = kahan<real_t>;
 #else
 using accumulator_t = real_t;
@@ -87,7 +89,7 @@ DEVICE HOST INLINE real_t real_sqrt(const real_t value)
 }
 DEVICE HOST INLINE bool real_isfinite(const real_t value)
 {
-    return std::isfinite(value);
+    return REAL_ISFINITE_IMPL(value);
 }
 DEVICE HOST INLINE real_t real_two_pi()
 {
