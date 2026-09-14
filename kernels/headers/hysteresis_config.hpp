@@ -2,6 +2,11 @@
 
 // Manually configured model parameters.
 
+// Field geometry and Fourier truncation. The mode count refers to the odd
+// harmonics 1, 3, 5, ... generated for the alternating dipole array.
+#define FIELD_Z0 0.3
+#define FIELD_FOURIER_MODE_COUNT 5
+
 // Fundamental magnetic constants
 #define MU_R REAL_LITERAL(2.2926667e3)
 #define ALPHA_JA REAL_LITERAL(3.2e-3)

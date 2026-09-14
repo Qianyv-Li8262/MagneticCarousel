@@ -15,7 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
-from project_paths import RESULTS_DIR, RUNS_DIR
+from build_codegen import COEFFS_INIT
+from project_paths import RESULTS_DIR, RUNS_DIR, SCRATCH_DIR
 
 
 # ============================= Run settings =============================
@@ -33,7 +34,7 @@ BLOCK_X = 16
 BLOCK_Y = 16
 
 SHOW_PLOT = False
-SAVE_PATH: str | Path | None = RESULTS_DIR / "phase-behavior" / "sr_somega_phase.png"
+SAVE_PATH: str | Path | None = SCRATCH_DIR / "phase-behavior" / "sr_somega_phase.png"
 SAVE_DATA_PATH: str | Path | None = RUNS_DIR / "phase-behavior" / "sr_somega_phase.npz"
 SAVE_DPI = 220
 
@@ -131,6 +132,7 @@ def _get_cupy():
 def _get_cuda_module(cp, use_kahan: bool = False):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
     if use_kahan not in _CUDA_MODULES:
+        COEFFS_INIT("nvrtc")
         for path in (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE):
             if not path.is_file():
                 raise FileNotFoundError(f"CUDA source not found: {path}")

@@ -3,6 +3,79 @@
 #include "hysteresis_types.hpp"
 #include "hysteresis_config.hpp"
 
+#ifdef __CUDACC__
+#include "../generated/field_coefficients_nvrtc.generated.cuh"
+#else
+#include "../generated/field_coefficients_cpu.generated.hpp"
+#endif
+
+// Evaluate the dimensionless field and its analytic derivatives with respect
+// to the phase argument chi and the dimensionless height z / lambda.
+DEVICE INLINE vec2 evaluate_field(const real_t chi)
+{
+    vec2 field = {REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
+    for (int mode = 0; mode < FIELD_FOURIER_MODE_COUNT; ++mode) {
+        const int harmonic = 2 * mode + 1;
+        const real_t angle = static_cast<real_t>(harmonic) * chi;
+#ifdef __CUDACC__
+        float sine;
+        float cosine;
+        sincosf(angle, &sine, &cosine);
+#else
+        const real_t sine = real_sin(angle);
+        const real_t cosine = real_cos(angle);
+#endif
+        const field_mode_coefficient coefficient = FIELD_COEFFICIENTS[mode];
+        field.x -= coefficient.a * sine;
+        field.y += coefficient.c * cosine;
+    }
+    return field;
+}
+
+DEVICE INLINE vec2 evaluate_field_phase_derivative(const real_t chi)
+{
+    vec2 derivative = {REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
+    for (int mode = 0; mode < FIELD_FOURIER_MODE_COUNT; ++mode) {
+        const int harmonic = 2 * mode + 1;
+        const real_t n = static_cast<real_t>(harmonic);
+        const real_t angle = n * chi;
+#ifdef __CUDACC__
+        float sine;
+        float cosine;
+        sincosf(angle, &sine, &cosine);
+#else
+        const real_t sine = real_sin(angle);
+        const real_t cosine = real_cos(angle);
+#endif
+        const field_mode_coefficient coefficient = FIELD_COEFFICIENTS[mode];
+        derivative.x -= n * coefficient.a * cosine;
+        derivative.y -= n * coefficient.c * sine;
+    }
+    return derivative;
+}
+
+DEVICE INLINE vec2 evaluate_field_height_derivative(const real_t chi)
+{
+    vec2 derivative = {REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
+    for (int mode = 0; mode < FIELD_FOURIER_MODE_COUNT; ++mode) {
+        const int harmonic = 2 * mode + 1;
+        const real_t n = static_cast<real_t>(harmonic);
+        const real_t angle = n * chi;
+#ifdef __CUDACC__
+        float sine;
+        float cosine;
+        sincosf(angle, &sine, &cosine);
+#else
+        const real_t sine = real_sin(angle);
+        const real_t cosine = real_cos(angle);
+#endif
+        const field_mode_coefficient coefficient = FIELD_COEFFICIENTS[mode];
+        derivative.x += real_two_pi() * n * coefficient.c * sine;
+        derivative.y += coefficient.dz * cosine;
+    }
+    return derivative;
+}
+
 // Remove roundoff drift from the sticking constraint while preserving the
 // contact impulse balance used at a sliding-to-sticking event.
 DEVICE HOST INLINE void project_pure_rolling(state &ball, const solver_params &params)

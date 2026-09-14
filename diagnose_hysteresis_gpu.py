@@ -19,6 +19,7 @@ import time
 import cupy as cp
 import numpy as np
 
+from build_codegen import COEFFS_INIT
 from project_paths import RUNS_DIR
 
 ROOT = Path(__file__).resolve().parent
@@ -60,6 +61,7 @@ extern "C" __global__ void diagnose(float dt, int steps, int k, double *out) {
 
 
 def source_for(field_scale, fp64, use_kahan):
+    COEFFS_INIT("nvrtc")
     header=(HEADER_DIR/'1dmodel-hysteresis.hpp').read_text(encoding='utf-8')
     types=(HEADER_DIR/'hysteresis_types.hpp').read_text(encoding='utf-8')
     config=(HEADER_DIR/'hysteresis_config.hpp').read_text(encoding='utf-8')
@@ -73,6 +75,9 @@ def source_for(field_scale, fp64, use_kahan):
     config=config.replace(field_line, f'#define H_EXT REAL_LITERAL({.14661546*field_scale:.16e})')
     header=header.replace('#include "hysteresis_types.hpp"',types,1)
     header=header.replace('#include "hysteresis_config.hpp"',config,1)
+    generated=(KERNEL_DIR/'generated'/'field_coefficients_nvrtc.generated.cuh').read_text(encoding='utf-8')
+    generated=generated.replace('#include "../headers/hysteresis_types.hpp"','',1)
+    header=header.replace('#include "../generated/field_coefficients_nvrtc.generated.cuh"',generated,1)
     if fp64:
         header=header.replace('using real_t = float;', 'using real_t = double;')
         header=header.replace('#define REAL_LITERAL(value) value##f','#define REAL_LITERAL(value) value')
@@ -92,7 +97,9 @@ def source_for(field_scale, fp64, use_kahan):
 
 
 def run(field_scale, fp64, use_kahan, dt, total_time, k):
-    options=('--std=c++17','-DUSE_KAHAN') if use_kahan else ('--std=c++17',)
+    options=('--std=c++17',f'--include-path={HEADER_DIR}')
+    if use_kahan:
+        options+=('-DUSE_KAHAN',)
     kernel=cp.RawModule(code=source_for(field_scale,fp64,use_kahan),options=options).get_function('diagnose')
     out=cp.zeros((k*k,14),dtype=cp.float64)
     start=time.perf_counter()

@@ -9,6 +9,7 @@ import numpy
 import pybind11
 
 from project_paths import extension_dir
+from build_codegen import generate_field_coefficients
 
 
 parser = argparse.ArgumentParser(description="Build the CPU-only traced hysteresis extension")
@@ -27,6 +28,8 @@ headers = kernels / "headers"
 clang = shutil.which("clang++")
 if clang is None:
     raise RuntimeError("clang++ was not found in PATH")
+
+generate_field_coefficients(root, clang, "cpu")
 
 suffix = sysconfig.get_config_var("EXT_SUFFIX")
 if not suffix:
