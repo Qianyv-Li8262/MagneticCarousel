@@ -61,14 +61,18 @@ extern "C" __global__ void diagnose(float dt, int steps, int k, double *out) {
 
 def source_for(field_scale, fp64, use_kahan):
     header=(HEADER_DIR/'1dmodel-hysteresis.hpp').read_text(encoding='utf-8')
+    types=(HEADER_DIR/'hysteresis_types.hpp').read_text(encoding='utf-8')
+    config=(HEADER_DIR/'hysteresis_config.hpp').read_text(encoding='utf-8')
     kahan_include='#include "numeric_extensions/kahan.hpp"'
-    if kahan_include not in header:
+    if kahan_include not in types:
         raise RuntimeError('Kahan header include changed; update diagnostic source assembly')
-    header=header.replace(kahan_include,(HEADER_DIR/'numeric_extensions'/'kahan.hpp').read_text(encoding='utf-8'),1)
+    types=types.replace(kahan_include,(HEADER_DIR/'numeric_extensions'/'kahan.hpp').read_text(encoding='utf-8'),1)
     field_line='#define H_EXT REAL_LITERAL(1.4661546e-1)'
-    if field_line not in header:
+    if field_line not in config:
         raise RuntimeError('H_EXT definition changed; update diagnostic override')
-    header=header.replace(field_line, f'#define H_EXT REAL_LITERAL({.14661546*field_scale:.16e})')
+    config=config.replace(field_line, f'#define H_EXT REAL_LITERAL({.14661546*field_scale:.16e})')
+    header=header.replace('#include "hysteresis_types.hpp"',types,1)
+    header=header.replace('#include "hysteresis_config.hpp"',config,1)
     if fp64:
         header=header.replace('using real_t = float;', 'using real_t = double;')
         header=header.replace('#define REAL_LITERAL(value) value##f','#define REAL_LITERAL(value) value')

@@ -67,7 +67,12 @@ HEADER_DIR = KERNEL_DIR / "headers"
 CUDA_SOURCE = KERNEL_DIR / "1dmodel-hysteresis.cu"
 PHASE_CUDA_SOURCE = KERNEL_DIR / "phase_behavior.cu"
 CUDA_HEADER = HEADER_DIR / "1dmodel-hysteresis.hpp"
-KAHAN_HEADER = HEADER_DIR / "numeric_extensions" / "kahan.hpp"
+CUDA_SUPPORT_HEADERS = (
+    CUDA_HEADER,
+    HEADER_DIR / "hysteresis_types.hpp",
+    HEADER_DIR / "hysteresis_config.hpp",
+    HEADER_DIR / "numeric_extensions" / "kahan.hpp",
+)
 _CUDA_MODULES = {}
 
 METRIC_NAMES = (
@@ -126,23 +131,19 @@ def _get_cupy():
 def _get_cuda_module(cp, use_kahan: bool = False):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
     if use_kahan not in _CUDA_MODULES:
-        for path in (KAHAN_HEADER, CUDA_HEADER, CUDA_SOURCE, PHASE_CUDA_SOURCE):
+        for path in (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE):
             if not path.is_file():
                 raise FileNotFoundError(f"CUDA source not found: {path}")
-        kahan_header = KAHAN_HEADER.read_text(encoding="utf-8")
-        header = CUDA_HEADER.read_text(encoding="utf-8")
-        kahan_include = '#include "numeric_extensions/kahan.hpp"'
-        if kahan_include not in header:
-            raise RuntimeError("Expected Kahan-header include was not found")
-        header = header.replace(kahan_include, kahan_header, 1)
         legacy = CUDA_SOURCE.read_text(encoding="utf-8")
         phase = PHASE_CUDA_SOURCE.read_text(encoding="utf-8")
         include_line = '#include "1dmodel-hysteresis.hpp"'
         if include_line not in legacy or include_line not in phase:
             raise RuntimeError("Expected shared-header include was not found")
-        source = legacy.replace(include_line, header, 1)
+        source = legacy
         source += "\n" + phase.replace(include_line, "", 1)
-        options = ("--std=c++17", "-DUSE_KAHAN") if use_kahan else ("--std=c++17",)
+        options = ("--std=c++17", f"--include-path={HEADER_DIR}")
+        if use_kahan:
+            options += ("-DUSE_KAHAN",)
         _CUDA_MODULES[use_kahan] = cp.RawModule(code=source, options=options, backend="nvrtc")
     return _CUDA_MODULES[use_kahan]
 

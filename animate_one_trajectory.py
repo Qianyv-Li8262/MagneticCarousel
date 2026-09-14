@@ -32,6 +32,8 @@ def require_current_extension() -> None:
     kernels = source_directory / "kernels"
     model_sources = (
         kernels / "headers" / "1dmodel-hysteresis.hpp",
+        kernels / "headers" / "hysteresis_types.hpp",
+        kernels / "headers" / "hysteresis_config.hpp",
         kernels / "1dmodel-hysteresis.cpp",
         kernels / "bindings" / "pybind.cpp",
     )
