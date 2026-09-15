@@ -401,7 +401,8 @@ class trace_collector
 INLINE bool eval_rhs(const state &in, state &out, const solver_params &params, const bool sliding,
                      const real_t slip_sign, rhs_stage_trace &trace)
 {
-    vec2 h_ext = {real_cos(in.phase) * H_EXT, real_sin(in.phase) * H_EXT};
+    const real_t field_phase = in.phase - in.theta;
+    vec2 h_ext = {real_cos(field_phase) * H_EXT, real_sin(field_phase) * H_EXT};
     real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                     (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
     if (N < 0)
@@ -421,8 +422,10 @@ INLINE bool eval_rhs(const state &in, state &out, const solver_params &params, c
     out.x = in.xdot;
     out.theta = in.theta_dot;
     out.t = REAL_LITERAL(1.0);
-    out.phase = REAL_LITERAL(1.0) - in.xdot - in.theta_dot;
-    vec2 h_ext_dot = out.phase * make_vec2(-real_sin(in.phase) * H_EXT, real_cos(in.phase) * H_EXT);
+    out.phase = REAL_LITERAL(1.0) - in.xdot;
+    const real_t field_phase_dot = out.phase - out.theta;
+    vec2 h_ext_dot =
+        field_phase_dot * make_vec2(-real_sin(field_phase) * H_EXT, real_cos(field_phase) * H_EXT);
 
     const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
     vec2 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
@@ -513,7 +516,8 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
                 collector.commit_rk(completed_step, rk_role::full_trial, trial, true);
                 state state_dttrans = trial_final;
                 project_pure_rolling(state_dttrans, params);
-                vec2 h_ext = {H_EXT * real_cos(state_dttrans.phase), H_EXT * real_sin(state_dttrans.phase)};
+                const real_t field_phase = state_dttrans.phase - state_dttrans.theta;
+                vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
                 real_t N = params.gamma_g -
                            params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
@@ -545,7 +549,8 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
             collector.commit_rk(completed_step, rk_role::pre_event, pre_event, true);
             state state_dttrans = pre_event.result;
             project_pure_rolling(state_dttrans, params);
-            vec2 h_ext = {H_EXT * real_cos(state_dttrans.phase), H_EXT * real_sin(state_dttrans.phase)};
+            const real_t field_phase = state_dttrans.phase - state_dttrans.theta;
+            vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
             real_t N =
                 params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                      (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
@@ -583,7 +588,8 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
         return 0;
     }
 
-    vec2 h_ext = {H_EXT * real_cos(trial_final.phase), H_EXT * real_sin(trial_final.phase)};
+    const real_t field_phase = trial_final.phase - trial_final.theta;
+    vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
     real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                     (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
     if (N < REAL_LITERAL(0.0))
@@ -595,7 +601,8 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
     real_t g_final = real_fabs(theta_dot - M_magnet) * ETA * params.alpha - MU * N;
     if (g_final > 0) {
         collector.commit_rk(completed_step, rk_role::full_trial, trial, false);
-        vec2 h_ext_init = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
+        const real_t field_phase_init = ball.phase - ball.theta;
+        vec2 h_ext_init = {H_EXT * real_cos(field_phase_init), H_EXT * real_sin(field_phase_init)};
         real_t N_init =
             params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                  (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));
@@ -650,7 +657,8 @@ INLINE evolution_result evolve(const state &initial, const real_t dt, const int 
     bool sliding = real_fabs(slip_velocity) > REAL_LITERAL(1.0e-10);
     real_t slip_sign = sliding ? signum(slip_velocity) : REAL_LITERAL(0.0);
     if (!sliding) {
-        vec2 h_ext = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
+        const real_t field_phase = ball.phase - ball.theta;
+        vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
         real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                         (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext));
         if (N < REAL_LITERAL(0.0))

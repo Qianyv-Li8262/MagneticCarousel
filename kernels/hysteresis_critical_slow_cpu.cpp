@@ -50,7 +50,8 @@ critical_slow_result evolve_critical_slow(const real_t dt, const std::int64_t ma
                   REAL_LITERAL(0.0), REAL_LITERAL(0.0), {REAL_LITERAL(0.0), REAL_LITERAL(0.0)}};
     bool sliding = false;
     real_t slip_sign = REAL_LITERAL(0.0);
-    const vec2 h_ext = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
+    const real_t field_phase = ball.phase - ball.theta;
+    const vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
     const real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
         (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext));
     if (N < REAL_LITERAL(0.0) || !real_isfinite(N))

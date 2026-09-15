@@ -90,7 +90,8 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
                                 real_t slip_sign, bool &transit)
 {
     // ============================================================================
-    vec2 h_ext = {real_cos(in.phase) * H_EXT, real_sin(in.phase) * H_EXT};
+    const real_t field_phase = in.phase - in.theta;
+    vec2 h_ext = {real_cos(field_phase) * H_EXT, real_sin(field_phase) * H_EXT};
     // ============================================================================
     real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                     (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
@@ -121,8 +122,10 @@ DEVICE HOST INLINE bool evalRhs(const state &in, state &out, const solver_params
     out.x = in.xdot;
     out.theta = in.theta_dot;
     out.t = REAL_LITERAL(1.0);
-    out.phase = REAL_LITERAL(1.0) - in.xdot - in.theta_dot;
-    vec2 h_ext_dot = out.phase * make_vec2(-real_sin(in.phase) * H_EXT, real_cos(in.phase) * H_EXT);
+    out.phase = REAL_LITERAL(1.0) - in.xdot;
+    const real_t field_phase_dot = out.phase - out.theta;
+    vec2 h_ext_dot =
+        field_phase_dot * make_vec2(-real_sin(field_phase) * H_EXT, real_cos(field_phase) * H_EXT);
 
     const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
 
@@ -199,7 +202,8 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
             // project the event state onto the pure-rolling constraint
             project_pure_rolling(state_dttrans, params);
             // calc N and Freq at this transit point
-            vec2 h_ext = {H_EXT * real_cos(state_dttrans.phase), H_EXT * real_sin(state_dttrans.phase)};
+            const real_t field_phase = state_dttrans.phase - state_dttrans.theta;
+            vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
             real_t N =
                 params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                      (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
@@ -239,7 +243,8 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
     } else {
         // check if still stick at the end of the step
         // calc N and Freq at this point
-        vec2 h_ext = {H_EXT * real_cos(trial_final.phase), H_EXT * real_sin(trial_final.phase)};
+        const real_t field_phase = trial_final.phase - trial_final.theta;
+        vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
         real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                         (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
         if (N < REAL_LITERAL(0.0))
@@ -252,7 +257,8 @@ DEVICE HOST INLINE int fwd1step(state &ball, const real_t dt, const solver_param
         if (g_final > 0) {
             // turn into sliding. lerp the transit time.
             // i think shading the outer vars is ok here because we do not use outer vars
-            vec2 h_ext_init = {H_EXT * real_cos(ball.phase), H_EXT * real_sin(ball.phase)};
+            const real_t field_phase_init = ball.phase - ball.theta;
+            vec2 h_ext_init = {H_EXT * real_cos(field_phase_init), H_EXT * real_sin(field_phase_init)};
             real_t N_init =
                 params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
                                      (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));

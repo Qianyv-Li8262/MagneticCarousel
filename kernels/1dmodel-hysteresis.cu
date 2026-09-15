@@ -58,7 +58,8 @@ DEVICE INLINE int initialize_gpu_mode(state &ball, const solver_params &params, 
     if (sliding)
         return kGpuEvolveOk;
 
-    const vec2 h_ext = {H_EXT * cosf(ball.phase), H_EXT * sinf(ball.phase)};
+    const float field_phase = ball.phase - ball.theta;
+    const vec2 h_ext = {H_EXT * cosf(field_phase), H_EXT * sinf(field_phase)};
     const float normal_force =
         params.gamma_g - params.gamma / (2.0f + MU_R) *
                              (-(MU_R - 1.0f) * H_EXT * H_EXT + (1.0f - C) / (1.0f - XI_JA) * (ball.q * h_ext));
