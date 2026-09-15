@@ -20,7 +20,7 @@ from project_paths import extension_dir, first_existing
 
 sys.path.insert(
     0,
-    str(first_existing(extension_dir("fp32"), extension_dir("fp64"), Path(__file__).resolve().parent)),
+    str(first_existing(extension_dir("fp64"), extension_dir("fp32"), Path(__file__).resolve().parent)),
 )
 import hysteresis
 
@@ -65,7 +65,7 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 2.8
+SR = 2.0
 SOMEGA = 1.1875
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4

@@ -49,6 +49,27 @@ def extension_dir(kind: str) -> Path:
     return BUILD_DIR / "extensions" / kind
 
 
+def image_output_path(path: str | Path) -> Path:
+    """Map every generated image into scratch while preserving useful subdirectories."""
+    requested = Path(path).expanduser()
+    resolved = (requested if requested.is_absolute() else PROJECT_ROOT / requested).resolve()
+    scratch_root = SCRATCH_DIR.resolve()
+    try:
+        resolved.relative_to(scratch_root)
+        return resolved
+    except ValueError:
+        pass
+
+    try:
+        relative = resolved.relative_to(PROJECT_ROOT)
+    except ValueError:
+        relative = Path(resolved.name)
+    else:
+        if relative.parts and relative.parts[0].lower() in {"build", "results", "runs", "scratch", "tmp"}:
+            relative = Path(*relative.parts[1:])
+    return scratch_root / relative
+
+
 def fp64_module_dir() -> Path:
     """Locate an FP64 extension, including legacy locations during migration."""
     return first_existing(

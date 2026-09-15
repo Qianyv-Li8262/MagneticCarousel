@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from project_paths import image_output_path
 
 
 # ============================= Run settings =============================
@@ -456,14 +460,14 @@ def main() -> None:
     )
 
     if SAVE_DIR is not None:
-        save_dir = Path(SAVE_DIR)
-        save_dir.mkdir(parents=True, exist_ok=True)
         for figure, filename in zip(
             figures,
             ("stick300.png", "x_sign.png", "final_v.png", "final_v_stick_only.png"),
             strict=True,
         ):
-            figure.savefig(save_dir / filename, dpi=SAVE_DPI)
+            figure_path = image_output_path(Path(SAVE_DIR) / filename)
+            figure_path.parent.mkdir(parents=True, exist_ok=True)
+            figure.savefig(figure_path, dpi=SAVE_DPI)
 
     if SHOW_PLOTS:
         import matplotlib.pyplot as plt

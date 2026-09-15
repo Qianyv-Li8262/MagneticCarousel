@@ -12,13 +12,15 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 
 from scan_sr_somega_gpu import locking_limit
 from scan_v0_s0_gpu import _cell_edges, phase_locked_mask, run_sweep
-from project_paths import RESULTS_DIR, RUNS_DIR
+from project_paths import RESULTS_DIR, RUNS_DIR, SCRATCH_DIR
 
 
 OUT = RUNS_DIR / "initial-conditions" / "boundary-pilot"
 RESULTS = RESULTS_DIR / "initial-conditions" / "boundary-pilot"
+FIGURES = SCRATCH_DIR / "initial-conditions" / "boundary-pilot"
 OUT.mkdir(parents=True, exist_ok=True)
 RESULTS.mkdir(parents=True, exist_ok=True)
+FIGURES.mkdir(parents=True, exist_ok=True)
 
 SRS = (2.5, 2.7, 2.85, 3.15, 3.3, 3.5)
 FACTORS = (0.95, 1.05)
@@ -89,7 +91,7 @@ figure.suptitle(
     rf"$v_0,S_0\in[-{LIMIT:g},{LIMIT:g}]$, $k={K}$, $T={TOTAL_TIME:g}$\n"
     r"white: phase-locked; black: running"
 )
-figure.savefig(RESULTS / "pilot_grid.png", dpi=180)
+figure.savefig(FIGURES / "pilot_grid.png", dpi=180)
 np.savetxt(
     RESULTS / "summary.csv",
     np.asarray(summary),

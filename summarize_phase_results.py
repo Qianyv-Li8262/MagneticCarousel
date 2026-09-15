@@ -14,6 +14,7 @@ from matplotlib.colors import LogNorm
 import numpy as np
 from scipy.optimize import brentq
 
+from project_paths import image_output_path
 from scan_sr_somega_gpu import _cell_edges
 
 
@@ -200,7 +201,8 @@ def main():
     for axis in axes.ravel():
         axis.grid(alpha=0.2)
     figure.suptitle("Self-consistent hysteresis model: locked and running phases")
-    figure_path = args.output_dir / "phase_behavior_summary.png"
+    figure_path = image_output_path(args.output_dir / "phase_behavior_summary.png")
+    figure_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(figure_path, dpi=200)
     plt.close(figure)
 

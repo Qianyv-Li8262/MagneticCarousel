@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from project_paths import RESULTS_DIR, SOMEGA_DD_LOG_DIR, SOMEGA_FP64_LOG_DIR
+from project_paths import RESULTS_DIR, SOMEGA_DD_LOG_DIR, SOMEGA_FP64_LOG_DIR, image_output_path
 
 getcontext().prec = 60
 HERE = Path(__file__).resolve().parent
@@ -127,5 +127,7 @@ axes[2].plot(xd[cc==1],(yd-yy)[cc==1],'.')
 axes[2].set(xlabel='(somega - FP64 apparent boundary) / 1e-10',ylabel='DD minus FP64 transition time')
 for ax in axes: ax.grid(alpha=.25)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-fig.savefig(OUTPUT_DIR/'somega_independent_review.png',dpi=180)
+figure_path=image_output_path(OUTPUT_DIR/'somega_independent_review.png')
+figure_path.parent.mkdir(parents=True,exist_ok=True)
+fig.savefig(figure_path,dpi=180)
 OUT.write_text('\n'.join(report),encoding='utf-8')

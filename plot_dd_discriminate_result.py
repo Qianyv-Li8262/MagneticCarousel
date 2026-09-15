@@ -6,7 +6,7 @@ from scipy.optimize import least_squares
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from project_paths import RESULTS_DIR, SOMEGA_DD_LOG_DIR, SOMEGA_FP64_LOG_DIR
+from project_paths import RESULTS_DIR, SOMEGA_DD_LOG_DIR, SOMEGA_FP64_LOG_DIR, image_output_path
 getcontext().prec=60
 root=Path(__file__).resolve().parent
 log_dir=SOMEGA_FP64_LOG_DIR
@@ -46,7 +46,9 @@ a,b=fitted['coef']; axes[1].plot(d,a-b*np.log(d/1e-12),'k-',lw=1,zorder=0)
 axes[1].text(.04,.07,f'DD log fit: B = {b:.3f}\n146 points, RMSE = {fitted["rmse"]:.3f}\n4 unconfirmed points omitted',transform=axes[1].transAxes,fontsize=9,bbox=dict(facecolor='white',alpha=.85,edgecolor='none'))
 fig.suptitle('Critical slowing: the new DD scan extends the logarithmic trend',fontsize=14)
 output_dir.mkdir(parents=True, exist_ok=True)
-fig.savefig(output_dir/'somega_dd_discriminate50_linear_log.png',dpi=180)
+figure_path=image_output_path(output_dir/'somega_dd_discriminate50_linear_log.png')
+figure_path.parent.mkdir(parents=True,exist_ok=True)
+fig.savefig(figure_path,dpi=180)
 plt.close(fig)
 lines=[]
 for label,rows in [('new46',new),('combined146',dd8+new)]:

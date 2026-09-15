@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import least_squares
 
-from project_paths import RESULTS_DIR, SOMEGA_FP64_LOG_DIR, SR_FP64_LOG_DIR
+from project_paths import RESULTS_DIR, SOMEGA_FP64_LOG_DIR, SR_FP64_LOG_DIR, image_output_path
 
 
 HERE = Path(__file__).resolve().parent
@@ -111,7 +111,8 @@ def main() -> None:
     output_dir = RESULTS_DIR / "critical-slowing"
     output_dir.mkdir(parents=True, exist_ok=True)
     out_csv = output_dir / f"{args.prefix}_critical_fit.csv"
-    out_fig = output_dir / f"{args.prefix}_critical_fit.png"
+    out_fig = image_output_path(output_dir / f"{args.prefix}_critical_fit.png")
+    out_fig.parent.mkdir(parents=True, exist_ok=True)
     blocks = [(path.name, read_log(path)) for path in logs]
     valid = np.concatenate([rows[(rows[:, 1] == 1) & (rows[:, 2] >= 0)] for _, rows in blocks])
     invalid = np.concatenate([rows[rows[:, 1] == 0] for _, rows in blocks])

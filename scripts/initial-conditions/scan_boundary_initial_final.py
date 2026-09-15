@@ -12,13 +12,15 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 
 from scan_sr_somega_gpu import locking_limit
 from scan_v0_s0_gpu import _cell_edges, phase_locked_mask, run_sweep
-from project_paths import RESULTS_DIR, RUNS_DIR
+from project_paths import RESULTS_DIR, RUNS_DIR, SCRATCH_DIR
 
 
 OUT = RUNS_DIR / "initial-conditions" / "boundary-final"
 RESULTS = RESULTS_DIR / "initial-conditions" / "boundary-final"
+FIGURES = SCRATCH_DIR / "initial-conditions" / "boundary-final"
 OUT.mkdir(parents=True, exist_ok=True)
 RESULTS.mkdir(parents=True, exist_ok=True)
+FIGURES.mkdir(parents=True, exist_ok=True)
 
 POINT_SPECS = (
     (2.5, 0.95),
@@ -105,7 +107,7 @@ figure.suptitle(
     "\n"
     r"white: phase-locked; black: running; orange: finite-time classification front"
 )
-figure.savefig(RESULTS / "initial_condition_boundaries.png", dpi=220)
+figure.savefig(FIGURES / "initial_condition_boundaries.png", dpi=220)
 np.savetxt(
     RESULTS / "summary.csv",
     np.asarray(summary),

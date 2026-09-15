@@ -15,6 +15,8 @@ from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
+from project_paths import image_output_path
+
 
 BRANCH_COLORS = {0: "tab:blue", 1: "tab:red"}
 
@@ -215,7 +217,7 @@ def main() -> None:
         default="auto",
         help="auto prefers accepted rhs.csv and falls back to state finite differences",
     )
-    parser.add_argument("--output", type=Path, default=None, help="PNG path; defaults inside input_dir")
+    parser.add_argument("--output", type=Path, default=None, help="requested PNG name; always saved under scratch")
     parser.add_argument("--derived-csv", type=Path, default=None, help="derived CSV path; defaults inside input_dir")
     parser.add_argument("--max-plot-points", type=int, default=200000)
     parser.add_argument("--dpi", type=int, default=200)
@@ -229,7 +231,7 @@ def main() -> None:
     input_dir = args.input_dir.resolve()
     if not input_dir.is_dir():
         parser.error(f"input directory does not exist: {input_dir}")
-    output = (args.output or input_dir / "q_radial_phase_space.png").resolve()
+    output = image_output_path(args.output or input_dir / "q_radial_phase_space.png")
     derived_csv = (args.derived_csv or input_dir / "q_radial_phase_space.csv").resolve()
     existing = [path for path in (output, derived_csv) if path.exists()]
     if existing and not args.overwrite:

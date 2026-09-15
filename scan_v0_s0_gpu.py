@@ -23,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
+from project_paths import image_output_path
+
 from scan_sr_somega_gpu import (
     DEFAULT_REFERENCE,
     METRIC_INDEX,
@@ -406,7 +408,7 @@ def main(*, use_kahan: bool = False) -> None:
         print(f"Saved data to {data_path.resolve()}", flush=True)
 
     if SAVE_PATH is not None:
-        save_path = Path(SAVE_PATH)
+        save_path = image_output_path(SAVE_PATH)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(save_path, dpi=SAVE_DPI)
         print(f"Saved figure to {save_path.resolve()}", flush=True)

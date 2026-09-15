@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from project_paths import RUNS_DIR, fp64_module_dir
+from project_paths import RUNS_DIR, fp64_module_dir, image_output_path
 
 
 SR = 0.8
@@ -158,7 +158,8 @@ def main() -> None:
     for axis in axes.ravel()[:3]:
         axis.grid(alpha=0.25)
     figure.suptitle(r"True initial-state boundary: locked transport versus unlocked decay ($s_r=0.8$, $s_\omega=0.6$)")
-    figure_path = args.output_dir / "true_boundary_fp64.png"
+    figure_path = image_output_path(args.output_dir / "true_boundary_fp64.png")
+    figure_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(figure_path, dpi=200)
 
     print(f"FP64 module: {hysteresis.__file__}")

@@ -28,7 +28,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from project_paths import RUNS_DIR, fp64_module_dir
+from project_paths import RUNS_DIR, fp64_module_dir, image_output_path
 
 
 # ============================ Scan configuration ============================
@@ -529,7 +529,8 @@ def main() -> None:
         )
 
     summary_path = args.output_dir / "critical_slowing_summary.csv"
-    figure_path = args.output_dir / "critical_slowing.png"
+    figure_path = image_output_path(args.output_dir / "critical_slowing.png")
+    figure_path.parent.mkdir(parents=True, exist_ok=True)
     save_summary(summary_path, results)
     plot_results(figure_path, results, locked_velocity)
     print(f"Saved {summary_path.resolve()}")

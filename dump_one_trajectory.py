@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from project_paths import RUNS_DIR, dump_module_dir
+from project_paths import RUNS_DIR, dump_module_dir, image_output_path
 
 
 ALPHA_REF = 0.33333333
@@ -289,8 +289,6 @@ def output_paths(output_dir: Path, full_mode: bool) -> list[Path]:
         "trajectory_overview.csv",
         "dump_states.csv",
         "branch_changes.csv",
-        "trajectory_overview.png",
-        "dump_detail.png",
     ]
     if full_mode:
         names.append("rhs.csv")
@@ -335,7 +333,9 @@ def main() -> None:
 
     output_dir = args.output_dir.resolve()
     # Include the optional full-mode file so a summary overwrite cannot leave stale RHS data behind.
-    paths = output_paths(output_dir, True)
+    overview_figure = image_output_path(output_dir / "trajectory_overview.png")
+    detail_figure = image_output_path(output_dir / "dump_detail.png")
+    paths = output_paths(output_dir, True) + [overview_figure, detail_figure]
     existing = [path for path in paths if path.exists()]
     if existing and not args.overwrite:
         parser.error(f"output already exists: {existing[0]} (use --overwrite to replace this run's files)")
@@ -386,8 +386,10 @@ def main() -> None:
     grid_start_time = start_step * args.dt
     grid_end_time = end_step * args.dt
     title = rf"$v_0={args.v0:g},\ S_0={args.s0:g},\ s_r={args.sr:g},\ s_\omega={args.somega:g}$"
-    plot_overview(output_dir / "trajectory_overview.png", overview, grid_start_time, grid_end_time, title)
-    plot_detail(output_dir / "dump_detail.png", detail, branch_changes, grid_start_time, grid_end_time, title)
+    overview_figure.parent.mkdir(parents=True, exist_ok=True)
+    detail_figure.parent.mkdir(parents=True, exist_ok=True)
+    plot_overview(overview_figure, overview, grid_start_time, grid_end_time, title)
+    plot_detail(detail_figure, detail, branch_changes, grid_start_time, grid_end_time, title)
 
     metadata = {
         "module": str(Path(module.__file__).resolve()),

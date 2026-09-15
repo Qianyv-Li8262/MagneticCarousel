@@ -8,13 +8,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from project_paths import RESULTS_DIR, RUNS_DIR
+from project_paths import RUNS_DIR, SCRATCH_DIR
 from scan_sr_somega_gpu import _cell_edges
 from summarize_phase_results import ALPHA_REF, binned_collapse, locking_limit
 
 
 ROOT = RUNS_DIR / "phase-behavior" / "legacy-analysis"
-OUT = RESULTS_DIR / "phase-behavior" / "phase_diagram.png"
+OUT = SCRATCH_DIR / "phase-behavior" / "phase_diagram.png"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 

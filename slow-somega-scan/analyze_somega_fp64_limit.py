@@ -13,12 +13,12 @@ from scipy.optimize import least_squares
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from project_paths import RESULTS_DIR, SOMEGA_FP64_LOG_DIR  # noqa: E402
+from project_paths import RESULTS_DIR, SOMEGA_FP64_LOG_DIR, image_output_path  # noqa: E402
 
 LOG_DIR = SOMEGA_FP64_LOG_DIR
 OUTPUT_DIR = RESULTS_DIR / "critical-slowing"
 SUMMARY = OUTPUT_DIR / "somega_fp64_limit_summary.csv"
-FIGURE = OUTPUT_DIR / "somega_fp64_limit.png"
+FIGURE = image_output_path(OUTPUT_DIR / "somega_fp64_limit.png")
 
 
 def rows(path: Path):
@@ -77,6 +77,7 @@ def fit_model(kind: str, r: np.ndarray, t: np.ndarray):
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    FIGURE.parent.mkdir(parents=True, exist_ok=True)
     x, t, failed = load()
     x_reliable, t_reliable, _ = load(max_fine=9)
     critical_lower = float(np.max(x))

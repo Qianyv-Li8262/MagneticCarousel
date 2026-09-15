@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from project_paths import RESULTS_DIR, RUNS_DIR
+from project_paths import RUNS_DIR, SCRATCH_DIR
 from scan_sr_somega_gpu import _cell_edges
 from summarize_phase_results import ALPHA_REF, BOUNDARY_SCALE
 
@@ -49,7 +49,7 @@ for axis, (path, field_scale, title) in zip(axes, CASES):
 axes[0].set_ylabel(r"$s_\omega$")
 fig.colorbar(last_image, ax=axes, label=r"$\langle\dot\phi\rangle$ (clipped)")
 fig.suptitle("Lower external field removes the locked region")
-output = RESULTS_DIR / "phase-behavior" / "field_strength_comparison.png"
+output = SCRATCH_DIR / "phase-behavior" / "field_strength_comparison.png"
 output.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(output, dpi=220)
 print(output.resolve())

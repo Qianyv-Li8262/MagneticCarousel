@@ -31,7 +31,7 @@ from time import perf_counter
 import matplotlib.pyplot as plt
 import numpy as np
 
-from project_paths import extension_dir
+from project_paths import extension_dir, image_output_path
 
 
 REFERENCE_ALPHA = '0.33333333'
@@ -205,8 +205,9 @@ def main():
 
     figure = plot_results(plot_values, answer, times, args.mode, fixed)
     if args.save_plot is not None:
-        args.save_plot.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(args.save_plot, dpi=180)
+        save_plot = image_output_path(args.save_plot)
+        save_plot.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(save_plot, dpi=180)
     if args.no_show:
         plt.close(figure)
     else:

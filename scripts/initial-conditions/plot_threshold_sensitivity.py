@@ -11,11 +11,11 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
 from scan_sr_somega_gpu import _cell_edges
-from project_paths import RESULTS_DIR, RUNS_DIR
+from project_paths import RUNS_DIR, SCRATCH_DIR
 
 
 source = RUNS_DIR / "initial-conditions" / "t50000" / "sr2.5_sw2.254472.npz"
-output = RESULTS_DIR / "initial-conditions" / "threshold_sensitivity.png"
+output = SCRATCH_DIR / "initial-conditions" / "threshold_sensitivity.png"
 output.parent.mkdir(parents=True, exist_ok=True)
 data = np.load(source)
 v0 = data["v0"]

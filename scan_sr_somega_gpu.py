@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from build_codegen import COEFFS_INIT
-from project_paths import RESULTS_DIR, RUNS_DIR, SCRATCH_DIR
+from project_paths import RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
 # ============================= Run settings =============================
@@ -402,7 +402,7 @@ def main(*, use_kahan: bool = False) -> None:
         )
         print(f"Saved data to {data_path.resolve()}")
     if SAVE_PATH is not None:
-        save_path = Path(SAVE_PATH)
+        save_path = image_output_path(SAVE_PATH)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(save_path, dpi=SAVE_DPI)
         print(f"Saved figure to {save_path.resolve()}")
