@@ -58,20 +58,28 @@ DEVICE INLINE int initialize_gpu_mode(state &ball, const solver_params &params, 
     if (sliding)
         return kGpuEvolveOk;
 
-    const float field_phase = ball.phase - ball.theta;
-    const vec2 h_ext = {H_EXT * cosf(field_phase), H_EXT * sinf(field_phase)};
+    const field_evaluation field_lab = evaluate_field(ball.phase);
+    const float body_angle = -ball.theta;
+    const vec2 h_ext = rotate(field_lab.field, body_angle);
+    const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+    const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+    const float A = (MU_R - 1.0f) / (MU_R + 2.0f);
+    const float E = (1.0f - C) / ((MU_R + 2.0f) * (1.0f - XI_JA));
     const float normal_force =
-        params.gamma_g - params.gamma / (2.0f + MU_R) *
-                             (-(MU_R - 1.0f) * H_EXT * H_EXT + (1.0f - C) / (1.0f - XI_JA) * (ball.q * h_ext));
+        params.gamma_g -
+        params.gamma * (A * (h_ext * h_ext_height_derivative) - E * (ball.q * h_ext_height_derivative));
     if (!isfinite(normal_force) || normal_force < 0.0f)
         return kGpuEvolveStepFailed;
 
-    const float magnetic_torque =
-        -params.gamma_m * (1.0f - C) / ((1.0f - XI_JA) * (MU_R + 2.0f)) * cross(ball.q, h_ext);
-    const float theta_acceleration =
-        ETA / (1.0f + ETA) * (1.0f - params.alpha) * magnetic_torque -
-        params.alpha / (1.0f + ETA) * params.delta * ball.theta_dot * fabsf(ball.theta_dot);
-    if (!isfinite(magnetic_torque) || !isfinite(theta_acceleration))
+    const float magnetic_torque = -params.gamma_m * E * cross(ball.q, h_ext);
+    const float magnetic_force = ETA * params.alpha * params.alpha * params.gamma_m *
+                                 (E * (ball.q * h_ext_phase_derivative) -
+                                  A * (h_ext * h_ext_phase_derivative));
+    const float theta_acceleration = ETA / (1.0f + ETA) * magnetic_torque -
+                                     magnetic_force / ((1.0f + ETA) * params.alpha) -
+                                     params.alpha / (1.0f + ETA) * params.delta * ball.theta_dot *
+                                         fabsf(ball.theta_dot);
+    if (!isfinite(magnetic_torque) || !isfinite(magnetic_force) || !isfinite(theta_acceleration))
         return kGpuEvolveNonFiniteState;
 
     if (fabsf(theta_acceleration - magnetic_torque) * ETA * params.alpha > MU * normal_force) {

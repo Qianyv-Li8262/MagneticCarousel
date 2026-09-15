@@ -50,15 +50,25 @@ critical_slow_result evolve_critical_slow(const real_t dt, const std::int64_t ma
                   REAL_LITERAL(0.0), REAL_LITERAL(0.0), {REAL_LITERAL(0.0), REAL_LITERAL(0.0)}};
     bool sliding = false;
     real_t slip_sign = REAL_LITERAL(0.0);
-    const real_t field_phase = ball.phase - ball.theta;
-    const vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
-    const real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-        (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext));
+    const field_evaluation field_lab = evaluate_field(static_cast<real_t>(ball.phase));
+    const real_t body_angle = -static_cast<real_t>(ball.theta);
+    const vec2 h_ext = rotate(field_lab.field, body_angle);
+    const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+    const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+    const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
+    const real_t E =
+        (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+    const real_t N = params.gamma_g -
+                     params.gamma * (A * (h_ext * h_ext_height_derivative) - E * (ball.q * h_ext_height_derivative));
     if (N < REAL_LITERAL(0.0) || !real_isfinite(N))
         return {-1, -1.0};
-    const real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext);
-    const real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-        params.alpha / (1 + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
+    const real_t M_magnet = -params.gamma_m * E * cross(ball.q, h_ext);
+    const real_t F_magnet = ETA * params.alpha * params.alpha * params.gamma_m *
+                            (E * (ball.q * h_ext_phase_derivative) - A * (h_ext * h_ext_phase_derivative));
+    const real_t theta_dot = ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet -
+                             F_magnet / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+                             params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta * ball.theta_dot *
+                                 real_fabs(ball.theta_dot);
     if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
         sliding = true;
         slip_sign = -signum(theta_dot - M_magnet);

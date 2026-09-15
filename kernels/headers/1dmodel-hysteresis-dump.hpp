@@ -401,33 +401,37 @@ class trace_collector
 INLINE bool eval_rhs(const state &in, state &out, const solver_params &params, const bool sliding,
                      const real_t slip_sign, rhs_stage_trace &trace)
 {
-    const real_t field_phase = in.phase - in.theta;
-    vec2 h_ext = {real_cos(field_phase) * H_EXT, real_sin(field_phase) * H_EXT};
-    real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (in.q * h_ext));
+    const field_evaluation field_lab = evaluate_field(static_cast<real_t>(in.phase));
+    const real_t body_angle = -static_cast<real_t>(in.theta);
+    const vec2 h_ext = rotate(field_lab.field, body_angle);
+    const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+    const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+    const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
+    const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+    const real_t N =
+        params.gamma_g - params.gamma * (A * (h_ext * h_ext_height_derivative) - E * (in.q * h_ext_height_derivative));
     if (N < 0)
         return false;
+    const real_t M_magnet = -params.gamma_m * E * cross(in.q, h_ext);
+    const real_t F_magnet = ETA * params.alpha * params.alpha * params.gamma_m *
+                            (E * (in.q * h_ext_phase_derivative) - A * (h_ext * h_ext_phase_derivative));
     if (sliding) {
-        real_t F = -slip_sign * MU * N;
-        real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
-        real_t F_magnet = ETA * params.alpha * params.alpha * M_magnet;
+        const real_t F = -slip_sign * MU * N;
         out.xdot = F_magnet + F - params.delta * in.xdot * real_fabs(in.xdot);
         out.theta_dot = M_magnet + F / (ETA * params.alpha);
     } else {
-        real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(in.q, h_ext);
-        out.theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                        params.alpha / (1 + ETA) * params.delta * in.theta_dot * real_fabs(in.theta_dot);
+        out.theta_dot =
+            ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet - F_magnet / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+            params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta * in.theta_dot * real_fabs(in.theta_dot);
         out.xdot = -params.alpha * out.theta_dot;
     }
     out.x = in.xdot;
     out.theta = in.theta_dot;
     out.t = REAL_LITERAL(1.0);
     out.phase = REAL_LITERAL(1.0) - in.xdot;
-    const real_t field_phase_dot = out.phase - out.theta;
-    vec2 h_ext_dot =
-        field_phase_dot * make_vec2(-real_sin(field_phase) * H_EXT, real_cos(field_phase) * H_EXT);
+    const vec2 h_ext_dot = static_cast<real_t>(out.phase) * h_ext_phase_derivative -
+                           static_cast<real_t>(out.theta) * make_vec2(-h_ext.y, h_ext.x);
 
-    const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
     vec2 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
     real_t interme = ALPHA_JA * (REAL_LITERAL(1.0) - C * XI_JA) / XI_JA - E;
     vec2 q_dot = (REAL_LITERAL(1.0) / interme) * h0_dot;
@@ -516,18 +520,25 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
                 collector.commit_rk(completed_step, rk_role::full_trial, trial, true);
                 state state_dttrans = trial_final;
                 project_pure_rolling(state_dttrans, params);
-                const real_t field_phase = state_dttrans.phase - state_dttrans.theta;
-                vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
-                real_t N = params.gamma_g -
-                           params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                               (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
+                const field_evaluation field_lab = evaluate_field(static_cast<real_t>(state_dttrans.phase));
+                const real_t body_angle = -static_cast<real_t>(state_dttrans.theta);
+                const vec2 h_ext = rotate(field_lab.field, body_angle);
+                const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+                const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+                const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
+                const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+                const real_t N = params.gamma_g - params.gamma * (A * (h_ext * h_ext_height_derivative) -
+                                                                  E * (state_dttrans.q * h_ext_height_derivative));
                 if (N < REAL_LITERAL(0.0))
                     return 1;
-                real_t M_magnet =
-                    -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(state_dttrans.q, h_ext);
-                real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                                   params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot *
-                                       real_fabs(state_dttrans.theta_dot);
+                const real_t M_magnet = -params.gamma_m * E * cross(state_dttrans.q, h_ext);
+                const real_t F_magnet =
+                    ETA * params.alpha * params.alpha * params.gamma_m *
+                    (E * (state_dttrans.q * h_ext_phase_derivative) - A * (h_ext * h_ext_phase_derivative));
+                const real_t theta_dot = ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet -
+                                         F_magnet / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+                                         params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta *
+                                             state_dttrans.theta_dot * real_fabs(state_dttrans.theta_dot);
                 if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
                     slip_sign = step_slip_sign * REAL_LITERAL(-1.0);
                     collector.note_event(completed_step, step_event::sliding_reverse);
@@ -549,17 +560,25 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
             collector.commit_rk(completed_step, rk_role::pre_event, pre_event, true);
             state state_dttrans = pre_event.result;
             project_pure_rolling(state_dttrans, params);
-            const real_t field_phase = state_dttrans.phase - state_dttrans.theta;
-            vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
-            real_t N =
-                params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                     (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (state_dttrans.q * h_ext));
+            const field_evaluation field_lab = evaluate_field(static_cast<real_t>(state_dttrans.phase));
+            const real_t body_angle = -static_cast<real_t>(state_dttrans.theta);
+            const vec2 h_ext = rotate(field_lab.field, body_angle);
+            const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+            const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+            const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
+            const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+            const real_t N = params.gamma_g - params.gamma * (A * (h_ext * h_ext_height_derivative) -
+                                                              E * (state_dttrans.q * h_ext_height_derivative));
             if (N < REAL_LITERAL(0.0))
                 return 1;
-            real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(state_dttrans.q, h_ext);
-            real_t theta_dot =
-                ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                params.alpha / (1 + ETA) * params.delta * state_dttrans.theta_dot * real_fabs(state_dttrans.theta_dot);
+            const real_t M_magnet = -params.gamma_m * E * cross(state_dttrans.q, h_ext);
+            const real_t F_magnet =
+                ETA * params.alpha * params.alpha * params.gamma_m *
+                (E * (state_dttrans.q * h_ext_phase_derivative) - A * (h_ext * h_ext_phase_derivative));
+            const real_t theta_dot = ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet -
+                                     F_magnet / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+                                     params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta * state_dttrans.theta_dot *
+                                         real_fabs(state_dttrans.theta_dot);
             bool next_sliding = sliding;
             real_t next_slip_sign = step_slip_sign;
             if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
@@ -588,28 +607,43 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
         return 0;
     }
 
-    const real_t field_phase = trial_final.phase - trial_final.theta;
-    vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
-    real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                    (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (trial_final.q * h_ext));
+    const field_evaluation field_lab = evaluate_field(static_cast<real_t>(trial_final.phase));
+    const real_t body_angle = -static_cast<real_t>(trial_final.theta);
+    const vec2 h_ext = rotate(field_lab.field, body_angle);
+    const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+    const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+    const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
+    const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+    const real_t N = params.gamma_g - params.gamma * (A * (h_ext * h_ext_height_derivative) -
+                                                      E * (trial_final.q * h_ext_height_derivative));
     if (N < REAL_LITERAL(0.0))
         return 1;
-    real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(trial_final.q, h_ext);
-    real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet - params.alpha / (1 + ETA) * params.delta *
-                                                                             trial_final.theta_dot *
-                                                                             real_fabs(trial_final.theta_dot);
-    real_t g_final = real_fabs(theta_dot - M_magnet) * ETA * params.alpha - MU * N;
+    const real_t M_magnet = -params.gamma_m * E * cross(trial_final.q, h_ext);
+    const real_t F_magnet = ETA * params.alpha * params.alpha * params.gamma_m *
+                            (E * (trial_final.q * h_ext_phase_derivative) - A * (h_ext * h_ext_phase_derivative));
+    const real_t theta_dot = ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet -
+                             F_magnet / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+                             params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta * trial_final.theta_dot *
+                                 real_fabs(trial_final.theta_dot);
+    const real_t g_final = real_fabs(theta_dot - M_magnet) * ETA * params.alpha - MU * N;
     if (g_final > 0) {
         collector.commit_rk(completed_step, rk_role::full_trial, trial, false);
-        const real_t field_phase_init = ball.phase - ball.theta;
-        vec2 h_ext_init = {H_EXT * real_cos(field_phase_init), H_EXT * real_sin(field_phase_init)};
-        real_t N_init =
-            params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                 (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext_init));
-        real_t M_magnet_init = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext_init);
-        real_t theta_dot_init = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet_init -
-                                params.alpha / (1 + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
-        real_t g_init = real_fabs(theta_dot_init - M_magnet_init) * ETA * params.alpha - MU * N_init;
+        const field_evaluation field_lab_init = evaluate_field(static_cast<real_t>(ball.phase));
+        const real_t body_angle_init = -static_cast<real_t>(ball.theta);
+        const vec2 h_ext_init = rotate(field_lab_init.field, body_angle_init);
+        const vec2 h_ext_phase_derivative_init = rotate(field_lab_init.phase_derivative, body_angle_init);
+        const vec2 h_ext_height_derivative_init = rotate(field_lab_init.height_derivative, body_angle_init);
+        const real_t N_init = params.gamma_g - params.gamma * (A * (h_ext_init * h_ext_height_derivative_init) -
+                                                               E * (ball.q * h_ext_height_derivative_init));
+        const real_t M_magnet_init = -params.gamma_m * E * cross(ball.q, h_ext_init);
+        const real_t F_magnet_init =
+            ETA * params.alpha * params.alpha * params.gamma_m *
+            (E * (ball.q * h_ext_phase_derivative_init) - A * (h_ext_init * h_ext_phase_derivative_init));
+        const real_t theta_dot_init =
+            ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet_init -
+            F_magnet_init / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+            params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
+        const real_t g_init = real_fabs(theta_dot_init - M_magnet_init) * ETA * params.alpha - MU * N_init;
         real_t dt_transit = dt * g_init / (g_init - g_final);
         const auto pre_event = rk2_traced(ball, dt_transit, params, sliding, step_slip_sign);
         if (pre_event.flag != 0)
@@ -657,15 +691,23 @@ INLINE evolution_result evolve(const state &initial, const real_t dt, const int 
     bool sliding = real_fabs(slip_velocity) > REAL_LITERAL(1.0e-10);
     real_t slip_sign = sliding ? signum(slip_velocity) : REAL_LITERAL(0.0);
     if (!sliding) {
-        const real_t field_phase = ball.phase - ball.theta;
-        vec2 h_ext = {H_EXT * real_cos(field_phase), H_EXT * real_sin(field_phase)};
-        real_t N = params.gamma_g - params.gamma / (REAL_LITERAL(2.0) + MU_R) *
-                                        (-(MU_R - 1) * H_EXT * H_EXT + (1 - C) / (1 - XI_JA) * (ball.q * h_ext));
+        const field_evaluation field_lab = evaluate_field(static_cast<real_t>(ball.phase));
+        const real_t body_angle = -static_cast<real_t>(ball.theta);
+        const vec2 h_ext = rotate(field_lab.field, body_angle);
+        const vec2 h_ext_phase_derivative = rotate(field_lab.phase_derivative, body_angle);
+        const vec2 h_ext_height_derivative = rotate(field_lab.height_derivative, body_angle);
+        const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
+        const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
+        const real_t N = params.gamma_g - params.gamma * (A * (h_ext * h_ext_height_derivative) -
+                                                          E * (ball.q * h_ext_height_derivative));
         if (N < REAL_LITERAL(0.0))
             throw std::runtime_error("evolve: N < 0 at the initial state");
-        real_t M_magnet = -params.gamma_m * (1 - C) / ((1 - XI_JA) * (MU_R + 2)) * cross(ball.q, h_ext);
-        real_t theta_dot = ETA / (1 + ETA) * (1 - params.alpha) * M_magnet -
-                           params.alpha / (1 + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
+        const real_t M_magnet = -params.gamma_m * E * cross(ball.q, h_ext);
+        const real_t F_magnet = ETA * params.alpha * params.alpha * params.gamma_m *
+                                (E * (ball.q * h_ext_phase_derivative) - A * (h_ext * h_ext_phase_derivative));
+        const real_t theta_dot =
+            ETA / (REAL_LITERAL(1.0) + ETA) * M_magnet - F_magnet / ((REAL_LITERAL(1.0) + ETA) * params.alpha) -
+            params.alpha / (REAL_LITERAL(1.0) + ETA) * params.delta * ball.theta_dot * real_fabs(ball.theta_dot);
         if (real_fabs(theta_dot - M_magnet) * ETA * params.alpha > MU * N) {
             sliding = true;
             slip_sign = -signum(theta_dot - M_magnet);
