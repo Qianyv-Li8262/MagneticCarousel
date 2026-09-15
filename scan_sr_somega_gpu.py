@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,7 @@ SR_LOWER = 1.5
 SR_UPPER = 4.5
 SOMEGA_LOWER = 0.1
 SOMEGA_UPPER = 3.0
-K = 128
+K = 64
 DT = 1.0e-3
 TOTAL_TIME = 50000.0
 OBSERVATION_WINDOW = 4000.0
@@ -68,11 +69,13 @@ HEADER_DIR = KERNEL_DIR / "headers"
 CUDA_SOURCE = KERNEL_DIR / "1dmodel-hysteresis.cu"
 PHASE_CUDA_SOURCE = KERNEL_DIR / "phase_behavior.cu"
 CUDA_HEADER = HEADER_DIR / "1dmodel-hysteresis.hpp"
+CUDA_GENERATED_HEADER = KERNEL_DIR / "generated" / "field_coefficients_nvrtc.generated.cuh"
 CUDA_SUPPORT_HEADERS = (
     CUDA_HEADER,
     HEADER_DIR / "hysteresis_types.hpp",
     HEADER_DIR / "hysteresis_config.hpp",
     HEADER_DIR / "numeric_extensions" / "kahan.hpp",
+    CUDA_GENERATED_HEADER,
 )
 _CUDA_MODULES = {}
 
@@ -131,11 +134,18 @@ def _get_cupy():
 
 def _get_cuda_module(cp, use_kahan: bool = False):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
-    if use_kahan not in _CUDA_MODULES:
-        COEFFS_INIT("nvrtc")
-        for path in (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE):
-            if not path.is_file():
-                raise FileNotFoundError(f"CUDA source not found: {path}")
+    COEFFS_INIT("nvrtc")
+    dependencies = (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE)
+    for path in dependencies:
+        if not path.is_file():
+            raise FileNotFoundError(f"CUDA source not found: {path}")
+    digest = hashlib.sha256()
+    for path in dependencies:
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes())
+    source_signature = digest.hexdigest()[:16]
+    module_key = (use_kahan, source_signature)
+    if module_key not in _CUDA_MODULES:
         legacy = CUDA_SOURCE.read_text(encoding="utf-8")
         phase = PHASE_CUDA_SOURCE.read_text(encoding="utf-8")
         include_line = '#include "1dmodel-hysteresis.hpp"'
@@ -143,11 +153,18 @@ def _get_cuda_module(cp, use_kahan: bool = False):
             raise RuntimeError("Expected shared-header include was not found")
         source = legacy
         source += "\n" + phase.replace(include_line, "", 1)
-        options = ("--std=c++17", f"--include-path={HEADER_DIR}")
+        # CuPy's NVRTC cache key does not track the contents of headers reached
+        # through -I.  Include their digest in the options so changing any
+        # model macro or generated coefficient always recompiles the kernel.
+        options = (
+            "--std=c++17",
+            f"--include-path={HEADER_DIR}",
+            f"-DIYPT16_SOURCE_SIGNATURE_{source_signature}=1",
+        )
         if use_kahan:
             options += ("-DUSE_KAHAN",)
-        _CUDA_MODULES[use_kahan] = cp.RawModule(code=source, options=options, backend="nvrtc")
-    return _CUDA_MODULES[use_kahan]
+        _CUDA_MODULES[module_key] = cp.RawModule(code=source, options=options, backend="nvrtc")
+    return _CUDA_MODULES[module_key]
 
 
 def _cell_edges(points: np.ndarray) -> np.ndarray:
