@@ -246,3 +246,35 @@ extern "C" GLOBAL void AnalyzeInitialGrid(
     output_status[index] =
         phase_analyze(ball, dt, steps, window_steps, sample_stride, params, output_metrics + 19 * index);
 }
+
+// One-dimensional high-resolution cut through the (v0, S0) basin map.
+// Each thread evolves one S0 value at a shared v0 and writes the same 19
+// terminal-window metrics as AnalyzeInitialGrid.
+extern "C" GLOBAL void AnalyzeInitialLine(
+    const float sr, const float somega, const float v0, const float *s0_values, const int count,
+    const float dt, const int steps, const int window_steps, const int sample_stride,
+    const float reference_alpha, const float reference_delta, const float reference_gamma_g,
+    const float reference_gamma, const float reference_gamma_m, int *output_status,
+    float *output_metrics)
+{
+    const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (index >= count)
+        return;
+    output_status[index] = kPhaseInvalidInput;
+    if (!isfinite(sr) || sr <= 0.0f || !isfinite(somega) || somega <= 0.0f || !isfinite(v0) ||
+        dt <= 0.0f || steps <= 0 || window_steps <= 1 || sample_stride <= 0)
+        return;
+
+    const float s0 = s0_values[index];
+    const solver_params reference = {
+        reference_alpha, reference_delta, reference_gamma_g, reference_gamma, reference_gamma_m,
+    };
+    const solver_params params = phase_scaled_params(sr, somega, reference);
+    const float omega0 = (s0 - v0) / params.alpha;
+    if (!isfinite(s0) || !isfinite(omega0))
+        return;
+
+    state ball = {0.0f, 0.0f, v0, 0.0f, omega0, 0.0f, {0.0f, 0.0f}};
+    output_status[index] =
+        phase_analyze(ball, dt, steps, window_steps, sample_stride, params, output_metrics + 19 * index);
+}
