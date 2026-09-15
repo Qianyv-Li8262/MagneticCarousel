@@ -20,6 +20,9 @@ import numpy as np
 from project_paths import RUNS_DIR, dump_module_dir, image_output_path
 
 
+SOURCE_DIR = Path(__file__).resolve().parent
+
+
 ALPHA_REF = 0.33333333
 DELTA_REF = 1.7212357e-4
 GAMMA_G_REF = 0.16560356
@@ -345,7 +348,7 @@ def main() -> None:
             path.unlink()
 
     module = load_module(args.module_dir)
-    require_current_extension(module, source_dir)
+    require_current_extension(module, SOURCE_DIR)
     dtype = np.dtype(module.real_dtype)
     if dtype != np.dtype(np.float64):
         print(f"warning: loaded {dtype}; FP64 is recommended for theoretical analysis", file=sys.stderr)
