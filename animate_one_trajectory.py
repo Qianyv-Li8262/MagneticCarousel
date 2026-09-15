@@ -65,8 +65,8 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 4
-SOMEGA = 1.5
+SR = 1.7
+SOMEGA = 1.129
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356
@@ -155,6 +155,8 @@ def animate(
     alpha, delta, gamma_g, gamma, gamma_m = scaled_model_parameters()
     params = hysteresis.SolverParams(alpha, delta, gamma_g, gamma, gamma_m)
     state = make_initial_state(initial_v0, initial_s0, alpha)
+    sliding = None
+    slip_sign = None
 
     times = [float(state[0])]
     positions = [float(state[1])]
@@ -269,10 +271,12 @@ def animate(
             axis.set_ylim(lo - padding, hi + padding)
 
     def update(_frame_number: int):
-        nonlocal state
+        nonlocal state, sliding, slip_sign
         batch_size = FAST_BATCH_SIZE if fast else 1
         for _ in range(batch_size):
-            state, sliding = hysteresis.evolve_with_mode(state, DT, STEPS_PER_FRAME, params)
+            state, sliding, slip_sign = hysteresis.evolve_with_discrete_mode(
+                state, DT, STEPS_PER_FRAME, params, sliding, slip_sign
+            )
             times.append(float(state[0]))
             positions.append(float(state[1]))
             angles.append(float(state[3]))

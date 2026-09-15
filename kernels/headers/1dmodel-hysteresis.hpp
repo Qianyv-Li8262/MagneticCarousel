@@ -316,4 +316,10 @@ int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sl
 state evolve(const state &initial, const real_t dt, const int steps, const solver_params &params);
 state evolve_with_mode(const state &initial, const real_t dt, const int steps, const solver_params &params,
                        bool &sliding);
+// Continue a chunked trajectory without reconstructing its hybrid mode.
+// Set initialize_mode=true only for the first chunk; subsequent calls must
+// pass back both sliding and slip_sign returned by the previous call.
+state evolve_with_discrete_mode(const state &initial, const real_t dt, const int steps,
+                                const solver_params &params, bool &sliding,
+                                real_t &slip_sign, bool initialize_mode);
 #endif

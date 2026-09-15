@@ -50,8 +50,12 @@ def trace(hysteresis, sr, somega, v0, s0, total_time, sample_time, dt):
     steps = round(sample_time / dt)
     rows = []
     previous_x = float(state[1])
+    sliding = None
+    slip_sign = None
     for _ in range(round(total_time / sample_time)):
-        state, sliding = hysteresis.evolve_with_mode(state, dt, steps, params)
+        state, sliding, slip_sign = hysteresis.evolve_with_discrete_mode(
+            state, dt, steps, params, sliding, slip_sign
+        )
         block_velocity = (float(state[1]) - previous_x) / sample_time
         previous_x = float(state[1])
         rows.append((

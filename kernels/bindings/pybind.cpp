@@ -201,6 +201,29 @@ py::tuple evolve_with_mode_numpy(
     return py::make_tuple(state_to_numpy(final_state), sliding);
 }
 
+py::tuple evolve_with_discrete_mode_numpy(
+    const py::array_t<binding_real_t, py::array::c_style | py::array::forcecast> &initial,
+    const binding_real_t dt, const int steps, const solver_params &params,
+    const py::object &sliding_value, const py::object &slip_sign_value)
+{
+    const bool initialize_mode = sliding_value.is_none() && slip_sign_value.is_none();
+    if (sliding_value.is_none() != slip_sign_value.is_none())
+        throw py::value_error("sliding and slip_sign must either both be None or both be supplied");
+    bool sliding = false;
+    real_t slip_sign = REAL_LITERAL(0.0);
+    if (!initialize_mode) {
+        sliding = py::cast<bool>(sliding_value);
+#ifdef USE_DD
+        slip_sign = real_from_python(slip_sign_value);
+#else
+        slip_sign = static_cast<real_t>(py::cast<binding_real_t>(slip_sign_value));
+#endif
+    }
+    const state final_state = evolve_with_discrete_mode(
+        state_from_numpy(initial), real_t(dt), steps, params, sliding, slip_sign, initialize_mode);
+    return py::make_tuple(state_to_numpy(final_state), sliding, static_cast<binding_real_t>(slip_sign));
+}
+
 PYBIND11_MODULE(MODULE_NAME, m)
 {
     m.doc() = "CPU evolution for the one-dimensional hysteresis model";
@@ -314,4 +337,10 @@ PYBIND11_MODULE(MODULE_NAME, m)
           "Evolve [t, x, xdot, theta, theta_dot, phase, qx, qy] and return the final state.");
     m.def("evolve_with_mode", &evolve_with_mode_numpy, py::arg("initial"), py::arg("dt"), py::arg("steps"),
           py::arg("params"), "Evolve the state and return (state, sliding).");
+    m.def("evolve_with_discrete_mode", &evolve_with_discrete_mode_numpy,
+          py::arg("initial"), py::arg("dt"), py::arg("steps"), py::arg("params"),
+          py::arg("sliding") = py::none(), py::arg("slip_sign") = py::none(),
+          "Evolve while preserving the hybrid contact mode. On the first chunk pass None for both "
+          "sliding and slip_sign; the function initializes them and returns "
+          "(state, sliding, slip_sign). Pass both returned values unchanged into the next chunk.");
 }

@@ -6,17 +6,11 @@
 namespace
 {
 
-state evolve_impl(const state &initial, const real_t dt, const int steps, const solver_params &params, bool &sliding)
+void initialize_discrete_mode(state &ball, const solver_params &params, bool &sliding, real_t &slip_sign)
 {
-    if (dt <= REAL_LITERAL(0.0))
-        throw std::invalid_argument("evolve: dt must be positive");
-    if (steps < 0)
-        throw std::invalid_argument("evolve: steps must be non-negative");
-
-    state ball = initial;
     const real_t slip_velocity = ball.xdot + params.alpha * ball.theta_dot;
     sliding = real_fabs(slip_velocity) > REAL_LITERAL(1.0e-10);
-    real_t slip_sign = sliding ? signum(slip_velocity) : REAL_LITERAL(0.0);
+    slip_sign = sliding ? signum(slip_velocity) : REAL_LITERAL(0.0);
     if (!sliding) {
         const field_evaluation field_lab = evaluate_field(static_cast<real_t>(ball.phase));
         const real_t body_angle = -static_cast<real_t>(ball.theta);
@@ -43,6 +37,25 @@ state evolve_impl(const state &initial, const real_t dt, const int steps, const 
             project_pure_rolling(ball, params);
         }
     }
+}
+
+state evolve_impl(const state &initial, const real_t dt, const int steps, const solver_params &params,
+                  bool &sliding, real_t &slip_sign, const bool initialize_mode)
+{
+    if (dt <= REAL_LITERAL(0.0))
+        throw std::invalid_argument("evolve: dt must be positive");
+    if (steps < 0)
+        throw std::invalid_argument("evolve: steps must be non-negative");
+
+    state ball = initial;
+    if (initialize_mode)
+        initialize_discrete_mode(ball, params, sliding, slip_sign);
+    else {
+        if (sliding && slip_sign != REAL_LITERAL(-1.0) && slip_sign != REAL_LITERAL(1.0))
+            throw std::invalid_argument("evolve: sliding mode requires slip_sign equal to -1 or +1");
+        if (!sliding && slip_sign != REAL_LITERAL(0.0))
+            throw std::invalid_argument("evolve: sticking mode requires zero slip_sign");
+    }
 
     for (int i = 0; i < steps; ++i) {
         const int flag = fwd1step(ball, dt, params, sliding, slip_sign);
@@ -58,11 +71,20 @@ state evolve_impl(const state &initial, const real_t dt, const int steps, const 
 state evolve(const state &initial, const real_t dt, const int steps, const solver_params &params)
 {
     bool sliding;
-    return evolve_impl(initial, dt, steps, params, sliding);
+    real_t slip_sign;
+    return evolve_impl(initial, dt, steps, params, sliding, slip_sign, true);
 }
 
 state evolve_with_mode(const state &initial, const real_t dt, const int steps, const solver_params &params,
                        bool &sliding)
 {
-    return evolve_impl(initial, dt, steps, params, sliding);
+    real_t slip_sign;
+    return evolve_impl(initial, dt, steps, params, sliding, slip_sign, true);
+}
+
+state evolve_with_discrete_mode(const state &initial, const real_t dt, const int steps,
+                                const solver_params &params, bool &sliding,
+                                real_t &slip_sign, const bool initialize_mode)
+{
+    return evolve_impl(initial, dt, steps, params, sliding, slip_sign, initialize_mode);
 }
