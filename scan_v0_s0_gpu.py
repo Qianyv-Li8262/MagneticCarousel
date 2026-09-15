@@ -40,15 +40,15 @@ from scan_sr_somega_gpu import (
 
 # ============================= Run settings =============================
 SR = 2.5
-SOMEGA = 2.254
+SOMEGA = 2.25447
 
 # Initial-condition plane.  S0 = v0 + alpha * omega0.
-V0_LOWER = -10.0
-V0_UPPER = 10.0
-S0_LOWER = -10.0
-S0_UPPER = 10.0
+V0_LOWER = 4.0
+V0_UPPER = 4.5
+S0_LOWER = -7.0
+S0_UPPER = -6.5
 
-K = 64
+K = 256
 DT = 1.0e-3
 TOTAL_TIME = 50000.0
 OBSERVATION_WINDOW = 4000.0
@@ -266,9 +266,9 @@ def plot_results(
     lock_threshold: float = LOCK_THRESHOLD,
     use_kahan: bool = False,
 ):
-    """Plot the phase classification and its long-time convergence checks."""
+    """Plot the final-window mean and standard deviation of the phase rate."""
     import matplotlib.pyplot as plt
-    from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
+    from matplotlib.colors import Normalize
 
     if v0.ndim != 1 or s0.ndim != 1 or status.shape != (s0.size, v0.size):
         raise ValueError("Coordinate and status shapes are inconsistent.")
@@ -276,33 +276,20 @@ def plot_results(
         raise ValueError("Metrics shape is inconsistent with status.")
 
     valid = status == 0
-    locked = phase_locked_mask(status, metrics, lock_threshold)
-    classification = np.ma.masked_where(~valid, np.where(locked, 0, 1))
     phase_rate = np.ma.masked_where(~valid, metrics[..., METRIC_INDEX["mean_phase_rate"]])
     phase_rate_std = np.ma.masked_where(~valid, metrics[..., METRIC_INDEX["std_phase_rate"]])
-    delta_phase_rate = np.ma.masked_where(
-        ~valid, metrics[..., METRIC_INDEX["delta_mean_phase_rate"]]
-    )
-    mean_velocity = np.ma.masked_where(~valid, metrics[..., METRIC_INDEX["mean_v"]])
 
     v0_edges = _cell_edges(v0)
     s0_edges = _cell_edges(s0)
-    figure, grid_axes = plt.subplots(2, 3, figsize=(16.2, 9.2), constrained_layout=True)
-    axes = grid_axes.ravel()
-    figure.delaxes(axes[5])
+    figure, axes = plt.subplots(1, 2, figsize=(12.8, 5.4), constrained_layout=True)
 
-    phase_cmap = ListedColormap(("#2468b4", "#d1495b"))
-    phase_cmap.set_bad("0.65")
-    phase_norm = BoundaryNorm((-0.5, 0.5, 1.5), phase_cmap.N)
-    classification_image = axes[0].pcolormesh(
-        v0_edges, s0_edges, classification, cmap=phase_cmap, norm=phase_norm, shading="flat"
+    finite_mean = phase_rate.compressed()
+    order_limit = (
+        float(np.nanpercentile(np.abs(finite_mean), 99.5)) if finite_mean.size else 1.0
     )
-    classification_bar = figure.colorbar(classification_image, ax=axes[0], ticks=(0, 1))
-    classification_bar.ax.set_yticklabels(("phase-locked", "running"))
-    axes[0].set_title(rf"Phase class: $|\langle\dot\phi\rangle|<{lock_threshold:g}$")
-
-    order_limit = max(1.0, _symmetric_limit(phase_rate.filled(np.nan), valid))
-    order_image = axes[1].pcolormesh(
+    if not np.isfinite(order_limit) or order_limit <= 0.0:
+        order_limit = 1.0
+    order_image = axes[0].pcolormesh(
         v0_edges,
         s0_edges,
         phase_rate,
@@ -310,44 +297,25 @@ def plot_results(
         norm=Normalize(vmin=-order_limit, vmax=order_limit),
         shading="flat",
     )
-    figure.colorbar(order_image, ax=axes[1], label=r"$\langle\dot\phi\rangle$")
-    axes[1].set_title(r"Lock-in order parameter $\langle1-v-\omega\rangle$")
+    figure.colorbar(order_image, ax=axes[0], label=r"$\langle\dot\phi\rangle_{\rm end}$")
+    axes[0].set_title(r"Final-window mean $\langle\dot\phi\rangle$")
 
-    std_image = axes[2].pcolormesh(
-        v0_edges, s0_edges, phase_rate_std, cmap="magma", shading="flat"
-    )
-    figure.colorbar(std_image, ax=axes[2], label=r"std$(\dot\phi)$")
-    axes[2].set_title("Phase-rate fluctuations in final window")
-
-    velocity_limit = _symmetric_limit(mean_velocity.filled(np.nan), valid)
-    velocity_image = axes[3].pcolormesh(
+    finite_std = phase_rate_std.compressed()
+    std_limit = float(np.nanpercentile(finite_std, 99.5)) if finite_std.size else 1.0
+    if not np.isfinite(std_limit) or std_limit <= 0.0:
+        std_limit = 1.0
+    std_image = axes[1].pcolormesh(
         v0_edges,
         s0_edges,
-        mean_velocity,
-        cmap="coolwarm",
-        norm=Normalize(vmin=-velocity_limit, vmax=velocity_limit),
+        phase_rate_std,
+        cmap="magma",
+        norm=Normalize(vmin=0.0, vmax=std_limit),
         shading="flat",
     )
-    figure.colorbar(velocity_image, ax=axes[3], label=r"$\langle v\rangle$")
-    axes[3].set_title("Mean velocity in final window")
+    figure.colorbar(std_image, ax=axes[1], label=r"$\sigma_{\dot\phi,\rm end}$")
+    axes[1].set_title(r"Final-window standard deviation $\sigma_{\dot\phi}$")
 
-    drift_limit = _symmetric_limit(delta_phase_rate.filled(np.nan), valid)
-    drift_image = axes[4].pcolormesh(
-        v0_edges,
-        s0_edges,
-        delta_phase_rate,
-        cmap="coolwarm",
-        norm=Normalize(vmin=-drift_limit, vmax=drift_limit),
-        shading="flat",
-    )
-    figure.colorbar(
-        drift_image,
-        ax=axes[4],
-        label=r"$\langle\dot\phi\rangle_2-\langle\dot\phi\rangle_1$",
-    )
-    axes[4].set_title("Within-window convergence drift")
-
-    for axis in axes[:5]:
+    for axis in axes:
         axis.set_xlabel(r"initial $v_0$")
         axis.set_ylabel(r"initial slip $S_0=v_0+\alpha\omega_0$")
         axis.grid(alpha=0.2)
@@ -355,6 +323,7 @@ def plot_results(
     figure.suptitle(
         rf"Initial-state phase-lock sweep: $s_r={sr:g}$, $s_\omega={somega:g}$, "
         rf"$k={v0.size}$, $T={total_time:g}$, final window $={observation_window:g}$; "
+        rf"$\dot\phi=1-v-\dot\theta$; "
         f"{'Kahan FP32' if use_kahan else 'ordinary FP32'}"
     )
     return figure
