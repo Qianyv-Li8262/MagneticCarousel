@@ -5,6 +5,7 @@
 **/__pycache__/
 *.pyc
 *.pyd
+*.ps1
 *.lib
 *.exe
 *.ncu-rep

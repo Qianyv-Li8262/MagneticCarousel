@@ -1,0 +1,55 @@
+{
+  "parameters": {
+    "v0": 4.25,
+    "sr": 2.5,
+    "somega": 2.25447,
+    "dt": 0.001
+  },
+  "trajectory_separation": {
+    "first_abs_velocity_difference_above_0.5": 2715.7000000000003,
+    "body_frame_phase_offset_at_that_time": 0.23443418588466816,
+    "q_angle_offset_at_that_time": 0.12728807132715203
+  },
+  "inside": {
+    "s0": -6.798795,
+    "sliding_to_sticking_time": 8.806000000000001,
+    "relu_crossings_after_t1": 0,
+    "first_qnorm_below_0.29999": null,
+    "late_fp64": {
+      "v_mean": 1.0006265316533927,
+      "omega_mean": -1.20075184999159,
+      "phidot_mean": 1.2001253183381972,
+      "phidot_std": 0.04404938619712167,
+      "qnorm_mean": 0.2999999487805305
+    },
+    "late_fp32": {
+      "v_mean": -3.552090111045704,
+      "omega_mean": 4.2625082331499655,
+      "phidot_mean": 0.2895818769425407,
+      "phidot_std": 0.002556576924094822,
+      "qnorm_mean": 0.1859851652074015
+    }
+  },
+  "outside": {
+    "s0": -6.797,
+    "sliding_to_sticking_time": 8.804,
+    "relu_crossings_after_t1": 2232,
+    "first_relu_crossing": 6091.070500782164,
+    "first_qnorm_below_0.29999": 6094.6,
+    "first_qnorm_below_0.29": 6320.7,
+    "late_fp64": {
+      "v_mean": -3.5520085339419256,
+      "omega_mean": 4.262410283354414,
+      "phidot_mean": 0.28959825058751154,
+      "phidot_std": 0.0025498104701728234,
+      "qnorm_mean": 0.18598798161703517
+    },
+    "late_fp32": {
+      "v_mean": -3.5523494263400677,
+      "omega_mean": 4.26281940406826,
+      "phidot_mean": 0.2895300246548021,
+      "phidot_std": 0.0025386952102691485,
+      "qnorm_mean": 0.18593049595232072
+    }
+  }
+}
