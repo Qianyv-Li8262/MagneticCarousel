@@ -191,7 +191,7 @@ DEVICE INLINE int phase_analyze(state &ball, const float dt, const int steps, co
 
 } // namespace
 
-extern "C" GLOBAL void AnalyzeParameterGrid(const float *sr_values, const float *somega_values, const int k,
+extern "C" __launch_bounds__(128, 4) GLOBAL  void AnalyzeParameterGrid(const float *sr_values, const float *somega_values, const int k,
                                              const float dt, const int steps, const int window_steps,
                                              const int sample_stride, const float reference_alpha,
                                              const float reference_delta, const float reference_gamma_g,

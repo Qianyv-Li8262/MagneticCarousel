@@ -4,7 +4,7 @@ The default run focuses on the locking boundary and saves both the raw
 observables and a phase diagram::
 
     conda run -n daily python scan_sr_somega_gpu.py
-    conda run -n daily python scan_sr_somega_gpu.py --kahan
+    conda run -n daily python scan_sr_somega_gpu.py --ordinary
 """
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ SR_LOWER = 1.5
 SR_UPPER = 4.5
 SOMEGA_LOWER = 0.1
 SOMEGA_UPPER = 3.0
-K = 64
+K = 256
 DT = 1.0e-3
 TOTAL_TIME = 50000.0
 OBSERVATION_WINDOW = 4000.0
 SAMPLE_TIME = 0.2
 
 BLOCK_X = 16
-BLOCK_Y = 16
+BLOCK_Y = 8
 
 SHOW_PLOT = False
 SAVE_PATH: str | Path | None = SCRATCH_DIR / "phase-behavior" / "sr_somega_phase.png"
@@ -132,7 +132,7 @@ def _get_cupy():
     return cp
 
 
-def _get_cuda_module(cp, use_kahan: bool = False):
+def _get_cuda_module(cp, use_kahan: bool = True):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
     COEFFS_INIT("nvrtc")
     dependencies = (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE)
@@ -216,7 +216,7 @@ def run_sweep(
     block_shape: tuple[int, int] = (BLOCK_X, BLOCK_Y),
     observation_window: float = OBSERVATION_WINDOW,
     sample_time: float = SAMPLE_TIME,
-    use_kahan: bool = False,
+    use_kahan: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return ``sr``, ``somega``, status and long-time metrics arrays."""
     if not (0.0 < sr_lower < sr_upper and 0.0 < somega_lower < somega_upper):
@@ -281,7 +281,7 @@ def plot_results(
     status: np.ndarray,
     metrics: np.ndarray,
     *,
-    use_kahan: bool = False,
+    use_kahan: bool = True,
 ):
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
@@ -399,7 +399,7 @@ def _print_phase_summary(sr, somega, status, metrics):
     print(f"Mean rolling residual: median={np.nanmedian(slip[valid]):.3e}, max={np.nanmax(slip[valid]):.3e}")
 
 
-def main(*, use_kahan: bool = False) -> None:
+def main(*, use_kahan: bool = True) -> None:
     sr, somega, status, metrics = run_sweep(
         SR_LOWER, SR_UPPER, SOMEGA_LOWER, SOMEGA_UPPER, K, DT, TOTAL_TIME,
         reference=DEFAULT_REFERENCE, block_shape=(BLOCK_X, BLOCK_Y),
@@ -431,8 +431,9 @@ def main(*, use_kahan: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--kahan",
-        action="store_true",
-        help="use compensated FP32 accumulators for persistent CUDA state",
+        "--ordinary",
+        action="store_false",
+        dest="use_kahan",
+        help="use ordinary FP32 instead of the default compensated FP32 state",
     )
-    main(use_kahan=parser.parse_args().kahan)
+    main(use_kahan=parser.parse_args().use_kahan)

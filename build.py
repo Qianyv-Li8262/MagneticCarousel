@@ -58,6 +58,7 @@ command = [
     str(kernels / "bindings" / "pybind.cpp"),
     str(kernels / "1dmodel-hysteresis.cpp"),
     *([str(kernels / "hysteresis_critical_slow_cpu.cpp")] if args.fp64 or args.dd else []),
+    *([str(kernels / "hysteresis_phase_boundary_cpu.cpp")] if args.fp64 else []),
     f"-I{headers}",
     f"-I{pybind11.get_include()}",
     f"-I{numpy.get_include()}",

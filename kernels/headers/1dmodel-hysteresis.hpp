@@ -171,7 +171,12 @@ DEVICE INLINE rk2_res rk2(const state &ball, const real_t dt, const solver_param
 }
 
 // use int for result. 0=normal, 1=N<0, 2=undefined sliding direction
-DEVICE INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sliding, real_t &slip_sign)
+#ifdef __CUDACC__
+DEVICE NOINLINE
+#else
+inline
+#endif
+int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sliding, real_t &slip_sign)
 {
     const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
     const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);

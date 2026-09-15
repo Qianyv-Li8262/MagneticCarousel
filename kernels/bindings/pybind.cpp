@@ -1,5 +1,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -7,6 +9,9 @@
 #include "1dmodel-hysteresis.hpp"
 #if defined(USE_FP64) || defined(USE_DD)
 #include "hysteresis_critical_slow_cpu.hpp"
+#endif
+#ifdef USE_FP64
+#include "hysteresis_phase_boundary_cpu.hpp"
 #endif
 
 namespace py = pybind11;
@@ -84,6 +89,73 @@ void calc_slow_cpu_numpy(py::array_t<std::int32_t, py::array::c_style> answer,
     py::gil_scoped_release release;
     calc_slow_cpu(answer_ptr, time_ptr, scan_ptr, k, fixed_scale, mode, dt, max_confirm,
                   reference, num_threads);
+}
+
+py::dict bisect_phase_boundaries_numpy(double sr_lower, double sr_upper, std::size_t plot_points,
+                                       double somega_lower, double somega_upper, double tolerance,
+                                       double threshold, double dt, double total_time,
+                                       double observation_window, double sample_time,
+                                       int max_iterations, solver_params reference, int num_threads)
+{
+    const auto finite_positive = [](double value) { return std::isfinite(value) && value > 0.0; };
+    if (!finite_positive(sr_lower) || !finite_positive(sr_upper) || sr_lower > sr_upper)
+        throw py::value_error("sr bounds must be positive, finite and increasing");
+    if (plot_points == 0)
+        throw py::value_error("plot_points must be positive");
+    if (!finite_positive(somega_lower) || !finite_positive(somega_upper) || somega_lower >= somega_upper)
+        throw py::value_error("somega bounds must be positive, finite and increasing");
+    if (!finite_positive(tolerance) || !finite_positive(threshold) || !finite_positive(dt) ||
+        !finite_positive(total_time) || !finite_positive(observation_window) || !finite_positive(sample_time))
+        throw py::value_error("tolerance, threshold and time settings must be positive and finite");
+    if (observation_window > total_time || max_iterations < 1 || num_threads < 0)
+        throw py::value_error("invalid observation window, iteration count or thread count");
+    const auto aligned_steps = [dt](double duration, const char *name) {
+        const double ratio = duration / dt;
+        const auto steps = static_cast<std::int64_t>(std::llround(ratio));
+        const double error = std::abs(duration - static_cast<double>(steps) * dt);
+        const double allowance = std::max(1e-12, 64.0 * std::numeric_limits<double>::epsilon() * duration);
+        if (steps < 1 || error > allowance)
+            throw py::value_error(std::string(name) + " must be an integer multiple of dt");
+        return steps;
+    };
+    phase_boundary_settings settings{
+        somega_lower, somega_upper, tolerance, threshold, dt,
+        aligned_steps(total_time, "total_time"),
+        aligned_steps(observation_window, "observation_window"),
+        aligned_steps(sample_time, "sample_time"), max_iterations,
+    };
+    if (settings.window_steps < 2 * settings.sample_stride)
+        throw py::value_error("observation_window must contain at least two sample intervals");
+
+    std::vector<phase_boundary_point> results(plot_points);
+    {
+        py::gil_scoped_release release;
+        bisect_phase_boundaries_cpu(results.data(), results.size(), sr_lower, sr_upper,
+                                    settings, reference, num_threads);
+    }
+    py::array_t<double> sr(plot_points), lower(plot_points), upper(plot_points), midpoint(plot_points);
+    py::array_t<double> lower_mean(plot_points), upper_mean(plot_points);
+    py::array_t<std::int32_t> iterations(plot_points), status(plot_points);
+    for (std::size_t i = 0; i < plot_points; ++i) {
+        sr.mutable_data()[i] = results[i].sr;
+        lower.mutable_data()[i] = results[i].lower;
+        upper.mutable_data()[i] = results[i].upper;
+        midpoint.mutable_data()[i] = (results[i].lower + results[i].upper) / 2.0;
+        lower_mean.mutable_data()[i] = results[i].lower_mean_phase_rate;
+        upper_mean.mutable_data()[i] = results[i].upper_mean_phase_rate;
+        iterations.mutable_data()[i] = results[i].iterations;
+        status.mutable_data()[i] = results[i].status;
+    }
+    py::dict output;
+    output["sr"] = std::move(sr);
+    output["lower"] = std::move(lower);
+    output["upper"] = std::move(upper);
+    output["midpoint"] = std::move(midpoint);
+    output["lower_mean_phase_rate"] = std::move(lower_mean);
+    output["upper_mean_phase_rate"] = std::move(upper_mean);
+    output["iterations"] = std::move(iterations);
+    output["status"] = std::move(status);
+    return output;
 }
 #endif
 
@@ -165,6 +237,18 @@ PYBIND11_MODULE(MODULE_NAME, m)
           "non-overlapping 1D arrays. "
           "Do not access outputs or mutate/resize any arrays concurrently with this call. "
           "C++ workers dynamically claim whole trajectories using a mutex; results retain input order.");
+    m.def("bisect_phase_boundaries", &bisect_phase_boundaries_numpy,
+          py::arg("sr_lower"), py::arg("sr_upper"), py::arg("plot_points"),
+          py::arg("somega_lower") = 0.1, py::arg("somega_upper") = 3.0,
+          py::arg("tolerance") = 1e-5, py::arg("threshold") = 0.05,
+          py::arg("dt") = 1e-3, py::arg("total_time") = 50000.0,
+          py::arg("observation_window") = 4000.0, py::arg("sample_time") = 0.2,
+          py::arg("max_iterations") = 40, py::arg("reference_params"),
+          py::arg("num_threads") = 0,
+          "Parallel C++ bisection of the s_omega phase boundary for evenly spaced s_r points. "
+          "Classification uses the GPU phase scan's terminal-window mean of 1-v-omega. "
+          "num_threads=0 uses hardware concurrency. Returns a dict of NumPy arrays; status 0 is success, "
+          "1 means the supplied s_omega endpoints have the same classification, and negative values are evolution errors.");
 #else
     m.def("calc_slow_cpu_dd", &calc_slow_cpu_dd,
           py::arg("scan_values"), py::arg("fixed_scale"), py::arg("mode"), py::arg("dt"),

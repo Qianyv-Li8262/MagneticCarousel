@@ -14,12 +14,14 @@
 #define GLOBAL __global__
 #define HOST __host__
 #define INLINE __forceinline__
+#define NOINLINE __noinline__
 #define REAL_ISFINITE_IMPL isfinite
 #else
 #define DEVICE
 #define GLOBAL
 #define HOST
 #define INLINE inline
+#define NOINLINE
 #define REAL_ISFINITE_IMPL std::isfinite
 #endif
 
