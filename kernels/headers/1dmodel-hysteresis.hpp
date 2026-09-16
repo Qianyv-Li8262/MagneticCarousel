@@ -3,7 +3,6 @@
 #include "hysteresis_config.hpp"
 #include "hysteresis_types.hpp"
 
-
 #ifdef __CUDACC__
 #include "../generated/field_coefficients_nvrtc.generated.cuh"
 #else
@@ -23,8 +22,7 @@ struct field_evaluation {
 DEVICE INLINE field_evaluation evaluate_field(const real_t chi)
 {
 #if FIELD_LEGACY_FIRST_HARMONIC_COMPATIBILITY
-    static_assert(FIELD_FOURIER_MODE_COUNT == 1,
-                  "legacy first-harmonic compatibility requires exactly one mode");
+    static_assert(FIELD_FOURIER_MODE_COUNT == 1, "legacy first-harmonic compatibility requires exactly one mode");
 #ifdef __CUDACC__
     float sine;
     float cosine;
@@ -176,7 +174,7 @@ DEVICE NOINLINE
 #else
 inline
 #endif
-int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sliding, real_t &slip_sign)
+    int fwd1step(state &ball, const real_t dt, const solver_params &params, bool &sliding, real_t &slip_sign)
 {
     const real_t A = (MU_R - REAL_LITERAL(1.0)) / (MU_R + REAL_LITERAL(2.0));
     const real_t E = (REAL_LITERAL(1.0) - C) / (MU_R + REAL_LITERAL(2.0)) / (REAL_LITERAL(1.0) - XI_JA);
@@ -319,7 +317,6 @@ state evolve_with_mode(const state &initial, const real_t dt, const int steps, c
 // Continue a chunked trajectory without reconstructing its hybrid mode.
 // Set initialize_mode=true only for the first chunk; subsequent calls must
 // pass back both sliding and slip_sign returned by the previous call.
-state evolve_with_discrete_mode(const state &initial, const real_t dt, const int steps,
-                                const solver_params &params, bool &sliding,
-                                real_t &slip_sign, bool initialize_mode);
+state evolve_with_discrete_mode(const state &initial, const real_t dt, const int steps, const solver_params &params,
+                                bool &sliding, real_t &slip_sign, bool initialize_mode);
 #endif

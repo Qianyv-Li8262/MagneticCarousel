@@ -63,7 +63,7 @@ def require_current_extension(module, *, use_gpu: bool) -> None:
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
-STEPS_PER_FRAME = 10000
+STEPS_PER_FRAME = 1000
 FPS = 30
 
 # Fast display settings.  The full sampled history is retained; only rendering
@@ -76,8 +76,8 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 7.5
-SOMEGA = 1.1
+SR = 2
+SOMEGA = 1.5
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356
