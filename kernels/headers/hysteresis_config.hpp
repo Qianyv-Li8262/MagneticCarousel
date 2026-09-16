@@ -4,7 +4,7 @@
 
 // Field geometry and Fourier truncation. The mode count refers to the odd
 // harmonics 1, 3, 5, ... generated for the alternating dipole array.
-#define FIELD_Z0 0.30
+#define FIELD_Z0 0.25
 #define FIELD_FOURIER_MODE_COUNT 5
 
 // Reproduce the circular single-harmonic field used by the numerical kernel

@@ -62,7 +62,7 @@ def require_current_extension(module, *, use_gpu: bool) -> None:
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
-STEPS_PER_FRAME = 1000
+STEPS_PER_FRAME = 10000
 FPS = 30
 
 # Fast display settings.  The full sampled history is retained; only rendering
