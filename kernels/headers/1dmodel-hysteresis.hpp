@@ -131,7 +131,7 @@ DEVICE INLINE bool evalRhs(const state &in, state &out, const solver_params &par
     real_t interme = ALPHA_JA * (REAL_LITERAL(1.0) - C * XI_JA) / XI_JA - E;
     vec2 q_dot = (REAL_LITERAL(1.0) / interme) * h0_dot;
     // IMPORTANT: self-consistent H_e_dot
-    vec2 he_dot = (h0_dot + (E - ALPHA_JA * (REAL_LITERAL(1.0) - C)) * q_dot) / (REAL_LITERAL(1.0) - XI_JA);
+    vec2 he_dot = (ALPHA_JA / (XI_JA * interme)) * h0_dot;
 
     // if reject we should select ReLU x branch
     if (in.q * he_dot > REAL_LITERAL(0.0)) {

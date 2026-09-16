@@ -26,10 +26,9 @@ def load_hysteresis(use_gpu: bool):
     """Load FP64 by default, or GPU-compatible Kahan FP32 on request."""
     module_dir = extension_dir("fp32-kahan" if use_gpu else "fp64")
     if not module_dir.is_dir():
-        build_flag = "--kahan" if use_gpu else "--fp64"
         raise RuntimeError(
             f"Required extension directory does not exist: {module_dir}. "
-            f"Build it with python src/build.py {build_flag}."
+            f"Build it with CMake."
         )
     sys.path.insert(0, str(module_dir))
     try:

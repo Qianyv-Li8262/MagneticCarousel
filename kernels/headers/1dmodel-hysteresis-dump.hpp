@@ -435,7 +435,7 @@ INLINE bool eval_rhs(const state &in, state &out, const solver_params &params, c
     vec2 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (MU_R + REAL_LITERAL(2.0)));
     real_t interme = ALPHA_JA * (REAL_LITERAL(1.0) - C * XI_JA) / XI_JA - E;
     vec2 q_dot = (REAL_LITERAL(1.0) / interme) * h0_dot;
-    vec2 he_dot = (h0_dot + (E - ALPHA_JA * (REAL_LITERAL(1.0) - C)) * q_dot) / (REAL_LITERAL(1.0) - XI_JA);
+    vec2 he_dot = (ALPHA_JA / (XI_JA * interme)) * h0_dot;
 
     const real_t relu_test = in.q * he_dot;
     const bool x_branch = relu_test > REAL_LITERAL(0.0);
