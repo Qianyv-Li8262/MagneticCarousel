@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from build_codegen import COEFFS_INIT
+# from build_codegen import COEFFS_INIT
 from project_paths import RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
@@ -136,7 +136,7 @@ def _get_cupy():
 
 def _get_cuda_module(cp, use_kahan: bool = True):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
-    COEFFS_INIT("nvrtc")
+    # COEFFS_INIT("nvrtc")
     dependencies = (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE)
     for path in dependencies:
         if not path.is_file():

@@ -48,6 +48,7 @@ add_custom_command(
         "${CMAKE_COMMAND}"
         "-DGENERATOR=$<TARGET_FILE:generate_field_coefficients>"
         "-DOUTPUT=${CPU_COEFFICIENTS}"
+        "-DTARGET=cpu"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCoefficientGenerator.cmake"
 
     DEPENDS
@@ -62,6 +63,42 @@ add_custom_command(
 add_custom_target(
     generate_cpu_coefficients
     DEPENDS "${CPU_COEFFICIENTS}"
+)
+
+set(
+    NVRTC_COEFFICIENTS
+    "${GENERATED_DIR}/field_coefficients_nvrtc.generated.cuh"
+)
+
+add_custom_command(
+    OUTPUT "${NVRTC_COEFFICIENTS}"
+
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGENERATOR=$<TARGET_FILE:generate_field_coefficients>"
+        "-DOUTPUT=${NVRTC_COEFFICIENTS}"
+        "-DTARGET=nvrtc"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCoefficientGenerator.cmake"
+
+    DEPENDS
+        generate_field_coefficients
+        "${KERNEL_DIR}/tools/generate_field_coefficients.cpp"
+        "${HEADER_DIR}/hysteresis_config.hpp"
+
+    COMMENT "Generating NVRTC field coefficients"
+    VERBATIM
+)
+
+add_custom_target(
+    generate_nvrtc_coefficients
+    DEPENDS "${NVRTC_COEFFICIENTS}"
+)
+
+add_custom_target(
+    generate_coefficients
+    DEPENDS
+        generate_cpu_coefficients
+        generate_nvrtc_coefficients
 )
 
 # ---------------------------------------------------------------------------

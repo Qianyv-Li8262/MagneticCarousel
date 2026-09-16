@@ -19,7 +19,7 @@ import time
 import cupy as cp
 import numpy as np
 
-from build_codegen import COEFFS_INIT
+# from build_codegen import COEFFS_INIT
 from project_paths import RUNS_DIR
 
 ROOT = Path(__file__).resolve().parent
@@ -61,7 +61,7 @@ extern "C" __global__ void diagnose(float dt, int steps, int k, double *out) {
 
 
 def source_for(field_scale, fp64, use_kahan):
-    COEFFS_INIT("nvrtc")
+    # COEFFS_INIT("nvrtc")
     header=(HEADER_DIR/'1dmodel-hysteresis.hpp').read_text(encoding='utf-8')
     types=(HEADER_DIR/'hysteresis_types.hpp').read_text(encoding='utf-8')
     config=(HEADER_DIR/'hysteresis_config.hpp').read_text(encoding='utf-8')
