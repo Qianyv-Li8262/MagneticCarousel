@@ -46,7 +46,7 @@ def first_existing(*paths: Path) -> Path:
 
 def extension_dir(kind: str) -> Path:
     """Return the isolated build directory for one extension configuration."""
-    supported = {"fp32", "fp64", "dd", "dump-fp32", "dump-fp64"}
+    supported = {"fp32", "fp32-kahan", "fp64", "dd", "dump-fp32", "dump-fp64"}
     if kind not in supported:
         raise ValueError(f"unknown extension kind {kind!r}; expected one of {sorted(supported)}")
     return BUILD_DIR / "extensions" / kind

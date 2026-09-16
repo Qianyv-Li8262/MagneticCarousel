@@ -11,23 +11,38 @@ The compiled ``hysteresis`` extension is loaded from
 from __future__ import annotations
 
 import argparse
+import importlib
 from pathlib import Path
 import sys
 
 import numpy as np
 
-from project_paths import extension_dir, first_existing
+from project_paths import extension_dir
 
-sys.path.insert(
-    0,
-    str(first_existing(extension_dir("fp64"), extension_dir("fp32"), Path(__file__).resolve().parent)),
-)
-import hysteresis
+hysteresis = None
 
 
-def require_current_extension() -> None:
+def load_hysteresis(use_gpu: bool):
+    """Load FP64 by default, or GPU-compatible Kahan FP32 on request."""
+    module_dir = extension_dir("fp32-kahan" if use_gpu else "fp64")
+    if not module_dir.is_dir():
+        build_flag = "--kahan" if use_gpu else "--fp64"
+        raise RuntimeError(
+            f"Required extension directory does not exist: {module_dir}. "
+            f"Build it with python src/build.py {build_flag}."
+        )
+    sys.path.insert(0, str(module_dir))
+    try:
+        module = importlib.import_module("hysteresis")
+    finally:
+        sys.path.pop(0)
+    require_current_extension(module, use_gpu=use_gpu)
+    return module
+
+
+def require_current_extension(module, *, use_gpu: bool) -> None:
     """Fail visibly when Python has loaded an extension built from older sources."""
-    extension_path = Path(hysteresis.__file__).resolve()
+    extension_path = Path(module.__file__).resolve()
     source_directory = Path(__file__).resolve().parent
     kernels = source_directory / "kernels"
     model_sources = (
@@ -45,11 +60,6 @@ def require_current_extension() -> None:
             "Rebuild with `cmake --build build/release --target hysteresis_fp64`, "
             "then restart Python."
         )
-
-
-require_current_extension()
-
-
 # Simulation settings.  The normal path advances one solver chunk per frame;
 # --fast batches several unchanged chunks into each display refresh.
 DT = 1.0e-3
@@ -66,8 +76,8 @@ FAST_MAX_PLOT_POINTS = 2000
 # GPU-sweep-compatible model parameters.  SR and SOMEGA select one point
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
-SR = 1.7
-SOMEGA = 1.129
+SR = 7.5
+SOMEGA = 1.1
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356
@@ -143,9 +153,14 @@ def animate(
     show_graphs: bool = True,
     show_velocity: bool = False,
     fast: bool = False,
+    gpu: bool = False,
     initial_v0: float = DEFAULT_INITIAL_V0,
     initial_s0: float = DEFAULT_INITIAL_S0,
 ):
+    global hysteresis
+    if hysteresis is None:
+        hysteresis = load_hysteresis(gpu)
+
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -241,7 +256,7 @@ def animate(
         )
         traces.append((ax_phase_rate, phase_rate_trace, phase_rate_point, phase_rates))
 
-        ax_x.set_title("CPU evolution")
+        ax_x.set_title("Kahan FP32 evolution" if gpu else "FP64 evolution")
         ax_x.set_ylabel(r"$x(t)$")
         ax_theta.set_ylabel(r"$\theta(t)$")
         ax_phase_rate.set_ylabel(r"$\dot{\phi}=1-v-\omega$")
@@ -348,6 +363,11 @@ if __name__ == "__main__":
         help="show the center-of-mass velocity graph in addition to x(t) and theta(t)",
     )
     parser.add_argument("--fast", action="store_true", help="reduce real-time rendering overhead")
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="use the GPU-compatible Kahan FP32 extension instead of the default FP64 extension",
+    )
     parser.add_argument("--v0", type=float, default=DEFAULT_INITIAL_V0, help="initial center-of-mass velocity")
     parser.add_argument(
         "--s0",
@@ -361,6 +381,7 @@ if __name__ == "__main__":
         show_graphs=not args.no_graph,
         show_velocity=args.show_v,
         fast=args.fast,
+        gpu=args.gpu,
         initial_v0=args.v0,
         initial_s0=args.s0,
     )

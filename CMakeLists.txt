@@ -107,6 +107,48 @@ set_target_properties(
 )
 
 # ---------------------------------------------------------------------------
+# Kahan FP32 (CPU reproduction of the default CUDA state arithmetic)
+# ---------------------------------------------------------------------------
+
+pybind11_add_module(
+    hysteresis_fp32_kahan
+    MODULE
+    NO_EXTRAS
+    "${KERNEL_DIR}/bindings/pybind.cpp"
+    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
+)
+
+add_dependencies(
+    hysteresis_fp32_kahan
+    generate_cpu_coefficients
+)
+
+target_compile_features(
+    hysteresis_fp32_kahan
+    PRIVATE cxx_std_17
+)
+
+target_compile_definitions(
+    hysteresis_fp32_kahan
+    PRIVATE
+        USE_KAHAN
+        MODULE_NAME=hysteresis
+)
+
+target_include_directories(
+    hysteresis_fp32_kahan
+    PRIVATE "${HEADER_DIR}"
+)
+
+set_target_properties(
+    hysteresis_fp32_kahan
+    PROPERTIES
+        OUTPUT_NAME "hysteresis"
+        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp32-kahan"
+        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp32-kahan"
+)
+
+# ---------------------------------------------------------------------------
 # FP64
 # ---------------------------------------------------------------------------
 

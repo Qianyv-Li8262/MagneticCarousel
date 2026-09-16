@@ -21,11 +21,11 @@ from project_paths import RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
 # ============================= Run settings =============================
-SR_LOWER = 1.5
-SR_UPPER = 4.5
+SR_LOWER = 3.0
+SR_UPPER = 8.0
 SOMEGA_LOWER = 0.1
-SOMEGA_UPPER = 3.0
-K = 256
+SOMEGA_UPPER = 2.0
+K = 128
 DT = 1.0e-3
 TOTAL_TIME = 50000.0
 OBSERVATION_WINDOW = 4000.0
@@ -35,9 +35,11 @@ BLOCK_X = 16
 BLOCK_Y = 8
 
 SHOW_PLOT = False
-SAVE_PATH: str | Path | None = SCRATCH_DIR / "phase-behavior" / "sr_somega_phase.png"
+SAVE_PATH: str | Path | None = SCRATCH_DIR / "phase-behavior" / "sr_somega_phase_0.3_real_scanright2.png"
 SAVE_DATA_PATH: str | Path | None = RUNS_DIR / "phase-behavior" / "sr_somega_phase.npz"
 SAVE_DPI = 220
+FINAL_VELOCITY_TARGET = 1.0
+FINAL_VELOCITY_TOL = 0.05
 
 # Same reference point as animate_hysteresis_cpu.py.
 REFERENCE_ALPHA = 0.33333333
@@ -284,103 +286,82 @@ def plot_results(
     use_kahan: bool = True,
 ):
     import matplotlib.pyplot as plt
-    from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
+    from matplotlib.colors import BoundaryNorm, ListedColormap
 
     valid = status == 0
-    phase_rate = np.where(valid, metrics[..., METRIC_INDEX["mean_phase_rate"]], np.nan)
-    ratio = somega[:, None] / locking_limit(sr[None, :])
+    mean_phase_rate = np.ma.masked_where(
+        ~valid, metrics[..., METRIC_INDEX["mean_phase_rate"]]
+    )
+    terminal_mean_velocity = np.ma.masked_where(
+        ~valid, metrics[..., METRIC_INDEX["mean_v"]]
+    )
+    mask_class = (
+        np.abs(metrics[..., METRIC_INDEX["mean_v"]] - FINAL_VELOCITY_TARGET)
+        <= FINAL_VELOCITY_TOL
+    ).astype(np.int8)
+    mask_class[metrics[..., METRIC_INDEX["mean_v"]] < 0.0] = 2
+    velocity_mask = np.ma.masked_where(~valid, mask_class)
 
-    figure, grid_axes = plt.subplots(2, 3, figsize=(18.0, 10.2), constrained_layout=True)
+    figure, grid_axes = plt.subplots(2, 2, figsize=(13.5, 10.2), constrained_layout=True)
     axes = grid_axes.ravel()
-    figure.delaxes(axes[5])
+
     phase_image = axes[0].pcolormesh(
-        _cell_edges(sr), _cell_edges(somega), np.clip(phase_rate, 0.0, 1.0),
+        _cell_edges(sr), _cell_edges(somega), np.clip(mean_phase_rate, 0.0, 1.0),
         shading="flat", cmap="magma", vmin=0.0, vmax=1.0,
     )
     left = np.linspace(float(sr.min()), 1.0 / REFERENCE_ALPHA - 1.0e-4, 1000)
     right = np.linspace(1.0 / REFERENCE_ALPHA + 1.0e-4, float(sr.max()), 1000)
     axes[0].plot(left, locking_limit(left), "w--", lw=2.0, label="analytic torque limit")
     axes[0].plot(right, locking_limit(right), "w--", lw=2.0)
-    axes[0].set(xlabel=r"$s_r$", ylabel=r"$s_\omega$", title=r"Order parameter $\langle\dot\phi\rangle$")
+    axes[0].set(title=r"Order parameter $\langle\dot\phi\rangle$")
     axes[0].set_ylim(float(somega.min()), float(somega.max()))
     axes[0].legend(loc="upper left")
     figure.colorbar(phase_image, ax=axes[0], label=r"$\langle\dot\phi\rangle$ (clipped)")
 
-    centers, quantiles = _collapse(ratio, phase_rate)
-    selected = np.all(np.isfinite(quantiles), axis=1)
-    axes[1].fill_between(centers[selected], quantiles[selected, 0], quantiles[selected, 2], alpha=0.25, label="10--90%")
-    axes[1].plot(centers[selected], quantiles[selected, 1], "o-", ms=4, label="median")
-    axes[1].axvline(1.0, color="0.2", ls="--", label="analytic threshold")
-    axes[1].set(
-        xscale="log", xlabel=r"$\Lambda=s_\omega/s_\omega^{\max}(s_r)$",
-        ylabel=r"$\langle\dot\phi\rangle$", title="Collapse onto the torque ratio", ylim=(-0.03, 1.03),
+    raw_phase_cmap = plt.get_cmap("magma").copy()
+    raw_phase_cmap.set_bad("0.65")
+    raw_phase_image = axes[1].pcolormesh(
+        _cell_edges(sr), _cell_edges(somega), mean_phase_rate,
+        shading="flat", cmap=raw_phase_cmap,
     )
-    axes[1].legend()
+    axes[1].set(title=r"Order parameter $\langle\dot\phi\rangle$ (unclipped)")
+    figure.colorbar(raw_phase_image, ax=axes[1], label=r"$\langle\dot\phi\rangle$")
 
-    observed_left = np.full(somega.size, np.nan)
-    observed_right = np.full(somega.size, np.nan)
-    for row_index, row in enumerate(phase_rate):
-        unlocked = np.flatnonzero(row > 0.05)
-        if unlocked.size >= 2:
-            observed_left[row_index] = sr[unlocked[0]]
-            observed_right[row_index] = sr[unlocked[-1]]
-    axes[2].plot(left, locking_limit(left), "k--", lw=2.0, label="analytic torque limit")
-    axes[2].plot(right, locking_limit(right), "k--", lw=2.0)
-    axes[2].plot(observed_left, somega, "o", ms=3.0, label="CUDA left boundary")
-    axes[2].plot(observed_right, somega, "o", ms=3.0, label="CUDA right boundary")
-    axes[2].set(
-        xlabel=r"boundary $s_r$", ylabel=r"$s_\omega$", title="Numerical and analytic phase boundary",
-        xlim=(float(sr.min()), float(sr.max())),
-        ylim=(float(somega.min()), float(somega.max())),
-    )
-    axes[2].legend(loc="upper left")
-
-    minimum_step = np.ma.masked_where(
-        ~valid, metrics[..., METRIC_INDEX["global_minimum_step"]]
-    )
-    step_cmap = plt.get_cmap("viridis").copy()
-    step_cmap.set_bad("0.65")
-    step_image = axes[3].pcolormesh(
-        _cell_edges(sr),
-        _cell_edges(somega),
-        minimum_step,
-        cmap=step_cmap,
-        norm=Normalize(vmin=0.0, vmax=TOTAL_TIME / DT),
+    velocity_cmap = plt.get_cmap("viridis").copy()
+    velocity_cmap.set_bad("0.65")
+    velocity_image = axes[2].pcolormesh(
+        _cell_edges(sr), _cell_edges(somega), terminal_mean_velocity,
+        cmap=velocity_cmap,
         shading="flat",
     )
-    figure.colorbar(step_image, ax=axes[3], label="completed step")
+    figure.colorbar(velocity_image, ax=axes[2], label=r"terminal-window $\langle v\rangle$")
+    axes[2].set(title="Terminal mean velocity")
+
+    # 0: terminal mean v not close to 1 (green); 1: close to 1 (red);
+    # 2: mean velocity below zero (blue, taking priority over both).
+    mask_cmap = ListedColormap(("green", "red", "blue"))
+    mask_cmap.set_bad("0.65")
+    mask_norm = BoundaryNorm((-0.5, 0.5, 1.5, 2.5), mask_cmap.N)
+    mask_image = axes[3].pcolormesh(
+        _cell_edges(sr), _cell_edges(somega), velocity_mask,
+        cmap=mask_cmap,
+        norm=mask_norm,
+        shading="flat",
+    )
+    mask_bar = figure.colorbar(mask_image, ax=axes[3], ticks=(0, 1, 2))
+    mask_bar.ax.set_yticklabels(("mean v not close to 1", "mean v close to 1", "mean v < 0"))
     axes[3].set(
-        xlabel=r"$s_r=r/r_{\mathrm{ref}}$",
-        ylabel=r"$s_\omega=\omega/\omega_{\mathrm{ref}}$",
-        title="Step of minimum velocity",
+        title=rf"Terminal mean velocity mask ($|\langle v\rangle-1|\leq {FINAL_VELOCITY_TOL:g}$)",
     )
 
-    recovered = np.ma.masked_where(
-        ~valid, metrics[..., METRIC_INDEX["velocity_recovered"]]
-    )
-    binary_cmap = ListedColormap(("white", "black"))
-    binary_cmap.set_bad("0.65")
-    binary_norm = BoundaryNorm((-0.5, 0.5, 1.5), binary_cmap.N)
-    recovered_image = axes[4].pcolormesh(
-        _cell_edges(sr),
-        _cell_edges(somega),
-        recovered,
-        cmap=binary_cmap,
-        norm=binary_norm,
-        shading="flat",
-    )
-    recovered_bar = figure.colorbar(recovered_image, ax=axes[4], ticks=(0, 1))
-    recovered_bar.ax.set_yticklabels(("no", "yes"))
-    axes[4].set(
-        xlabel=r"$s_r=r/r_{\mathrm{ref}}$",
-        ylabel=r"$s_\omega=\omega/\omega_{\mathrm{ref}}$",
-        title="Velocity recovered after minimum",
-    )
-
-    for axis in axes[:5]:
+    for axis in axes:
+        axis.set(
+            xlabel=r"$s_r=r/r_{\mathrm{ref}}$",
+            ylabel=r"$s_\omega=\omega/\omega_{\mathrm{ref}}$",
+        )
         axis.grid(alpha=0.2)
     figure.suptitle(
-        f"Self-consistent hysteresis model: locked phase and running wedge "
+        f"Self-consistent hysteresis model: terminal velocities "
         f"(k={sr.size}, T={TOTAL_TIME:g}, {'Kahan FP32' if use_kahan else 'ordinary FP32'})",
         fontsize=15,
     )
