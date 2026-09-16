@@ -4,7 +4,7 @@
 
 | 目录 | 用途 | 是否进入 Git |
 |---|---|---|
-| `build/` | Python 扩展、链接库、可执行文件、性能分析文件 | 否 |
+| `build/release/` | CMake Release 构建树，以及 Python 扩展、链接库和可执行文件 | 否 |
 | `runs/` | 原始扫描、轨迹、日志和可再生成数据 | 否 |
 | `results/` | 汇总表、报告文本和精选数值结果；程序不向这里生成图像 | 是 |
 | `scratch/` | 所有程序生成的图像、smoke test、一次性诊断和临时文件 | 否 |
@@ -23,16 +23,18 @@ Python 入口和分析程序保留在 `src/` 范围内。主模型的 C++/CUDA �
 ## 可配置目录
 
 可以设置 `IYPT16_BUILD_DIR`、`IYPT16_RUNS_DIR`、`IYPT16_RESULTS_DIR` 或
-`IYPT16_SCRATCH_DIR`，把大数据放到其他磁盘而无需修改源码。命令行中的
-`--output-dir` 和 `--module-dir` 参数仍具有最高优先级。
+`IYPT16_SCRATCH_DIR`，把大数据放到其他磁盘而无需修改源码。其中
+`IYPT16_BUILD_DIR` 应直接指向 CMake binary directory（默认是 `build/release/`）。
+命令行中的 `--output-dir` 和 `--module-dir` 参数仍具有最高优先级。
 
 ## 扩展模块
 
-`build.py` 按精度写入 `build/extensions/fp32/`、`fp64/` 或 `dd/`；
-`build_dump.py` 写入 `dump-fp32/` 或 `dump-fp64/`。不同精度的同名模块
-不会再互相覆盖。
+CMake 配置命令使用 `-B build/release`，并按精度把模块写入
+`build/release/extensions/fp32/`、`fp64/`、`dd/`、`dump-fp32/` 或
+`dump-fp64/`。不同精度的同名模块不会互相覆盖。
 
-迁移期间，读取模块时会先查找新 `build/` 目录，再查找旧 `tmp/` 和源码根目录。
+迁移期间，读取模块时会先查找新 `build/release/extensions/` 目录，再查找旧
+`tmp/` 和源码根目录。
 旧日志及 `run_metadata.json` 中的绝对路径是历史运行信息，无需重写。所有新生成的
 图像统一写入 `scratch/`，即使命令行或脚本配置给出了其他图像路径也会重定向到该目录。
 

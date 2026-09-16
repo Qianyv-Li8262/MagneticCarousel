@@ -17,6 +17,7 @@
 # Legacy root-level run artifacts. New outputs belong under runs/ or results/.
 /*.log
 /*.txt
+!CMakeLists.txt
 /*.csv
 /*.png
 /kernels/generated/

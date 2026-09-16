@@ -4,8 +4,8 @@ Run from this directory with::
 
     python src/animate_hysteresis_cpu.py
 
-The compiled ``hysteresis`` extension is loaded from ``build/extensions``.
-Rebuild it with ``python src/build.py`` if it is missing.
+The compiled ``hysteresis`` extension is loaded from
+``build/release/extensions``. Rebuild it with CMake if it is missing.
 """
 
 from __future__ import annotations
@@ -42,7 +42,8 @@ def require_current_extension() -> None:
         names = ", ".join(newer_sources)
         raise RuntimeError(
             f"Loaded {extension_path.name}, but these model sources are newer: {names}. "
-            "Rebuild with `python build.py --fp64`, then restart Python."
+            "Rebuild with `cmake --build build/release --target hysteresis_fp64`, "
+            "then restart Python."
         )
 
 

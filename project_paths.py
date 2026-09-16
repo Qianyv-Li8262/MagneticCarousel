@@ -19,7 +19,10 @@ def _configured_dir(variable: str, default: Path) -> Path:
     return Path(value).expanduser().resolve() if value else default
 
 
-BUILD_DIR = _configured_dir("IYPT16_BUILD_DIR", PROJECT_ROOT / "build")
+# Keep this aligned with the CMake binary directory used by the documented
+# configure command: ``cmake -S . -B build/release ...``.
+# IYPT16_BUILD_DIR, when set, names that binary directory directly.
+BUILD_DIR = _configured_dir("IYPT16_BUILD_DIR", PROJECT_ROOT / "build" / "release")
 RUNS_DIR = _configured_dir("IYPT16_RUNS_DIR", PROJECT_ROOT / "runs")
 RESULTS_DIR = _configured_dir("IYPT16_RESULTS_DIR", PROJECT_ROOT / "results")
 SCRATCH_DIR = _configured_dir("IYPT16_SCRATCH_DIR", PROJECT_ROOT / "scratch")
