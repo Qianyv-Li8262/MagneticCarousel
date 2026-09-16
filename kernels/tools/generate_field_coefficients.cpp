@@ -53,12 +53,9 @@ void write_preamble(const bool nvrtc)
               << FIELD_FOURIER_MODE_COUNT << "] = {\n";
 }
 
-void write_value(const double value, const bool nvrtc)
+void write_value(const double value, const bool)
 {
-    if (nvrtc)
-        std::cout << static_cast<float>(value) << 'f';
-    else
-        std::cout << "REAL_LITERAL(" << value << ')';
+    std::cout << "REAL_LITERAL(" << value << ')';
 }
 } // namespace
 
@@ -76,8 +73,7 @@ int main(int argc, char **argv)
 
     const bool nvrtc = std::string(argv[1]) == "--nvrtc";
     std::cout << std::scientific
-              << std::setprecision(nvrtc ? std::numeric_limits<float>::max_digits10
-                                         : std::numeric_limits<double>::max_digits10);
+              << std::setprecision(std::numeric_limits<double>::max_digits10);
     write_preamble(nvrtc);
 
     for (int mode = 0; mode < FIELD_FOURIER_MODE_COUNT; ++mode) {

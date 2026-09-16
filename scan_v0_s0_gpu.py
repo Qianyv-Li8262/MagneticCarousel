@@ -83,7 +83,9 @@ def _validate_inputs(
     lock_threshold: float,
     reference: ReferenceParams,
     block_shape: tuple[int, int],
+    use_fp64: bool,
 ) -> tuple[int, int, int]:
+    float_type = np.float64 if use_fp64 else np.float32
     scalars = np.asarray(
         (
             sr,
@@ -103,10 +105,10 @@ def _validate_inputs(
             reference.gamma,
             reference.gamma_m,
         ),
-        dtype=np.float32,
+        dtype=float_type,
     )
     if not np.all(np.isfinite(scalars)):
-        raise ValueError("All scalar inputs must be finite when converted to float32.")
+        raise ValueError(f"All scalar inputs must be finite when converted to {float_type.__name__}.")
     if sr <= 0.0:
         raise ValueError("sr must be positive.")
     if somega <= 0.0:
@@ -148,6 +150,7 @@ def run_sweep(
     sample_time: float = SAMPLE_TIME,
     lock_threshold: float = LOCK_THRESHOLD,
     use_kahan: bool = False,
+    use_fp64: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return ``v0``, ``S0``, status, and long-time metrics.
 
@@ -171,20 +174,24 @@ def run_sweep(
         lock_threshold,
         reference,
         block_shape,
+        use_fp64,
     )
 
-    v0 = np.linspace(v0_lower, v0_upper, k, dtype=np.float32)
-    s0 = np.linspace(s0_lower, s0_upper, k, dtype=np.float32)
+    float_type = np.float64 if use_fp64 else np.float32
+    v0 = np.linspace(v0_lower, v0_upper, k, dtype=float_type)
+    s0 = np.linspace(s0_lower, s0_upper, k, dtype=float_type)
 
     cp = _get_cupy()
     print(
-        f"Loading CUDA module ({'Kahan FP32' if use_kahan else 'ordinary FP32'}); "
+        f"Loading CUDA module ({'Kahan ' if use_kahan else 'ordinary '}{'FP64' if use_fp64 else 'FP32'}); "
         "the first run may spend several minutes compiling it...",
         flush=True,
     )
-    kernel = _get_cuda_module(cp, use_kahan=use_kahan).get_function("AnalyzeInitialGrid")
+    kernel = _get_cuda_module(
+        cp, use_kahan=use_kahan, use_fp64=use_fp64
+    ).get_function("AnalyzeInitialGrid")
     status_gpu = cp.full((k, k), 4, dtype=cp.int32)
-    metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=cp.float32)
+    metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=float_type)
 
     block_x, block_y = block_shape
     block = (block_x, block_y, 1)
@@ -197,20 +204,20 @@ def run_sweep(
         grid,
         block,
         (
-            np.float32(sr),
-            np.float32(somega),
+            float_type(sr),
+            float_type(somega),
             cp.asarray(v0),
             cp.asarray(s0),
             np.int32(k),
-            np.float32(dt),
+            float_type(dt),
             np.int32(steps),
             np.int32(window_steps),
             np.int32(sample_stride),
-            np.float32(reference.alpha),
-            np.float32(reference.delta),
-            np.float32(reference.gamma_g),
-            np.float32(reference.gamma),
-            np.float32(reference.gamma_m),
+            float_type(reference.alpha),
+            float_type(reference.delta),
+            float_type(reference.gamma_g),
+            float_type(reference.gamma),
+            float_type(reference.gamma_m),
             status_gpu,
             metrics_gpu,
         ),
@@ -265,6 +272,7 @@ def plot_results(
     observation_window: float = OBSERVATION_WINDOW,
     lock_threshold: float = LOCK_THRESHOLD,
     use_kahan: bool = False,
+    use_fp64: bool = False,
 ):
     """Plot the final-window mean and standard deviation of the phase rate."""
     import matplotlib.pyplot as plt
@@ -324,12 +332,12 @@ def plot_results(
         rf"Initial-state phase-lock sweep: $s_r={sr:g}$, $s_\omega={somega:g}$, "
         rf"$k={v0.size}$, $T={total_time:g}$, final window $={observation_window:g}$; "
         rf"$\dot\phi=1-v-\dot\theta$; "
-        f"{'Kahan FP32' if use_kahan else 'ordinary FP32'}"
+        f"{'Kahan ' if use_kahan else 'ordinary '}{'FP64' if use_fp64 else 'FP32'}"
     )
     return figure
 
 
-def main(*, use_kahan: bool = False) -> None:
+def main(*, use_kahan: bool = False, use_fp64: bool = False) -> None:
     v0, s0, status, metrics = run_sweep(
         SR,
         SOMEGA,
@@ -346,6 +354,7 @@ def main(*, use_kahan: bool = False) -> None:
         sample_time=SAMPLE_TIME,
         lock_threshold=LOCK_THRESHOLD,
         use_kahan=use_kahan,
+        use_fp64=use_fp64,
     )
     figure = plot_results(
         v0,
@@ -358,6 +367,7 @@ def main(*, use_kahan: bool = False) -> None:
         observation_window=OBSERVATION_WINDOW,
         lock_threshold=LOCK_THRESHOLD,
         use_kahan=use_kahan,
+        use_fp64=use_fp64,
     )
 
     if SAVE_DATA_PATH is not None:
@@ -373,6 +383,7 @@ def main(*, use_kahan: bool = False) -> None:
             phase_locked=phase_locked_mask(status, metrics, LOCK_THRESHOLD),
             lock_threshold=np.asarray(LOCK_THRESHOLD),
             kahan=np.asarray(use_kahan),
+            fp64=np.asarray(use_fp64),
         )
         print(f"Saved data to {data_path.resolve()}", flush=True)
 
@@ -395,4 +406,10 @@ if __name__ == "__main__":
         action="store_true",
         help="use compensated FP32 accumulators for persistent CUDA state",
     )
-    main(use_kahan=parser.parse_args().kahan)
+    parser.add_argument(
+        "--fp64",
+        action="store_true",
+        help="use FP64 instead of FP32",
+    )
+    args = parser.parse_args()
+    main(use_kahan=args.kahan and not args.fp64, use_fp64=args.fp64)

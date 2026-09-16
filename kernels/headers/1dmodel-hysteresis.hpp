@@ -23,14 +23,8 @@ DEVICE INLINE field_evaluation evaluate_field(const real_t chi)
 {
 #if FIELD_LEGACY_FIRST_HARMONIC_COMPATIBILITY
     static_assert(FIELD_FOURIER_MODE_COUNT == 1, "legacy first-harmonic compatibility requires exactly one mode");
-#ifdef __CUDACC__
-    float sine;
-    float cosine;
-    sincosf(chi, &sine, &cosine);
-#else
     const real_t sine = real_sin(chi);
     const real_t cosine = real_cos(chi);
-#endif
     // The current state stores the laboratory phase chi=t-x.  Rotating this
     // field by -theta below gives the legacy relative phase t-x-theta.
     return {
@@ -48,14 +42,8 @@ DEVICE INLINE field_evaluation evaluate_field(const real_t chi)
         const int harmonic = 2 * mode + 1;
         const real_t n = static_cast<real_t>(harmonic);
         const real_t angle = n * chi;
-#ifdef __CUDACC__
-        float sine;
-        float cosine;
-        sincosf(angle, &sine, &cosine);
-#else
         const real_t sine = real_sin(angle);
         const real_t cosine = real_cos(angle);
-#endif
         const field_mode_coefficient coefficient = FIELD_COEFFICIENTS[mode];
         result.field.x -= coefficient.a * sine;
         result.field.y += coefficient.c * cosine;

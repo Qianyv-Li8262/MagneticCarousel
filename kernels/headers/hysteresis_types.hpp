@@ -4,8 +4,8 @@
 #error "USE_FP64 and USE_DD are mutually exclusive"
 #endif
 
-#if (defined(USE_FP64) || defined(USE_DD)) && defined(__CUDACC__)
-#error "FP64 and double-double are only supported by the CPU backend; CUDA must use FP32"
+#if defined(USE_DD) && defined(__CUDACC__)
+#error "Double-double is only supported by the CPU backend; CUDA must use FP32 or FP64"
 #endif
 
 // Macros for CUDA and CPU C++ backends.
@@ -44,6 +44,15 @@ using real_t = double;
 #define REAL_REMAINDER_IMPL std::remainder
 #define REAL_SIN_IMPL std::sin
 #define REAL_SQRT_IMPL std::sqrt
+#define REAL_FLOOR_IMPL std::floor
+#elif defined(USE_FP64) && defined(__CUDACC__)
+using real_t = double;
+#define REAL_COS_IMPL cos
+#define REAL_FABS_IMPL fabs
+#define REAL_REMAINDER_IMPL remainder
+#define REAL_SIN_IMPL sin
+#define REAL_SQRT_IMPL sqrt
+#define REAL_FLOOR_IMPL floor
 #else
 using real_t = float;
 #define REAL_COS_IMPL cosf
@@ -51,6 +60,7 @@ using real_t = float;
 #define REAL_REMAINDER_IMPL remainderf
 #define REAL_SIN_IMPL sinf
 #define REAL_SQRT_IMPL sqrtf
+#define REAL_FLOOR_IMPL floorf
 #endif
 
 #ifdef USE_KAHAN
@@ -89,6 +99,10 @@ DEVICE HOST INLINE real_t real_sqrt(const real_t value)
 {
     return REAL_SQRT_IMPL(value);
 }
+DEVICE HOST INLINE real_t real_floor(const real_t value)
+{
+    return REAL_FLOOR_IMPL(value);
+}
 DEVICE HOST INLINE bool real_isfinite(const real_t value)
 {
     return REAL_ISFINITE_IMPL(value);
@@ -104,10 +118,11 @@ DEVICE HOST INLINE real_t real_two_pi()
 #undef REAL_REMAINDER_IMPL
 #undef REAL_SIN_IMPL
 #undef REAL_SQRT_IMPL
+#undef REAL_FLOOR_IMPL
 
 #if defined(USE_DD) && !defined(__CUDACC__)
 #define REAL_LITERAL(value) real_t(static_cast<double>(value))
-#elif defined(USE_FP64) && !defined(__CUDACC__)
+#elif defined(USE_FP64)
 #define REAL_LITERAL(value) value
 #else
 #define REAL_LITERAL(value) value##f

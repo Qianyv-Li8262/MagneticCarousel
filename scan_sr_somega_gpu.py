@@ -134,7 +134,7 @@ def _get_cupy():
     return cp
 
 
-def _get_cuda_module(cp, use_kahan: bool = True):
+def _get_cuda_module(cp, use_kahan: bool = True, use_fp64: bool = False):
     """Compile both legacy-minimum and long-time phase kernels in one module."""
     # COEFFS_INIT("nvrtc")
     dependencies = (*CUDA_SUPPORT_HEADERS, CUDA_SOURCE, PHASE_CUDA_SOURCE)
@@ -146,7 +146,7 @@ def _get_cuda_module(cp, use_kahan: bool = True):
         digest.update(path.name.encode("utf-8"))
         digest.update(path.read_bytes())
     source_signature = digest.hexdigest()[:16]
-    module_key = (use_kahan, source_signature)
+    module_key = (use_kahan, use_fp64, source_signature)
     if module_key not in _CUDA_MODULES:
         legacy = CUDA_SOURCE.read_text(encoding="utf-8")
         phase = PHASE_CUDA_SOURCE.read_text(encoding="utf-8")
@@ -165,6 +165,8 @@ def _get_cuda_module(cp, use_kahan: bool = True):
         )
         if use_kahan:
             options += ("-DUSE_KAHAN",)
+        if use_fp64:
+            options += ("-DUSE_FP64",)
         _CUDA_MODULES[module_key] = cp.RawModule(code=source, options=options, backend="nvrtc")
     return _CUDA_MODULES[module_key]
 
@@ -219,24 +221,26 @@ def run_sweep(
     observation_window: float = OBSERVATION_WINDOW,
     sample_time: float = SAMPLE_TIME,
     use_kahan: bool = True,
+    use_fp64: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return ``sr``, ``somega``, status and long-time metrics arrays."""
     if not (0.0 < sr_lower < sr_upper and 0.0 < somega_lower < somega_upper):
         raise ValueError("parameter bounds must be positive and increasing")
     if not 2 <= k <= 46340:
         raise ValueError("k must be between 2 and 46340")
+    float_type = np.float64 if use_fp64 else np.float32
     steps, window_steps, sample_stride = _time_arguments(dt, total_time, observation_window, sample_time)
-    sr = np.linspace(sr_lower, sr_upper, k, dtype=np.float32)
-    somega = np.linspace(somega_lower, somega_upper, k, dtype=np.float32)
+    sr = np.linspace(sr_lower, sr_upper, k, dtype=float_type)
+    somega = np.linspace(somega_lower, somega_upper, k, dtype=float_type)
 
     cp = _get_cupy()
     print(
-        f"Loading CUDA module ({'Kahan FP32' if use_kahan else 'ordinary FP32'})...",
+        f"Loading CUDA module ({'Kahan ' if use_kahan else 'ordinary '}{'FP64' if use_fp64 else 'FP32'})...",
         flush=True,
     )
-    kernel = _get_cuda_module(cp, use_kahan=use_kahan).get_function("AnalyzeParameterGrid")
+    kernel = _get_cuda_module(cp, use_kahan=use_kahan, use_fp64=use_fp64).get_function("AnalyzeParameterGrid")
     status_gpu = cp.full((k, k), 4, dtype=cp.int32)
-    metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=cp.float32)
+    metrics_gpu = cp.full((k, k, len(METRIC_NAMES)), cp.nan, dtype=float_type)
     block_x, block_y = block_shape
     block = (block_x, block_y, 1)
     grid = ((k + block_x - 1) // block_x, (k + block_y - 1) // block_y, 1)
@@ -248,10 +252,10 @@ def run_sweep(
         grid,
         block,
         (
-            cp.asarray(sr), cp.asarray(somega), np.int32(k), np.float32(dt), np.int32(steps),
-            np.int32(window_steps), np.int32(sample_stride), np.float32(reference.alpha),
-            np.float32(reference.delta), np.float32(reference.gamma_g), np.float32(reference.gamma),
-            np.float32(reference.gamma_m), status_gpu, metrics_gpu,
+            cp.asarray(sr), cp.asarray(somega), np.int32(k), float_type(dt), np.int32(steps),
+            np.int32(window_steps), np.int32(sample_stride), float_type(reference.alpha),
+            float_type(reference.delta), float_type(reference.gamma_g), float_type(reference.gamma),
+            float_type(reference.gamma_m), status_gpu, metrics_gpu,
         ),
     )
     stop.record()
@@ -284,6 +288,7 @@ def plot_results(
     metrics: np.ndarray,
     *,
     use_kahan: bool = True,
+    use_fp64: bool = False,
 ):
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap
@@ -362,7 +367,8 @@ def plot_results(
         axis.grid(alpha=0.2)
     figure.suptitle(
         f"Self-consistent hysteresis model: terminal velocities "
-        f"(k={sr.size}, T={TOTAL_TIME:g}, {'Kahan FP32' if use_kahan else 'ordinary FP32'})",
+        f"(k={sr.size}, T={TOTAL_TIME:g}, "
+        f"{'Kahan ' if use_kahan else 'ordinary '}{'FP64' if use_fp64 else 'FP32'})",
         fontsize=15,
     )
     return figure
@@ -380,15 +386,17 @@ def _print_phase_summary(sr, somega, status, metrics):
     print(f"Mean rolling residual: median={np.nanmedian(slip[valid]):.3e}, max={np.nanmax(slip[valid]):.3e}")
 
 
-def main(*, use_kahan: bool = True) -> None:
+def main(*, use_kahan: bool = True, use_fp64: bool = False) -> None:
     sr, somega, status, metrics = run_sweep(
         SR_LOWER, SR_UPPER, SOMEGA_LOWER, SOMEGA_UPPER, K, DT, TOTAL_TIME,
         reference=DEFAULT_REFERENCE, block_shape=(BLOCK_X, BLOCK_Y),
         observation_window=OBSERVATION_WINDOW, sample_time=SAMPLE_TIME,
-        use_kahan=use_kahan,
+        use_kahan=use_kahan, use_fp64=use_fp64,
     )
     _print_phase_summary(sr, somega, status, metrics)
-    figure = plot_results(sr, somega, status, metrics, use_kahan=use_kahan)
+    figure = plot_results(
+        sr, somega, status, metrics, use_kahan=use_kahan, use_fp64=use_fp64
+    )
 
     if SAVE_DATA_PATH is not None:
         data_path = Path(SAVE_DATA_PATH)
@@ -417,4 +425,10 @@ if __name__ == "__main__":
         dest="use_kahan",
         help="use ordinary FP32 instead of the default compensated FP32 state",
     )
-    main(use_kahan=parser.parse_args().use_kahan)
+    parser.add_argument(
+        "--fp64",
+        action="store_true",
+        help="use FP64 instead of the default compensated FP32 state",
+    )
+    args = parser.parse_args()
+    main(use_kahan=args.use_kahan and not args.fp64, use_fp64=args.fp64)
