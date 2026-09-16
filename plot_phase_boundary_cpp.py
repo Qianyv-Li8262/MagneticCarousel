@@ -83,6 +83,7 @@ def main() -> None:
                      marker="x", color="tab:red", label="unbracketed/error")
     axis.set(xlabel=r"$s_r$", ylabel=r"critical $s_\omega$",
              title=rf"FP64 C++ parallel phase boundary ($N={args.plot_points}$, $T={args.total_time:g}$)")
+    axis.set_ylim(bottom=0)
     axis.grid(alpha=0.25)
     axis.legend()
     figure.savefig(args.figure, dpi=220)
