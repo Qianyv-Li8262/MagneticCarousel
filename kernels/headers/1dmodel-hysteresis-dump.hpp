@@ -511,6 +511,7 @@ INLINE int fwd1step(state &ball, const real_t dt, const solver_params &params, b
     if (sliding) {
         real_t s1 = ball.xdot + params.alpha * ball.theta_dot;
         real_t s2 = trial_final.xdot + params.alpha * trial_final.theta_dot;
+        s1 = step_slip_sign * real_fabs(s1);
         const bool crossed =
             (s1 > REAL_LITERAL(0.0) && s2 <= REAL_LITERAL(0.0)) || (s1 < REAL_LITERAL(0.0) && s2 >= REAL_LITERAL(0.0));
         if (crossed) {
