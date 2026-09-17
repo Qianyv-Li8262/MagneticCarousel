@@ -354,16 +354,47 @@ template <typename T> DEVICE HOST INLINE T signum(const T &value)
 
 
 
+template <typename T> struct quaternion {
+    T real;
+    vec3_t<T> imagine;
+};
 
+template <typename T> DEVICE HOST INLINE quaternion<T> operator+(const quaternion<T> &a, const quaternion<T> &b)
+{
+    return {a.real + b.real, a.imagine + b.imagine};
+}
 
+template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const quaternion<T> &a, const quaternion<T> &b)
+{
+    return {a.real * b.real - a.imagine * b.imagine,
+            a.real * b.imagine + b.real * a.imagine + cross(a.imagine, b.imagine)};
+}
 
+template <typename T> DEVICE HOST INLINE auto norm(const quaternion<T> &a)
+{
+    return real_sqrt(a.real * a.real + a.imagine * a.imagine);
+}
 
+template <typename T> DEVICE HOST INLINE auto norm_sq(const quaternion<T> &a)
+{
+    return a.real * a.real + a.imagine * a.imagine;
+}
 
+template <typename T> DEVICE HOST INLINE quaternion<T> conjugate(const quaternion<T> &a)
+{
+    return {a.real, -a.imagine};
+}
 
+template <typename T> DEVICE HOST INLINE quaternion<T> make_quaternion(const T a, const vec3_t<T> b)
+{
+    return {a, b};
+}
 
-
-
-
+template <typename T> DEVICE HOST INLINE vec3_t<T> rotate(const quaternion<T> &q, const vec3_t<T> &v)
+{
+    return v + REAL_LITERAL(2.0) * q.real * cross(q.imagine, v) +
+           REAL_LITERAL(2.0) * cross(q.imagine, cross(q.imagine, v));
+}
 
 
 
