@@ -21,11 +21,11 @@ from project_paths import RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
 # ============================= Run settings =============================
-SR_LOWER = 1.0
+SR_LOWER = 0.1
 SR_UPPER = 5.0
 SOMEGA_LOWER = 0.1
-SOMEGA_UPPER = 4.0
-K = 64
+SOMEGA_UPPER = 7.0
+K = 256
 DT = 1.0e-3
 TOTAL_TIME = 20000.0
 OBSERVATION_WINDOW = 4000.0
