@@ -149,7 +149,34 @@ DEVICE HOST INLINE real_t real_two_pi()
 #define REAL_LITERAL(value) value##f
 #endif
 
-#pragma once
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ============================================================
 // Vector types
@@ -324,6 +351,35 @@ template <typename T> DEVICE HOST INLINE T signum(const T &value)
 {
     return static_cast<T>((value > static_cast<T>(0)) - (value < static_cast<T>(0)));
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 struct state {
     accumulator_t t;
