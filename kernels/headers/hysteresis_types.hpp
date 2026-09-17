@@ -174,10 +174,6 @@ using vec3 = vec3_t<real_t>;
 using state_vec2 = vec2_t<accumulator_t>;
 using state_vec3 = vec3_t<accumulator_t>;
 
-// ============================================================
-// Addition
-// ============================================================
-
 template <typename T, typename U> DEVICE HOST INLINE auto operator+(const vec2_t<T> &a, const vec2_t<U> &b)
 {
     using R = decltype(a.x + b.x);
@@ -191,10 +187,6 @@ template <typename T, typename U> DEVICE HOST INLINE auto operator+(const vec3_t
 
     return vec3_t<R>{a.x + b.x, a.y + b.y, a.z + b.z};
 }
-
-// ============================================================
-// Subtraction
-// ============================================================
 
 template <typename T, typename U> DEVICE HOST INLINE auto operator-(const vec2_t<T> &a, const vec2_t<U> &b)
 {
@@ -210,10 +202,6 @@ template <typename T, typename U> DEVICE HOST INLINE auto operator-(const vec3_t
     return vec3_t<R>{a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-// ============================================================
-// Unary minus
-// ============================================================
-
 template <typename T> DEVICE HOST INLINE auto operator-(const vec2_t<T> &a)
 {
     using R = decltype(-a.x);
@@ -228,12 +216,6 @@ template <typename T> DEVICE HOST INLINE auto operator-(const vec3_t<T> &a)
     return vec3_t<R>{-a.x, -a.y, -a.z};
 }
 
-// ============================================================
-// Dot product
-//
-// vec * vec 点积
-// ============================================================
-
 template <typename T, typename U> DEVICE HOST INLINE auto operator*(const vec2_t<T> &a, const vec2_t<U> &b)
 {
     return a.x * b.x + a.y * b.y;
@@ -243,10 +225,6 @@ template <typename T, typename U> DEVICE HOST INLINE auto operator*(const vec3_t
 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-
-// ============================================================
-// Vector * scalar
-// ============================================================
 
 template <typename T, typename S> DEVICE HOST INLINE auto operator*(const vec2_t<T> &a, const S &b)
 {
@@ -262,10 +240,6 @@ template <typename T, typename S> DEVICE HOST INLINE auto operator*(const vec3_t
     return vec3_t<R>{a.x * b, a.y * b, a.z * b};
 }
 
-// ============================================================
-// Scalar * vector
-// ============================================================
-
 template <typename S, typename T> DEVICE HOST INLINE auto operator*(const S &a, const vec2_t<T> &b)
 {
     return b * a;
@@ -275,10 +249,6 @@ template <typename S, typename T> DEVICE HOST INLINE auto operator*(const S &a, 
 {
     return b * a;
 }
-
-// ============================================================
-// Vector / scalar
-// ============================================================
 
 template <typename T, typename S> DEVICE HOST INLINE auto operator/(const vec2_t<T> &a, const S &b)
 {
@@ -294,10 +264,6 @@ template <typename T, typename S> DEVICE HOST INLINE auto operator/(const vec3_t
     return vec3_t<R>{a.x / b, a.y / b, a.z / b};
 }
 
-// ============================================================
-// Constructors
-// ============================================================
-
 template <typename T, typename U> DEVICE HOST INLINE auto make_vec2(const T &x, const U &y)
 {
     using R = decltype(x + y);
@@ -312,29 +278,17 @@ template <typename T, typename U, typename V> DEVICE HOST INLINE auto make_vec3(
     return vec3_t<R>{static_cast<R>(x), static_cast<R>(y), static_cast<R>(z)};
 }
 
-// ============================================================
-// Cross product
-// ============================================================
-
-// 2D:
-//     a × b -> scalar
 template <typename T, typename U> DEVICE HOST INLINE auto cross(const vec2_t<T> &a, const vec2_t<U> &b)
 {
     return a.x * b.y - a.y * b.x;
 }
 
-// 3D:
-//     a × b -> vector
 template <typename T, typename U> DEVICE HOST INLINE auto cross(const vec3_t<T> &a, const vec3_t<U> &b)
 {
     using R = decltype(a.y * b.z - a.z * b.y);
 
     return vec3_t<R>{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
-
-// ============================================================
-// Length
-// ============================================================
 
 template <typename T> DEVICE HOST INLINE auto length_squared(const vec2_t<T> &a)
 {
@@ -356,10 +310,6 @@ template <typename T> DEVICE HOST INLINE auto length(const vec3_t<T> &a)
     return real_sqrt(length_squared(a));
 }
 
-// ============================================================
-// 2D rotation
-// ============================================================
-
 template <typename T, typename A> DEVICE HOST INLINE auto rotate(const vec2_t<T> &v, const A &angle)
 {
     const auto c = real_cos(angle);
@@ -369,10 +319,6 @@ template <typename T, typename A> DEVICE HOST INLINE auto rotate(const vec2_t<T>
 
     return vec2_t<R>{c * v.x - s * v.y, s * v.x + c * v.y};
 }
-
-// ============================================================
-// Misc
-// ============================================================
 
 template <typename T> DEVICE HOST INLINE T signum(const T &value)
 {
