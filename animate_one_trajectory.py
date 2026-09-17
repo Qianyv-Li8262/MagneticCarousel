@@ -76,7 +76,7 @@ FAST_MAX_PLOT_POINTS = 2000
 # relative to the five reference values below, using exactly the same scaling
 # as scaled_params() in 1dmodel-hysteresis.cu.
 SR = 2
-SOMEGA = 1.5
+SOMEGA = 5.5
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 0.16560356

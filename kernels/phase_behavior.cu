@@ -149,8 +149,11 @@ DEVICE INLINE int phase_analyze(state &ball, const real_t dt, const int steps, c
         mean_abs_slip += (real_fabs(slip) - mean_abs_slip) / static_cast<real_t>(count);
         mean_abs_q += (length(ball.q) - mean_abs_q) / static_cast<real_t>(count);
         sliding_count += sliding ? 1 : 0;
-        minimum_v = ball.xdot < minimum_v ? ball.xdot : minimum_v;
-        maximum_v = ball.xdot > maximum_v ? ball.xdot : maximum_v;
+        const real_t velocity = static_cast<real_t>(ball.xdot);
+        if (velocity < minimum_v)
+            minimum_v = velocity;
+        if (velocity > maximum_v)
+            maximum_v = velocity;
 
         if (completed < split_step) {
             ++first_count;

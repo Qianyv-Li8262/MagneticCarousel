@@ -90,7 +90,7 @@ add_custom_command(
 )
 
 add_custom_target(
-    generate_nvrtc_coefficients
+    generate_nvrtc_coefficients ALL
     DEPENDS "${NVRTC_COEFFICIENTS}"
 )
 
