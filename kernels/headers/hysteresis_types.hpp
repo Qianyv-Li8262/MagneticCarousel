@@ -354,6 +354,33 @@ template <typename T> DEVICE HOST INLINE T signum(const T &value)
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 template <typename T> struct quaternion {
     T real;
     vec3_t<T> imagine;
@@ -362,6 +389,16 @@ template <typename T> struct quaternion {
 template <typename T> DEVICE HOST INLINE quaternion<T> operator+(const quaternion<T> &a, const quaternion<T> &b)
 {
     return {a.real + b.real, a.imagine + b.imagine};
+}
+
+template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const quaternion<T> &a, const T &b)
+{
+    return {a.real * b, a.imagine * b};
+}
+
+template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const T &b, const quaternion<T> &a)
+{
+    return a * b;
 }
 
 template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const quaternion<T> &a, const quaternion<T> &b)
@@ -412,30 +449,48 @@ template <typename T> DEVICE HOST INLINE vec3_t<T> rotate(const quaternion<T> &q
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct state {
     accumulator_t t;
     state_vec2 pos;
-    accumulator_t xdot;
-    accumulator_t theta;
-    accumulator_t theta_dot;
-    accumulator_t phase;
-    state_vec2 q;
+    state_vec2 speed;
+    quaternion<accumulator_t> attitude;
+    state_vec3 omega;
+    // accumulator_t phase;
+    state_vec3 q;
 };
 
 DEVICE HOST INLINE state operator+(const state &a, const state &b)
 {
     return {a.t + b.t,
-            a.x + b.x,
-            a.xdot + b.xdot,
-            a.theta + b.theta,
-            a.theta_dot + b.theta_dot,
-            a.phase + b.phase,
-            {a.q.x + b.q.x, a.q.y + b.q.y}};
+            a.pos + b.pos,
+            a.speed + b.speed,
+            a.attitude + b.attitude,
+            a.omega + b.omega,
+            // a. + b.phase,
+            {a.q.x + b.q.x, a.q.y + b.q.y, a.q.z + b.q.z}};
 }
 
 DEVICE HOST INLINE state operator*(const real_t a, const state &b)
 {
-    return {a * b.t, a * b.x, a * b.xdot, a * b.theta, a * b.theta_dot, a * b.phase, {a * b.q.x, a * b.q.y}};
+    return {a * b.t, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
+}
+
+DEVICE HOST INLINE state operator*(const state &b, const real_t a)
+{
+    return {a * b.t, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
 }
 
 struct solver_params {
