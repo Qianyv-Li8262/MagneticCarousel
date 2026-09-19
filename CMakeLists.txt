@@ -97,6 +97,19 @@ if(BUILD_TESTING)
         NAME boost_multiprecision
         COMMAND test_boost_multiprecision
     )
+
+    add_executable(
+        test_lut_interpolation
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_lut_interpolation.cpp"
+    )
+
+    target_compile_features(test_lut_interpolation PRIVATE cxx_std_17)
+    target_include_directories(test_lut_interpolation PRIVATE "${HEADER_DIR}")
+
+    add_test(
+        NAME lut_interpolation
+        COMMAND test_lut_interpolation
+    )
 endif()
 
 # ---------------------------------------------------------------------------

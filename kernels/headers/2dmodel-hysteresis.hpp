@@ -12,6 +12,64 @@ struct CubicCoeff {
     real_t a, b, c, d; // if cache mode is caching endpoint, u should interpret them as f_left, f_right, M_left, M_right
 };
 
+struct Spline012 {
+    real_t value, d1, d2;
+};
+
+template <bool ReturnCoefficients>
+struct LUTInterpolation {
+    Spline012 A, Z;
+};
+
+template <>
+struct LUTInterpolation<true> {
+    Spline012 A, Z;
+    CubicCoeff A_coeffs, Z_coeffs;
+};
+
+DEVICE INLINE CubicCoeff spline_coefficients(const real_t left, const real_t left_M,
+                                              const real_t right, const real_t right_M,
+                                              const real_t drho2)
+{
+    return {left,
+            right - left - drho2 * (REAL_LITERAL(2.0) * left_M + right_M) / REAL_LITERAL(6.0),
+            drho2 * left_M / REAL_LITERAL(2.0),
+            drho2 * (right_M - left_M) / REAL_LITERAL(6.0)};
+}
+
+DEVICE INLINE Spline012 evaluate_spline(const CubicCoeff &c, const real_t u,
+                                        const real_t inv_drho)
+{
+    const real_t d1_u = c.b + u * (REAL_LITERAL(2.0) * c.c + REAL_LITERAL(3.0) * c.d * u);
+    return {c.a + u * (c.b + u * (c.c + u * c.d)),
+            d1_u * inv_drho,
+            (REAL_LITERAL(2.0) * c.c + REAL_LITERAL(6.0) * c.d * u) * inv_drho * inv_drho};
+}
+
+// Node layout: A, M_A, Z, M_Z. Derivatives are with respect to rho, not u.
+template <bool ReturnCoefficients = false>
+DEVICE INLINE LUTInterpolation<ReturnCoefficients> interpolate_lut_interval(
+    const real_t left_A, const real_t left_M_A, const real_t left_Z, const real_t left_M_Z,
+    const real_t right_A, const real_t right_M_A, const real_t right_Z, const real_t right_M_Z,
+    const real_t u)
+{
+    constexpr real_t radius = static_cast<real_t>(magnet_number) / REAL_LITERAL(2.0);
+    constexpr real_t drho = (kLUTUpperBoundRatio - kLUTLowerBoundRatio) * radius /
+                            static_cast<real_t>(kSplineNodes - 1);
+    constexpr real_t inv_drho = REAL_LITERAL(1.0) / drho;
+    constexpr real_t drho2 = drho * drho;
+    const CubicCoeff A = spline_coefficients(left_A, left_M_A, right_A, right_M_A, drho2);
+    const CubicCoeff Z = spline_coefficients(left_Z, left_M_Z, right_Z, right_M_Z, drho2);
+
+    LUTInterpolation<ReturnCoefficients> result{evaluate_spline(A, u, inv_drho),
+                                                evaluate_spline(Z, u, inv_drho)};
+    if constexpr (ReturnCoefficients) {
+        result.A_coeffs = A;
+        result.Z_coeffs = Z;
+    }
+    return result;
+}
+
 struct FieldCache {
     real_t left;
     real_t right;
