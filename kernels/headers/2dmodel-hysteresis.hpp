@@ -9,7 +9,7 @@ struct FieldForceResult {
 };
 
 struct CubicCoeff {
-    real_t a, b, c, d; // if cache mode is caching endpoint u should interpret them as f_left, f_right, M_left, M_right
+    real_t a, b, c, d; // if cache mode is caching endpoint, u should interpret them as f_left, f_right, M_left, M_right
 };
 
 struct FieldCache {
