@@ -14,6 +14,15 @@ find_package(
 
 find_package(pybind11 CONFIG REQUIRED)
 
+find_package(
+    Boost 1.91
+    CONFIG
+    REQUIRED
+    COMPONENTS multiprecision
+)
+
+include(CTest)
+
 set(KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
 set(HEADER_DIR "${KERNEL_DIR}/headers")
 set(GENERATED_DIR "${KERNEL_DIR}/generated")
@@ -33,6 +42,33 @@ target_include_directories(
     generate_field_coefficients
     PRIVATE "${HEADER_DIR}"
 )
+
+target_link_libraries(
+    generate_field_coefficients
+    PRIVATE Boost::multiprecision
+)
+
+if(BUILD_TESTING)
+    add_executable(
+        test_boost_multiprecision
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_boost_multiprecision.cpp"
+    )
+
+    target_compile_features(
+        test_boost_multiprecision
+        PRIVATE cxx_std_17
+    )
+
+    target_link_libraries(
+        test_boost_multiprecision
+        PRIVATE Boost::multiprecision
+    )
+
+    add_test(
+        NAME boost_multiprecision
+        COMMAND test_boost_multiprecision
+    )
+endif()
 
 
 
