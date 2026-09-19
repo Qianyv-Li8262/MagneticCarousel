@@ -1,5 +1,5 @@
 #pragma once
-
+// MARK: Errors
 #if defined(USE_FP64) && defined(USE_DD)
 #error "USE_FP64 and USE_DD are mutually exclusive"
 #endif
@@ -8,6 +8,7 @@
 #error "Double-double is only supported by the CPU backend; CUDA must use FP32 or FP64"
 #endif
 
+// MARK: Macros
 // Macros for CUDA and CPU C++ backends.
 #ifdef __CUDACC__
 #define DEVICE __device__
@@ -25,6 +26,9 @@
 #define REAL_ISFINITE_IMPL std::isfinite
 #endif
 
+
+
+//MARK: Real Maths
 #ifndef __CUDACC__
 #include <cmath>
 using std::cosf;
@@ -189,7 +193,7 @@ DEVICE HOST INLINE constexpr real_t real_two_pi()
 
 
 
-
+// MARK: Vectors
 
 // ============================================================
 // Vector types
@@ -399,7 +403,7 @@ template <typename To, typename From> DEVICE HOST INLINE Vec3_t<To> vec_cast(con
 
 
 
-
+// MARK: Quaternions
 
 
 template <typename T> struct Quaternion {
@@ -481,7 +485,7 @@ template <typename T> DEVICE HOST INLINE Vec3_t<T> rotate(const Quaternion<T> &q
 
 
 
-
+// MARK: States
 
 struct State {
     accumulator_t t;
