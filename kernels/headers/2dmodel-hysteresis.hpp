@@ -27,7 +27,7 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
         real_t s = REAL_LITERAL(1.0);
         constexpr int R_magnet = magnet_number / 2;
-        for (int i = 0; i < kFieldFourierModeCount; i++) {
+        for (int i = 0; i < magnet_number; i++) {
             Vec2 dk = pos - make_Vec2(R_magnet * real_cos(static_cast<real_t>(i) * magnet_phi0 + down_disk_angle),
                                       R_magnet * real_sin(static_cast<real_t>(i) * magnet_phi0 + down_disk_angle));
             real_t rhoksq = dk * dk;
@@ -40,9 +40,9 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
             real_t overall = REAL_LITERAL(3.0) * s * invqk * invqk * invqk * sqrtinvqk;
             nablaB[0] += overall * height * (qk - REAL_LITERAL(5.0) * dk.x * dk.x);
             nablaB[1] -= overall * REAL_LITERAL(5.0) * height * dk.x * dk.y;
-            nablaB[2] += overall * dk.x * (rhoksq * -REAL_LITERAL(4.0) * height * height);
+            nablaB[2] += overall * dk.x * (rhoksq  -REAL_LITERAL(4.0) * height * height);
             nablaB[3] += overall * height * (qk - REAL_LITERAL(5.0) * dk.y * dk.y);
-            nablaB[4] += overall * dk.y * (rhoksq * -REAL_LITERAL(4.0) * height * height);
+            nablaB[4] += overall * dk.y * (rhoksq  -REAL_LITERAL(4.0) * height * height);
             s *= -1;
         }
     }
@@ -50,8 +50,8 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
     for (int i = 0; i < 5; i++) {
         nablaB[i] *= Beta;
     }
-    const real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-    const real_t D = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
-    const real_t A = -D * params.gamma_m * params.alpha * params.alpha * Eta;
-    const real_t B = E * params.gamma_m * params.alpha * params.alpha * Eta;
+    const real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+    const real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
+    const real_t A_ = -D_ * params.gamma_m * params.alpha * params.alpha * Eta;
+    const real_t B_ = E_ * params.gamma_m * params.alpha * params.alpha * Eta;
 }
