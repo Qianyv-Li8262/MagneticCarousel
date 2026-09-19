@@ -4,7 +4,7 @@
 #include "hysteresis_types.hpp"
 
 struct FieldForceResult {
-    Vec3 B;
+    Vec3 h;
     Vec3 Force;
 };
 
@@ -22,8 +22,8 @@ struct FieldCache {
 DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &params, const Vec2 &pos, const Vec3 &q,
                                                         const real_t down_disk_angle, const FieldCache *cache = nullptr)
 {
-    Vec3 B = {0};
-    real_t nablaB[5] = {0};
+    Vec3 h = {0};
+    real_t nabla_h[5] = {0};
     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
         real_t s = REAL_LITERAL(1.0);
         constexpr int R_magnet = magnet_number / 2;
@@ -34,24 +34,29 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
             real_t qk = rhoksq + height * height;
             real_t invqk = REAL_LITERAL(1.0) / (qk);
             real_t sqrtinvqk = real_sqrt(invqk);
-            B = B + s * invqk * invqk * sqrtinvqk *
+            h = h + s * invqk * invqk * sqrtinvqk *
                         make_Vec3(REAL_LITERAL(3.0) * height * dk.x, REAL_LITERAL(3.0) * height * dk.y,
                                   REAL_LITERAL(2.0) * height * height - rhoksq);
             real_t overall = REAL_LITERAL(3.0) * s * invqk * invqk * invqk * sqrtinvqk;
-            nablaB[0] += overall * height * (qk - REAL_LITERAL(5.0) * dk.x * dk.x);
-            nablaB[1] -= overall * REAL_LITERAL(5.0) * height * dk.x * dk.y;
-            nablaB[2] += overall * dk.x * (rhoksq  -REAL_LITERAL(4.0) * height * height);
-            nablaB[3] += overall * height * (qk - REAL_LITERAL(5.0) * dk.y * dk.y);
-            nablaB[4] += overall * dk.y * (rhoksq  -REAL_LITERAL(4.0) * height * height);
+            nabla_h[0] += overall * height * (qk - REAL_LITERAL(5.0) * dk.x * dk.x);
+            nabla_h[1] -= overall * REAL_LITERAL(5.0) * height * dk.x * dk.y;
+            nabla_h[2] += overall * dk.x * (rhoksq - REAL_LITERAL(4.0) * height * height);
+            nabla_h[3] += overall * height * (qk - REAL_LITERAL(5.0) * dk.y * dk.y);
+            nabla_h[4] += overall * dk.y * (rhoksq - REAL_LITERAL(4.0) * height * height);
             s *= -1;
         }
     }
-    B=B*Beta;
+    h = h * Beta;
     for (int i = 0; i < 5; i++) {
-        nablaB[i] *= Beta;
+        nabla_h[i] *= Beta;
     }
     const real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
     const real_t A_ = -D_ * params.gamma_m * params.alpha * params.alpha * Eta;
     const real_t B_ = E_ * params.gamma_m * params.alpha * params.alpha * Eta;
+    Vec3 v = A_ * h + B_ * q;
+    Vec3 Force = make_Vec3((nabla_h[0] * v.x + nabla_h[1] * v.y + nabla_h[2] * v.z),
+                           (nabla_h[1] * v.x + nabla_h[3] * v.y + nabla_h[4] * v.z),
+                           (nabla_h[2] * v.x + nabla_h[4] * v.y + (-nabla_h[0] - nabla_h[3]) * v.z));
+    return {h,Force};
 }
