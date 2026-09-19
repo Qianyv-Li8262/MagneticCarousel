@@ -128,7 +128,7 @@ DEVICE HOST INLINE bool real_isfinite(const real_t value)
 {
     return REAL_ISFINITE_IMPL(value);
 }
-DEVICE HOST INLINE real_t real_two_pi()
+DEVICE HOST INLINE constexpr real_t real_two_pi()
 {
     return static_cast<real_t>(6.28318530717958647692);
 }
@@ -182,169 +182,169 @@ DEVICE HOST INLINE real_t real_two_pi()
 // Vector types
 // ============================================================
 
-template <typename T> struct vec2_t {
+template <typename T> struct Vec2_t {
     T x;
     T y;
 };
 
-template <typename T> struct vec3_t {
+template <typename T> struct Vec3_t {
     T x;
     T y;
     T z;
 };
 
 // 常规动力学量
-using vec2 = vec2_t<real_t>;
-using vec3 = vec3_t<real_t>;
+using Vec2 = Vec2_t<real_t>;
+using Vec3 = Vec3_t<real_t>;
 
 // 积分器 / 高精度状态量
-using state_vec2 = vec2_t<accumulator_t>;
-using state_vec3 = vec3_t<accumulator_t>;
+using StateVec2 = Vec2_t<accumulator_t>;
+using StateVec3 = Vec3_t<accumulator_t>;
 
-template <typename T, typename U> DEVICE HOST INLINE auto operator+(const vec2_t<T> &a, const vec2_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto operator+(const Vec2_t<T> &a, const Vec2_t<U> &b)
 {
     using R = decltype(a.x + b.x);
 
-    return vec2_t<R>{a.x + b.x, a.y + b.y};
+    return Vec2_t<R>{a.x + b.x, a.y + b.y};
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto operator+(const vec3_t<T> &a, const vec3_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto operator+(const Vec3_t<T> &a, const Vec3_t<U> &b)
 {
     using R = decltype(a.x + b.x);
 
-    return vec3_t<R>{a.x + b.x, a.y + b.y, a.z + b.z};
+    return Vec3_t<R>{a.x + b.x, a.y + b.y, a.z + b.z};
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto operator-(const vec2_t<T> &a, const vec2_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto operator-(const Vec2_t<T> &a, const Vec2_t<U> &b)
 {
     using R = decltype(a.x - b.x);
 
-    return vec2_t<R>{a.x - b.x, a.y - b.y};
+    return Vec2_t<R>{a.x - b.x, a.y - b.y};
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto operator-(const vec3_t<T> &a, const vec3_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto operator-(const Vec3_t<T> &a, const Vec3_t<U> &b)
 {
     using R = decltype(a.x - b.x);
 
-    return vec3_t<R>{a.x - b.x, a.y - b.y, a.z - b.z};
+    return Vec3_t<R>{a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-template <typename T> DEVICE HOST INLINE auto operator-(const vec2_t<T> &a)
+template <typename T> DEVICE HOST INLINE auto operator-(const Vec2_t<T> &a)
 {
     using R = decltype(-a.x);
 
-    return vec2_t<R>{-a.x, -a.y};
+    return Vec2_t<R>{-a.x, -a.y};
 }
 
-template <typename T> DEVICE HOST INLINE auto operator-(const vec3_t<T> &a)
+template <typename T> DEVICE HOST INLINE auto operator-(const Vec3_t<T> &a)
 {
     using R = decltype(-a.x);
 
-    return vec3_t<R>{-a.x, -a.y, -a.z};
+    return Vec3_t<R>{-a.x, -a.y, -a.z};
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto operator*(const vec2_t<T> &a, const vec2_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto operator*(const Vec2_t<T> &a, const Vec2_t<U> &b)
 {
     return a.x * b.x + a.y * b.y;
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto operator*(const vec3_t<T> &a, const vec3_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto operator*(const Vec3_t<T> &a, const Vec3_t<U> &b)
 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-template <typename T, typename S> DEVICE HOST INLINE auto operator*(const vec2_t<T> &a, const S &b)
+template <typename T, typename S> DEVICE HOST INLINE auto operator*(const Vec2_t<T> &a, const S &b)
 {
     using R = decltype(a.x * b);
 
-    return vec2_t<R>{a.x * b, a.y * b};
+    return Vec2_t<R>{a.x * b, a.y * b};
 }
 
-template <typename T, typename S> DEVICE HOST INLINE auto operator*(const vec3_t<T> &a, const S &b)
+template <typename T, typename S> DEVICE HOST INLINE auto operator*(const Vec3_t<T> &a, const S &b)
 {
     using R = decltype(a.x * b);
 
-    return vec3_t<R>{a.x * b, a.y * b, a.z * b};
+    return Vec3_t<R>{a.x * b, a.y * b, a.z * b};
 }
 
-template <typename S, typename T> DEVICE HOST INLINE auto operator*(const S &a, const vec2_t<T> &b)
+template <typename S, typename T> DEVICE HOST INLINE auto operator*(const S &a, const Vec2_t<T> &b)
 {
     return b * a;
 }
 
-template <typename S, typename T> DEVICE HOST INLINE auto operator*(const S &a, const vec3_t<T> &b)
+template <typename S, typename T> DEVICE HOST INLINE auto operator*(const S &a, const Vec3_t<T> &b)
 {
     return b * a;
 }
 
-template <typename T, typename S> DEVICE HOST INLINE auto operator/(const vec2_t<T> &a, const S &b)
+template <typename T, typename S> DEVICE HOST INLINE auto operator/(const Vec2_t<T> &a, const S &b)
 {
     using R = decltype(a.x / b);
 
-    return vec2_t<R>{a.x / b, a.y / b};
+    return Vec2_t<R>{a.x / b, a.y / b};
 }
 
-template <typename T, typename S> DEVICE HOST INLINE auto operator/(const vec3_t<T> &a, const S &b)
+template <typename T, typename S> DEVICE HOST INLINE auto operator/(const Vec3_t<T> &a, const S &b)
 {
     using R = decltype(a.x / b);
 
-    return vec3_t<R>{a.x / b, a.y / b, a.z / b};
+    return Vec3_t<R>{a.x / b, a.y / b, a.z / b};
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto make_vec2(const T &x, const U &y)
+template <typename T, typename U> DEVICE HOST INLINE auto make_Vec2(const T &x, const U &y)
 {
     using R = decltype(x + y);
 
-    return vec2_t<R>{static_cast<R>(x), static_cast<R>(y)};
+    return Vec2_t<R>{static_cast<R>(x), static_cast<R>(y)};
 }
 
-template <typename T, typename U, typename V> DEVICE HOST INLINE auto make_vec3(const T &x, const U &y, const V &z)
+template <typename T, typename U, typename V> DEVICE HOST INLINE auto make_Vec3(const T &x, const U &y, const V &z)
 {
     using R = decltype(x + y + z);
 
-    return vec3_t<R>{static_cast<R>(x), static_cast<R>(y), static_cast<R>(z)};
+    return Vec3_t<R>{static_cast<R>(x), static_cast<R>(y), static_cast<R>(z)};
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto cross(const vec2_t<T> &a, const vec2_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto cross(const Vec2_t<T> &a, const Vec2_t<U> &b)
 {
     return a.x * b.y - a.y * b.x;
 }
 
-template <typename T, typename U> DEVICE HOST INLINE auto cross(const vec3_t<T> &a, const vec3_t<U> &b)
+template <typename T, typename U> DEVICE HOST INLINE auto cross(const Vec3_t<T> &a, const Vec3_t<U> &b)
 {
     using R = decltype(a.y * b.z - a.z * b.y);
 
-    return vec3_t<R>{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+    return Vec3_t<R>{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 
-template <typename T> DEVICE HOST INLINE auto length_squared(const vec2_t<T> &a)
+template <typename T> DEVICE HOST INLINE auto length_squared(const Vec2_t<T> &a)
 {
     return a.x * a.x + a.y * a.y;
 }
 
-template <typename T> DEVICE HOST INLINE auto length_squared(const vec3_t<T> &a)
+template <typename T> DEVICE HOST INLINE auto length_squared(const Vec3_t<T> &a)
 {
     return a.x * a.x + a.y * a.y + a.z * a.z;
 }
 
-template <typename T> DEVICE HOST INLINE auto length(const vec2_t<T> &a)
+template <typename T> DEVICE HOST INLINE auto length(const Vec2_t<T> &a)
 {
     return real_sqrt(length_squared(a));
 }
 
-template <typename T> DEVICE HOST INLINE auto length(const vec3_t<T> &a)
+template <typename T> DEVICE HOST INLINE auto length(const Vec3_t<T> &a)
 {
     return real_sqrt(length_squared(a));
 }
 
-template <typename T, typename A> DEVICE HOST INLINE auto rotate(const vec2_t<T> &v, const A &angle)
+template <typename T, typename A> DEVICE HOST INLINE auto rotate(const Vec2_t<T> &v, const A &angle)
 {
     const auto c = real_cos(angle);
     const auto s = real_sin(angle);
 
     using R = decltype(c * v.x);
 
-    return vec2_t<R>{c * v.x - s * v.y, s * v.x + c * v.y};
+    return Vec2_t<R>{c * v.x - s * v.y, s * v.x + c * v.y};
 }
 
 template <typename T> DEVICE HOST INLINE T signum(const T &value)
@@ -352,6 +352,15 @@ template <typename T> DEVICE HOST INLINE T signum(const T &value)
     return static_cast<T>((value > static_cast<T>(0)) - (value < static_cast<T>(0)));
 }
 
+template <typename To, typename From> DEVICE HOST INLINE Vec2_t<To> vec_cast(const Vec2_t<From> &v)
+{
+    return {static_cast<To>(v.x), static_cast<To>(v.y)};
+}
+
+template <typename To, typename From> DEVICE HOST INLINE Vec3_t<To> vec_cast(const Vec3_t<From> &v)
+{
+    return {static_cast<To>(v.x), static_cast<To>(v.y), static_cast<To>(v.z)};
+}
 
 
 
@@ -380,54 +389,53 @@ template <typename T> DEVICE HOST INLINE T signum(const T &value)
 
 
 
-
-template <typename T> struct quaternion {
+template <typename T> struct Quaternion {
     T real;
-    vec3_t<T> imagine;
+    Vec3_t<T> imagine;
 };
 
-template <typename T> DEVICE HOST INLINE quaternion<T> operator+(const quaternion<T> &a, const quaternion<T> &b)
+template <typename T> DEVICE HOST INLINE Quaternion<T> operator+(const Quaternion<T> &a, const Quaternion<T> &b)
 {
     return {a.real + b.real, a.imagine + b.imagine};
 }
 
-template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const quaternion<T> &a, const T &b)
+template <typename T> DEVICE HOST INLINE Quaternion<T> operator*(const Quaternion<T> &a, const T &b)
 {
     return {a.real * b, a.imagine * b};
 }
 
-template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const T &b, const quaternion<T> &a)
+template <typename T> DEVICE HOST INLINE Quaternion<T> operator*(const T &b, const Quaternion<T> &a)
 {
     return a * b;
 }
 
-template <typename T> DEVICE HOST INLINE quaternion<T> operator*(const quaternion<T> &a, const quaternion<T> &b)
+template <typename T> DEVICE HOST INLINE Quaternion<T> operator*(const Quaternion<T> &a, const Quaternion<T> &b)
 {
     return {a.real * b.real - a.imagine * b.imagine,
             a.real * b.imagine + b.real * a.imagine + cross(a.imagine, b.imagine)};
 }
 
-template <typename T> DEVICE HOST INLINE auto norm(const quaternion<T> &a)
+template <typename T> DEVICE HOST INLINE auto norm(const Quaternion<T> &a)
 {
     return real_sqrt(a.real * a.real + a.imagine * a.imagine);
 }
 
-template <typename T> DEVICE HOST INLINE auto norm_sq(const quaternion<T> &a)
+template <typename T> DEVICE HOST INLINE auto norm_sq(const Quaternion<T> &a)
 {
     return a.real * a.real + a.imagine * a.imagine;
 }
 
-template <typename T> DEVICE HOST INLINE quaternion<T> conjugate(const quaternion<T> &a)
+template <typename T> DEVICE HOST INLINE Quaternion<T> conjugate(const Quaternion<T> &a)
 {
     return {a.real, -a.imagine};
 }
 
-template <typename T> DEVICE HOST INLINE quaternion<T> make_quaternion(const T a, const vec3_t<T> b)
+template <typename T> DEVICE HOST INLINE Quaternion<T> make_Quaternion(const T a, const Vec3_t<T> b)
 {
     return {a, b};
 }
 
-template <typename T> DEVICE HOST INLINE vec3_t<T> rotate(const quaternion<T> &q, const vec3_t<T> &v)
+template <typename T> DEVICE HOST INLINE Vec3_t<T> rotate(const Quaternion<T> &q, const Vec3_t<T> &v)
 {
     return v + REAL_LITERAL(2.0) * q.real * cross(q.imagine, v) +
            REAL_LITERAL(2.0) * cross(q.imagine, cross(q.imagine, v));
@@ -462,17 +470,17 @@ template <typename T> DEVICE HOST INLINE vec3_t<T> rotate(const quaternion<T> &q
 
 
 
-struct state {
+struct State {
     accumulator_t t;
-    state_vec2 pos;
-    state_vec2 speed;
-    quaternion<accumulator_t> attitude;
-    state_vec3 omega;
+    StateVec2 pos;
+    StateVec2 speed;
+    Quaternion<accumulator_t> attitude;
+    StateVec3 omega;
     // accumulator_t phase;
-    state_vec3 q;
+    StateVec3 q;
 };
 
-DEVICE HOST INLINE state operator+(const state &a, const state &b)
+DEVICE HOST INLINE State operator+(const State &a, const State &b)
 {
     return {a.t + b.t,
             a.pos + b.pos,
@@ -483,17 +491,17 @@ DEVICE HOST INLINE state operator+(const state &a, const state &b)
             {a.q.x + b.q.x, a.q.y + b.q.y, a.q.z + b.q.z}};
 }
 
-DEVICE HOST INLINE state operator*(const real_t a, const state &b)
+DEVICE HOST INLINE State operator*(const real_t a, const State &b)
 {
     return {a * b.t, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
 }
 
-DEVICE HOST INLINE state operator*(const state &b, const real_t a)
+DEVICE HOST INLINE State operator*(const State &b, const real_t a)
 {
     return {a * b.t, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
 }
 
-struct solver_params {
+struct SolverParams {
     real_t alpha;
     real_t delta;
     real_t gamma_g;

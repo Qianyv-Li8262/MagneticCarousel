@@ -1,5 +1,6 @@
 #define REAL_LITERAL(value) value
 #include "hysteresis_config.hpp"
+#include "hysteresis_config_field.hpp"
 #undef REAL_LITERAL
 
 #include <cmath>

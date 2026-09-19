@@ -1,31 +1,34 @@
 #pragma once
+#include "hysteresis_types.hpp"
 // Manually configured model parameters.
 enum class FieldEvalMode {
-    Precise,
-    Fourier_Spline,
+    kExact,
+    kFourierSpline,
+};
+
+enum class LUTCacheMode {
+    kNoCache,
+    kCacheNode,
+    kCacheCoeffs,
 };
 
 #ifndef FIELD_EVAL_MODE
 #define FIELD_EVAL_MODE 0
 #endif
 
-inline constexpr FieldEvalMode field_eval_mode =
+inline constexpr FieldEvalMode kFieldEvalMode =
 #if FIELD_EVAL_MODE == 0
-    FieldEvalMode::Precise;
+    FieldEvalMode::kExact;
 #elif FIELD_EVAL_MODE == 1
-    FieldEvalMode::Fourier_Spline;
+    FieldEvalMode::kFourierSpline;
 #else
-    FieldEvalMode::Precise;
+    FieldEvalMode::kExact;
 #endif
-// Field geometry and Fourier truncation. The mode count refers to the odd
-// harmonics 1, 3, 5, ... generated for the alternating dipole array.
-#define FIELD_Z0 0.3
-inline constexpr int MAGNET_NUM=8;
-#define FIELD_FOURIER_MODE_COUNT 4
 
-// Reproduce the circular single-harmonic field used by the numerical kernel
-// before ce866ba.  The old kernel used H_EXT as the already-normalized first
-// harmonic and used a height coordinate for which dH/dz = -H.  Keep this
-// switch explicit: the finite-height dipole coefficient is elliptical and
-// therefore cannot be made exactly equivalent by changing H_EXT alone.
-#define FIELD_LEGACY_FIRST_HARMONIC_COMPATIBILITY 0
+// Field geometry and Fourier truncation. The mode count refers to the odd
+// harmonics n/2,3n/2, 5n/2 ... generated for the alternating dipole array.
+
+inline constexpr real_t height = 0.3; // normalized by k = 2 * pi / lambda, not height_phys / lambda
+inline constexpr int magnet_number = 8;
+inline constexpr real_t magnet_phi0 = real_two_pi() / magnet_number;
+inline constexpr int kFieldFourierModeCount = 2;
