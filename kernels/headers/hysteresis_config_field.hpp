@@ -2,7 +2,7 @@
 #include "hysteresis_types.hpp"
 
 #define IYPT16_STRINGIZE_IMPL(value) #value
-#define IYPT16_STRINGIZE(value) STRINGIZE_IMPL(value)
+#define IYPT16_STRINGIZE(value) IYPT16_STRINGIZE_IMPL(value)
 #define IYPT16_REAL_LITERAL_IMPL(value) REAL_LITERAL(value)
 #define IYPT16_REAL_LITERAL(value) IYPT16_REAL_LITERAL_IMPL(value)
 
@@ -44,7 +44,7 @@ inline constexpr LUTCacheMode kLUTCacheMode =
 #elif LUT_CACHE_MODE == 1
     LUTCacheMode::kCacheNode;
 #elif LUT_CACHE_MODE == 2
-    LUTCacheMode::kCacheCoeffs；
+    LUTCacheMode::kCacheCoeffs;
 #else
 #error "Invalid LUT_CACHE_MODE"
 #endif
@@ -56,7 +56,7 @@ inline constexpr real_t height =
     IYPT16_REAL_LITERAL(IYPT16_FIELD_HEIGHT); // normalized by k = 2 * pi / lambda, not height_phys / lambda
 inline constexpr int magnet_number = 8;
 inline constexpr real_t magnet_phi0 = real_two_pi() / magnet_number;
-inline constexpr int kFieldFourierModeCount = 2;
+inline constexpr int kFieldFourierModeCount = 8;
 inline constexpr int kSplineNodes = 128;
 inline constexpr real_t kLUTLowerBoundRatio =
     IYPT16_REAL_LITERAL(IYPT16_LUT_LOWER_BOUND_RATIO); // LUT domain: distance in units of the magnet radius.

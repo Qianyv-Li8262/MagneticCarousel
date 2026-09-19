@@ -205,10 +205,13 @@ void write_lut(const std::string &path, const std::vector<SplineNode<mp_real>> &
             write_scalar(file, rounded.Z, big_endian);
             write_scalar(file, rounded.M_Z, big_endian);
         }
-        if (std::fclose(file) != 0)
+        const int close_result = std::fclose(file);
+        file = nullptr;
+        if (close_result != 0)
             throw std::runtime_error("failed to close output file: " + path);
     } catch (...) {
-        std::fclose(file);
+        if (file)
+            std::fclose(file);
         throw;
     }
 }
