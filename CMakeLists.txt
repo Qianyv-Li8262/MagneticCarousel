@@ -29,23 +29,52 @@ set(GENERATED_DIR "${KERNEL_DIR}/generated")
 set(EXTENSION_DIR "${CMAKE_BINARY_DIR}/extensions")
 
 add_executable(
-    generate_field_coefficients
-    "${KERNEL_DIR}/tools/generate_field_coefficients.cpp"
+    generate_field_lut
+    "${KERNEL_DIR}/tools/generate_field_lut.cpp"
 )
 
 target_compile_features(
-    generate_field_coefficients
+    generate_field_lut
     PRIVATE cxx_std_17
 )
 
 target_include_directories(
-    generate_field_coefficients
+    generate_field_lut
     PRIVATE "${HEADER_DIR}"
 )
 
 target_link_libraries(
-    generate_field_coefficients
+    generate_field_lut
     PRIVATE Boost::multiprecision
+)
+
+set(FIELD_LUT_DIR "${CMAKE_BINARY_DIR}/field-lut")
+set(FIELD_LUT_FP32 "${FIELD_LUT_DIR}/field_lut_fp32.bin")
+set(FIELD_LUT_FP64 "${FIELD_LUT_DIR}/field_lut_fp64.bin")
+
+add_custom_command(
+    OUTPUT
+        "${FIELD_LUT_FP32}"
+        "${FIELD_LUT_FP64}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${FIELD_LUT_DIR}"
+    COMMAND
+        "$<TARGET_FILE:generate_field_lut>"
+        "${FIELD_LUT_FP32}"
+        "${FIELD_LUT_FP64}"
+    DEPENDS
+        generate_field_lut
+        "${KERNEL_DIR}/tools/generate_field_lut.cpp"
+        "${HEADER_DIR}/hysteresis_config_field.hpp"
+    COMMENT "Generating FP32 and FP64 magnetic field spline LUTs"
+    VERBATIM
+)
+
+add_custom_target(
+    generate_field_lut_files
+    ALL
+    DEPENDS
+        "${FIELD_LUT_FP32}"
+        "${FIELD_LUT_FP64}"
 )
 
 if(BUILD_TESTING)
@@ -70,73 +99,6 @@ if(BUILD_TESTING)
     )
 endif()
 
-
-
-set(
-    CPU_COEFFICIENTS
-    "${GENERATED_DIR}/field_coefficients_cpu.generated.hpp"
-)
-
-add_custom_command(
-    OUTPUT "${CPU_COEFFICIENTS}"
-
-    COMMAND
-        "${CMAKE_COMMAND}"
-        "-DGENERATOR=$<TARGET_FILE:generate_field_coefficients>"
-        "-DOUTPUT=${CPU_COEFFICIENTS}"
-        "-DTARGET=cpu"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCoefficientGenerator.cmake"
-
-    DEPENDS
-        generate_field_coefficients
-        "${KERNEL_DIR}/tools/generate_field_coefficients.cpp"
-        "${HEADER_DIR}/hysteresis_config.hpp"
-
-    COMMENT "Generating CPU field coefficients"
-    VERBATIM
-)
-
-add_custom_target(
-    generate_cpu_coefficients
-    DEPENDS "${CPU_COEFFICIENTS}"
-)
-
-set(
-    NVRTC_COEFFICIENTS
-    "${GENERATED_DIR}/field_coefficients_nvrtc.generated.cuh"
-)
-
-add_custom_command(
-    OUTPUT "${NVRTC_COEFFICIENTS}"
-
-    COMMAND
-        "${CMAKE_COMMAND}"
-        "-DGENERATOR=$<TARGET_FILE:generate_field_coefficients>"
-        "-DOUTPUT=${NVRTC_COEFFICIENTS}"
-        "-DTARGET=nvrtc"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCoefficientGenerator.cmake"
-
-    DEPENDS
-        generate_field_coefficients
-        "${KERNEL_DIR}/tools/generate_field_coefficients.cpp"
-        "${HEADER_DIR}/hysteresis_config.hpp"
-
-    COMMENT "Generating NVRTC field coefficients"
-    VERBATIM
-)
-
-add_custom_target(
-    generate_nvrtc_coefficients ALL
-    DEPENDS "${NVRTC_COEFFICIENTS}"
-)
-
-add_custom_target(
-    generate_coefficients
-    DEPENDS
-        generate_cpu_coefficients
-        generate_nvrtc_coefficients
-)
-
 # ---------------------------------------------------------------------------
 # FP32
 # ---------------------------------------------------------------------------
@@ -147,11 +109,6 @@ pybind11_add_module(
     NO_EXTRAS
     "${KERNEL_DIR}/bindings/pybind.cpp"
     "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-)
-
-add_dependencies(
-    hysteresis_fp32
-    generate_cpu_coefficients
 )
 
 target_compile_features(
@@ -191,11 +148,6 @@ pybind11_add_module(
     "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
 )
 
-add_dependencies(
-    hysteresis_fp32_kahan
-    generate_cpu_coefficients
-)
-
 target_compile_features(
     hysteresis_fp32_kahan
     PRIVATE cxx_std_17
@@ -233,11 +185,6 @@ pybind11_add_module(
     "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
     "${KERNEL_DIR}/hysteresis_critical_slow_cpu.cpp"
     "${KERNEL_DIR}/hysteresis_phase_boundary_cpu.cpp"
-)
-
-add_dependencies(
-    hysteresis_fp64
-    generate_cpu_coefficients
 )
 
 target_compile_features(
@@ -280,11 +227,6 @@ pybind11_add_module(
     "${KERNEL_DIR}/hysteresis_critical_slow_cpu.cpp"
 )
 
-add_dependencies(
-    hysteresis_dd
-    generate_cpu_coefficients
-)
-
 target_compile_features(
     hysteresis_dd
     PRIVATE cxx_std_17
@@ -324,11 +266,6 @@ pybind11_add_module(
     "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
 )
 
-add_dependencies(
-    hysteresis_dump_fp32
-    generate_cpu_coefficients
-)
-
 target_compile_features(
     hysteresis_dump_fp32
     PRIVATE cxx_std_17
@@ -358,11 +295,6 @@ pybind11_add_module(
     NO_EXTRAS
     "${KERNEL_DIR}/bindings/pybind_dump.cpp"
     "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-)
-
-add_dependencies(
-    hysteresis_dump_fp64
-    generate_cpu_coefficients
 )
 
 target_compile_features(
