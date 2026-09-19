@@ -110,6 +110,20 @@ if(BUILD_TESTING)
         NAME lut_interpolation
         COMMAND test_lut_interpolation
     )
+
+    add_executable(
+        test_fourier_field_reconstruction
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_fourier_field_reconstruction.cpp"
+    )
+
+    target_compile_features(test_fourier_field_reconstruction PRIVATE cxx_std_17)
+    target_compile_definitions(test_fourier_field_reconstruction PRIVATE FIELD_EVAL_MODE=1)
+    target_include_directories(test_fourier_field_reconstruction PRIVATE "${HEADER_DIR}")
+
+    add_test(
+        NAME fourier_field_reconstruction
+        COMMAND test_fourier_field_reconstruction
+    )
 endif()
 
 # ---------------------------------------------------------------------------

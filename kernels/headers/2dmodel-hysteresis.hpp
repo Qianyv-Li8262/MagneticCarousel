@@ -62,6 +62,14 @@ interpolate_lut_interval(const real_t left_A, const real_t left_M_A, const real_
     return result;
 }
 
+struct LUTNode {
+    real_t A;
+    real_t M_A;
+    real_t Z;
+    real_t M_Z;
+};
+static_assert(sizeof(LUTNode) == 4 * sizeof(real_t));
+
 struct NodeCache {
     LUTNode left[kFieldFourierModeCount];
     LUTNode right[kFieldFourierModeCount];
@@ -79,14 +87,6 @@ struct FieldCache {
         CoeffCache coeffs;
     };
 };
-
-struct LUTNode {
-    real_t A;
-    real_t M_A;
-    real_t Z;
-    real_t M_Z;
-};
-static_assert(sizeof(LUTNode) == 4 * sizeof(real_t));
 
 DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &params, const Vec2 &pos, const Vec3 &q,
                                                         const real_t down_disk_angle, FieldCache *cache = nullptr,
@@ -128,6 +128,17 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
         const int left_node_index = static_cast<int>(real_floor(node_coordinate));
         const real_t u = node_coordinate - static_cast<real_t>(left_node_index);
 
+        real_t h_rho = REAL_LITERAL(0.0);
+        real_t h_phi = REAL_LITERAL(0.0);
+        real_t h_z = REAL_LITERAL(0.0);
+        real_t gradient_rho_rho = REAL_LITERAL(0.0);
+        real_t gradient_rho_phi = REAL_LITERAL(0.0);
+        real_t gradient_rho_z = REAL_LITERAL(0.0);
+        real_t gradient_phi_phi = REAL_LITERAL(0.0);
+        real_t gradient_phi_z = REAL_LITERAL(0.0);
+        const real_t inv_rho = REAL_LITERAL(1.0) / rho;
+        const real_t inv_rho2 = inv_rho * inv_rho;
+
         const LUTNode *left_node = nullptr;
         const LUTNode *right_node = nullptr;
         for (int i = 0; i < kFieldFourierModeCount; i++) {
@@ -163,11 +174,51 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
         CACHE_HIT_COEFFICIENTS:
             const Spline012 A = evaluate_spline(*coeffsA, u, inv_drho);
             const Spline012 Z = evaluate_spline(*coeffsZ, u, inv_drho);
-            // TODO: Fourier reconstruction...
+
+            const int harmonic_int = (2 * i + 1) * magnet_number / 2;
+            const real_t harmonic = static_cast<real_t>(harmonic_int);
+
+            // The Fourier phase follows the magnet pattern, whereas the
+            // cylindrical basis is fixed by the laboratory position.  Keep
+            // these two angles separate when the lower disk is rotated.
+            const real_t mode_angle = harmonic * (phi - down_disk_angle);
+            const real_t mode_cos = real_cos(mode_angle);
+            const real_t mode_sin = real_sin(mode_angle);
+
+            // Phi_i = A_i(rho, z) cos(m_i (phi - disk_angle)); h = -grad Phi.
+            h_rho -= A.d1 * mode_cos;
+            h_phi += harmonic * A.value * inv_rho * mode_sin;
+            h_z -= Z.value * mode_cos;
+
+            // Independent components of grad(h) in the orthonormal
+            // (e_rho, e_phi, e_z) basis.  Z = partial_z A and Z.d1 is
+            // partial_rho partial_z A.
+            gradient_rho_rho -= A.d2 * mode_cos;
+            gradient_rho_phi += harmonic * (A.d1 * inv_rho - A.value * inv_rho2) * mode_sin;
+            gradient_rho_z -= Z.d1 * mode_cos;
+            gradient_phi_phi += (harmonic * harmonic * A.value * inv_rho2 - A.d1 * inv_rho) * mode_cos;
+            gradient_phi_z += harmonic * Z.value * inv_rho * mode_sin;
         }
         if constexpr (kLUTCacheMode == LUTCacheMode::kCacheCoeffs || kLUTCacheMode == LUTCacheMode::kCacheNode) {
             cache->interval_eff = left_node_index;
         }
+
+        // Rotate the vector and rank-2 tensor from the local cylindrical
+        // basis into laboratory Cartesian coordinates.  This rotation uses
+        // phi, not the relative Fourier phase phi - down_disk_angle.
+        const real_t cos_phi = real_cos(phi);
+        const real_t sin_phi = real_sin(phi);
+        const real_t cos_phi2 = cos_phi * cos_phi;
+        const real_t sin_phi2 = sin_phi * sin_phi;
+        const real_t sin_cos_phi = sin_phi * cos_phi;
+        h = make_Vec3(cos_phi * h_rho - sin_phi * h_phi, sin_phi * h_rho + cos_phi * h_phi, h_z);
+        nabla_h[0] = cos_phi2 * gradient_rho_rho - REAL_LITERAL(2.0) * sin_cos_phi * gradient_rho_phi +
+                     sin_phi2 * gradient_phi_phi;
+        nabla_h[1] = sin_cos_phi * (gradient_rho_rho - gradient_phi_phi) + (cos_phi2 - sin_phi2) * gradient_rho_phi;
+        nabla_h[2] = cos_phi * gradient_rho_z - sin_phi * gradient_phi_z;
+        nabla_h[3] = sin_phi2 * gradient_rho_rho + REAL_LITERAL(2.0) * sin_cos_phi * gradient_rho_phi +
+                     cos_phi2 * gradient_phi_phi;
+        nabla_h[4] = sin_phi * gradient_rho_z + cos_phi * gradient_phi_z;
     }
     h = h * Beta;
     for (int i = 0; i < 5; i++) {
