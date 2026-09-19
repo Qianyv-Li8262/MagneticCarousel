@@ -488,7 +488,7 @@ template <typename T> DEVICE HOST INLINE Vec3_t<T> rotate(const Quaternion<T> &q
 // MARK: States
 
 struct State {
-    accumulator_t t;
+    accumulator_t down_disk_angle;
     StateVec2 pos;
     StateVec2 speed;
     Quaternion<accumulator_t> attitude;
@@ -499,7 +499,7 @@ struct State {
 
 DEVICE HOST INLINE State operator+(const State &a, const State &b)
 {
-    return {a.t + b.t,
+    return {a.down_disk_angle + b.down_disk_angle,
             a.pos + b.pos,
             a.speed + b.speed,
             a.attitude + b.attitude,
@@ -510,12 +510,12 @@ DEVICE HOST INLINE State operator+(const State &a, const State &b)
 
 DEVICE HOST INLINE State operator*(const real_t a, const State &b)
 {
-    return {a * b.t, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
+    return {a * b.down_disk_angle, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
 }
 
 DEVICE HOST INLINE State operator*(const State &b, const real_t a)
 {
-    return {a * b.t, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
+    return {a * b.down_disk_angle, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
 }
 
 struct SolverParams {

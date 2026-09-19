@@ -6,6 +6,7 @@
 struct FieldForceResult {
     Vec3 h;
     Vec3 Force;
+    Vec3 hGrad2d;
 };
 
 struct CubicCoeff {
@@ -88,9 +89,11 @@ struct FieldCache {
     };
 };
 
-DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &params, const Vec2 &pos, const Vec3 &q,
-                                                        const real_t down_disk_angle, FieldCache *cache = nullptr,
-                                                        const LUTNode *LUTptr = nullptr)
+// MARK: H&F calc
+
+DEVICE FieldForceResult eval_mag_field_and_force(const SolverParams &params, const Vec2 &pos, const Vec3 &q,
+                                                 const real_t down_disk_angle, FieldCache *cache = nullptr,
+                                                 const LUTNode *LUTptr = nullptr)
 {
     Vec3 h = {0};
     real_t nabla_h[5] = {0};
@@ -232,5 +235,15 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
     Vec3 Force = make_Vec3((nabla_h[0] * v.x + nabla_h[1] * v.y + nabla_h[2] * v.z),
                            (nabla_h[1] * v.x + nabla_h[3] * v.y + nabla_h[4] * v.z),
                            (nabla_h[2] * v.x + nabla_h[4] * v.y + (-nabla_h[0] - nabla_h[3]) * v.z));
-    return {h, Force};
+    Vec3 Grad = make_Vec3(nabla_h[0], nabla_h[1], nabla_h[3]);
+    return {h, Force, Grad};
+}
+
+
+// MARK: RHS eval
+
+DEVICE INLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliging_dir,
+                            FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr)
+{
+    const auto [h, force, grad] = eval_mag_field_and_force(params, in.pos, in.q, in.down_disk_angle, cache, LUTptr);
 }
