@@ -3,10 +3,14 @@
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
 
+struct TracelessSymTensor {
+    real_t component[5];
+};
+
 struct FieldForceResult {
     Vec3 h;
     Vec3 Force;
-    Vec3 hGrad2d;
+    TracelessSymTensor hGrad3d;
 };
 
 struct CubicCoeff {
@@ -227,23 +231,88 @@ DEVICE FieldForceResult eval_mag_field_and_force(const SolverParams &params, con
     for (int i = 0; i < 5; i++) {
         nabla_h[i] *= Beta;
     }
-    const real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-    const real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
+    constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+    constexpr real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
     const real_t A_ = -D_ * params.gamma_m * params.alpha * params.alpha * Eta;
     const real_t B_ = E_ * params.gamma_m * params.alpha * params.alpha * Eta;
     Vec3 v = A_ * h + B_ * q;
     Vec3 Force = make_Vec3((nabla_h[0] * v.x + nabla_h[1] * v.y + nabla_h[2] * v.z),
                            (nabla_h[1] * v.x + nabla_h[3] * v.y + nabla_h[4] * v.z),
                            (nabla_h[2] * v.x + nabla_h[4] * v.y + (-nabla_h[0] - nabla_h[3]) * v.z));
-    Vec3 Grad = make_Vec3(nabla_h[0], nabla_h[1], nabla_h[3]);
+    TracelessSymTensor Grad;
+    for (int i = 0; i < 5; i++)
+        Grad.component[i] = nabla_h[i];
     return {h, Force, Grad};
 }
 
 
 // MARK: RHS eval
 
-DEVICE INLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliging_dir,
+DEVICE INLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliding_dir,
                             FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr)
 {
-    const auto [h, force, grad] = eval_mag_field_and_force(params, in.pos, in.q, in.down_disk_angle, cache, LUTptr);
+    const Vec3 q_world = rotate(in.attitude, in.q);
+    const auto [h, F, grad] = eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr);
+    constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+    const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
+    const real_t N = params.gamma_g - F.z;
+    if (N < REAL_LITERAL(0.0))
+        return false;
+    if (sliding) {
+        const Vec2 f = -sliding_dir * Mu * N;
+        out.speed = f + make_Vec2(F.x, F.y) - (params.delta * in.speed) * length(in.speed);
+        out.omega = M + make_Vec3(f.y, -f.x, REAL_LITERAL(0.0)) / (Eta * params.alpha);
+    } else {
+        constexpr real_t inv_one_plus_eta = REAL_LITERAL(1.0) / (REAL_LITERAL(1.0) + Eta);
+        const real_t inv_alpha_one_plus_eta = inv_one_plus_eta / params.alpha;
+        const real_t speed_norm = length(in.speed);
+
+        const real_t drag_factor = params.delta * speed_norm;
+
+        const Vec3 totalF = make_Vec3(F.x - drag_factor * in.speed.x, F.y - drag_factor * in.speed.y, F.z);
+        // Pure-rolling angular acceleration.
+        out.omega = make_Vec3(Eta * inv_one_plus_eta * M.x - inv_alpha_one_plus_eta * totalF.y,
+                              Eta * inv_one_plus_eta * M.y + inv_alpha_one_plus_eta * totalF.x, M.z);
+        // Recover translational acceleration from rolling constraint.
+        out.speed = make_Vec2(params.alpha * out.omega.y, -params.alpha * out.omega.x);
+    }
+
+    Vec3 h_ext_dot; // TODO: H convective derivative impl
+
+    Vec3 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (Mu_r + REAL_LITERAL(2.0)));
+    // assume ReLU use the 0 branch
+    real_t interme = Alpha_JA * (REAL_LITERAL(1.0) - C_JA * Xi_JA) / Xi_JA - E_;
+    Vec3 q_dot = (REAL_LITERAL(1.0) / interme) * h0_dot;
+    // IMPORTANT: self-consistent H_e_dot
+    Vec3 he_dot = (Alpha_JA / (Xi_JA * interme)) * h0_dot;
+
+    // if reject we should select ReLU x branch
+    if (in.q * he_dot > REAL_LITERAL(0.0)) {
+        constexpr real_t c = Xi_JA / Alpha_JA;
+        const real_t d = -length(in.q) / K;
+        constexpr real_t a = REAL_LITERAL(1.0) - C_JA * Xi_JA - E_ * c;
+        const real_t b = -Alpha_JA * (REAL_LITERAL(1.0) - C_JA) / K * length(in.q) - E_ * d;
+        const real_t a_final = c / a;
+        const real_t b_final = d / a - b * (c + d) / a / (a + b);
+        const Vec3 qnorm = in.q * (REAL_LITERAL(1.0) / length(in.q));
+        q_dot = a_final * h0_dot + b_final * (qnorm * h0_dot) * qnorm;
+    }
+    out.q = q_dot;
+    out.pos = in.speed;
+    out.attitude = REAL_LITERAL(0.5) * make_Quaternion(REAL_LITERAL(0.0), in.omega) * in.attitude;
+    out.down_disk_angle = REAL_LITERAL(1.0);
+    return true;
 }
+
+
+// MARK: Try 1 step
+
+enum class AdvanceStepResult {
+    kStepOk,
+    kStepBallFly,
+    kStepFinerRetry,
+    kStepNumericalSingularity,
+    kStepNaNOrInf,
+    kStepSolverSelfContradict,
+    kStepLUTOutOfDomain,
+};

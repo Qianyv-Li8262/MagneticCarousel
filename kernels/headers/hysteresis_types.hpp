@@ -522,6 +522,6 @@ struct SolverParams {
     real_t alpha;
     real_t delta;
     real_t gamma_g;
-    real_t gamma;
+    real_t gamma;  // We should ensure that gamma = Eta * params.alpha * params.alpha * params.gamma_m!!!!!!!!!
     real_t gamma_m;
 };
