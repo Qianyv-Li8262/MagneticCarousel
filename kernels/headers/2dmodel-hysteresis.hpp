@@ -246,6 +246,21 @@ DEVICE FieldForceResult eval_mag_field_and_force(const SolverParams &params, con
 }
 
 
+// MARK: H convective derivative
+
+DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, const TracelessSymTensor &grad)
+{
+    // The lower disk angular velocity is one in the dimensionless system.
+    const auto relative_velocity = make_Vec2(in.speed.x + in.pos.y, in.speed.y - in.pos.x);
+    const auto h_dot_world =
+        make_Vec3(grad.component[0] * relative_velocity.x + grad.component[1] * relative_velocity.y - h.y,
+                  grad.component[1] * relative_velocity.x + grad.component[3] * relative_velocity.y + h.x,
+                  grad.component[2] * relative_velocity.x + grad.component[4] * relative_velocity.y);
+
+    return rotate(conjugate(in.attitude), h_dot_world - cross(in.omega, h));
+}
+
+
 // MARK: RHS eval
 
 DEVICE INLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliding_dir,
@@ -277,7 +292,7 @@ DEVICE INLINE bool eval_rhs(const State &in, State &out, const SolverParams &par
         out.speed = make_Vec2(params.alpha * out.omega.y, -params.alpha * out.omega.x);
     }
 
-    Vec3 h_ext_dot; // TODO: H convective derivative impl
+    const auto h_ext_dot = eval_body_field_derivative(in, h, grad);
 
     Vec3 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (Mu_r + REAL_LITERAL(2.0)));
     // assume ReLU use the 0 branch
