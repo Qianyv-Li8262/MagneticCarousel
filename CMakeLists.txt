@@ -124,6 +124,17 @@ if(BUILD_TESTING)
         NAME fourier_field_reconstruction
         COMMAND test_fourier_field_reconstruction
     )
+    foreach(precision IN ITEMS fp32 fp64)
+        set(projection_test test_state_projection_${precision}_kahan)
+        add_executable(${projection_test} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_state_projection.cpp")
+        target_compile_features(${projection_test} PRIVATE cxx_std_17)
+        target_include_directories(${projection_test} PRIVATE "${HEADER_DIR}")
+        target_compile_definitions(${projection_test} PRIVATE USE_KAHAN)
+        if(precision STREQUAL "fp64")
+            target_compile_definitions(${projection_test} PRIVATE USE_FP64)
+        endif()
+        add_test(NAME state_projection_${precision}_kahan COMMAND ${projection_test})
+    endforeach()
 endif()
 
 # ---------------------------------------------------------------------------

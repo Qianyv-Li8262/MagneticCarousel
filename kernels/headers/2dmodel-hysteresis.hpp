@@ -289,7 +289,7 @@ DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &p
                               const FieldResult *H_cache = nullptr)
 {
     // the caller should cope with selection by giving nullptr when magField cache is not valid
-    const Vec3 q_world = rotate(in.attitude, in.q);
+    const Vec3 q_world = vec_cast<real_t>(rotate(in.attitude, in.q));
     const auto [h, F, grad] =
         eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
@@ -362,9 +362,22 @@ enum class AdvanceStepResult {
 // contact impulse balance used at a sliding-to-sticking event.
 DEVICE INLINE void project_pure_rolling(State &in, const SolverParams &params)
 {
-    Vec2 vf = (in.speed + Eta * params.alpha * make_Vec2(in.omega.y, -in.omega.x)) / (REAL_LITERAL(1.0) + Eta);
-    Vec3 omegaf = make_Vec3((Eta * in.omega.x - in.speed.y / params.alpha) / (1 + Eta),
-                            (Eta * in.omega.y + in.speed.x / params.alpha) / (1 + Eta), in.omega.z);
+    const accumulator_t eta = static_cast<accumulator_t>(Eta);
+    const accumulator_t alpha = static_cast<accumulator_t>(params.alpha);
+    const accumulator_t denominator = static_cast<accumulator_t>(REAL_LITERAL(1.0)) + eta;
+    const accumulator_t speed_x = static_cast<accumulator_t>(in.speed.x);
+    const accumulator_t speed_y = static_cast<accumulator_t>(in.speed.y);
+    const accumulator_t omega_x = static_cast<accumulator_t>(in.omega.x);
+    const accumulator_t omega_y = static_cast<accumulator_t>(in.omega.y);
+    const accumulator_t omega_z = static_cast<accumulator_t>(in.omega.z);
+
+    const StateVec2 vf = make_Vec2(
+        static_cast<accumulator_t>((speed_x + eta * alpha * omega_y) / denominator),
+        static_cast<accumulator_t>((speed_y - eta * alpha * omega_x) / denominator));
+    const StateVec3 omegaf = make_Vec3(
+        static_cast<accumulator_t>((eta * omega_x - speed_y / alpha) / denominator),
+        static_cast<accumulator_t>((eta * omega_y + speed_x / alpha) / denominator),
+        static_cast<accumulator_t>(omega_z));
     in.speed = vf;
     in.omega = omegaf;
 }

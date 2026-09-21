@@ -202,12 +202,23 @@ DEVICE HOST INLINE constexpr real_t real_two_pi()
 template <typename T> struct Vec2_t {
     T x;
     T y;
+
+    // Allow component-wise conversion at state / ordinary-vector boundaries.
+    template <typename U> DEVICE HOST INLINE operator Vec2_t<U>() const
+    {
+        return {static_cast<U>(x), static_cast<U>(y)};
+    }
 };
 
 template <typename T> struct Vec3_t {
     T x;
     T y;
     T z;
+
+    template <typename U> DEVICE HOST INLINE operator Vec3_t<U>() const
+    {
+        return {static_cast<U>(x), static_cast<U>(y), static_cast<U>(z)};
+    }
 };
 
 // 常规动力学量
@@ -416,12 +427,13 @@ template <typename T> DEVICE HOST INLINE Quaternion<T> operator+(const Quaternio
     return {a.real + b.real, a.imagine + b.imagine};
 }
 
-template <typename T> DEVICE HOST INLINE Quaternion<T> operator*(const Quaternion<T> &a, const T &b)
+template <typename T, typename S> DEVICE HOST INLINE Quaternion<T> operator*(const Quaternion<T> &a, const S &b)
 {
-    return {a.real * b, a.imagine * b};
+    const T scale = static_cast<T>(b);
+    return {a.real * scale, a.imagine * scale};
 }
 
-template <typename T> DEVICE HOST INLINE Quaternion<T> operator*(const T &b, const Quaternion<T> &a)
+template <typename S, typename T> DEVICE HOST INLINE Quaternion<T> operator*(const S &b, const Quaternion<T> &a)
 {
     return a * b;
 }
@@ -447,9 +459,9 @@ template <typename T> DEVICE HOST INLINE Quaternion<T> conjugate(const Quaternio
     return {a.real, -a.imagine};
 }
 
-template <typename T> DEVICE HOST INLINE Quaternion<T> make_Quaternion(const T a, const Vec3_t<T> b)
+template <typename S, typename T> DEVICE HOST INLINE Quaternion<T> make_Quaternion(const S a, const Vec3_t<T> b)
 {
-    return {a, b};
+    return {static_cast<T>(a), b};
 }
 
 template <typename T> DEVICE HOST INLINE Vec3_t<T> rotate(const Quaternion<T> &q, const Vec3_t<T> &v)
@@ -510,12 +522,14 @@ DEVICE HOST INLINE State operator+(const State &a, const State &b)
 
 DEVICE HOST INLINE State operator*(const real_t a, const State &b)
 {
-    return {a * b.down_disk_angle, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
+    const accumulator_t scale = static_cast<accumulator_t>(a);
+    return {scale * b.down_disk_angle, scale * b.pos, scale * b.speed,
+            scale * b.attitude, scale * b.omega, scale * b.q};
 }
 
 DEVICE HOST INLINE State operator*(const State &b, const real_t a)
 {
-    return {a * b.down_disk_angle, a * b.pos, a * b.speed, a * b.attitude, a * b.omega, {a * b.q.x, a * b.q.y, a * b.q.z}};
+    return a * b;
 }
 
 struct SolverParams {
