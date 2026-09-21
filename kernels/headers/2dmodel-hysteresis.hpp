@@ -6,7 +6,10 @@
 struct TracelessSymTensor {
     real_t component[5];
 };
-
+struct FieldResult {
+    Vec3 h;
+    TracelessSymTensor hGrad3d;
+};
 struct FieldForceResult {
     Vec3 h;
     Vec3 Force;
@@ -86,7 +89,7 @@ struct CoeffCache {
 };
 
 struct FieldCache {
-    int interval_eff;
+    int interval_eff = -1;
     union {
         NodeCache nodes;
         CoeffCache coeffs;
@@ -95,14 +98,16 @@ struct FieldCache {
 
 // MARK: H&F calc
 
-DEVICE FieldForceResult eval_mag_field_and_force(const SolverParams &params, const Vec2 &pos, const Vec3 &q,
-                                                 const real_t down_disk_angle, FieldCache *cache = nullptr,
-                                                 const LUTNode *LUTptr = nullptr)
+
+
+DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_disk_angle, FieldCache *cache = nullptr,
+                                           const LUTNode *LUTptr = nullptr)
+// returns SCALED field and gradient
 {
     Vec3 h = {0};
     real_t nabla_h[5] = {0};
     constexpr int R_magnet = magnet_number / 2;
-    if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+    if constexpr (kFieldEvalMode == FieldEvalMode::kExact) { // cache and LUTptr should be nullptr in this mode
         real_t s = REAL_LITERAL(1.0);
 
         for (int i = 0; i < magnet_number; i++) {
@@ -124,6 +129,14 @@ DEVICE FieldForceResult eval_mag_field_and_force(const SolverParams &params, con
             nabla_h[4] += overall * dk.y * (rhoksq - REAL_LITERAL(4.0) * height * height);
             s *= -1;
         }
+        TracelessSymTensor Grad;
+        h = h * Beta;
+        for (int i = 0; i < 5; i++) {
+            nabla_h[i] *= Beta;
+        }
+        for (int i = 0; i < 5; i++)
+            Grad.component[i] = nabla_h[i];
+        return {h, Grad};
     } else if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
         constexpr real_t rho_min = kLUTLowerBoundRatio * R_magnet;
         constexpr real_t drho = (kLUTUpperBoundRatio - kLUTLowerBoundRatio) * R_magnet / (kSplineNodes - 1);
@@ -226,27 +239,35 @@ DEVICE FieldForceResult eval_mag_field_and_force(const SolverParams &params, con
         nabla_h[3] = sin_phi2 * gradient_rho_rho + REAL_LITERAL(2.0) * sin_cos_phi * gradient_rho_phi +
                      cos_phi2 * gradient_phi_phi;
         nabla_h[4] = sin_phi * gradient_rho_z + cos_phi * gradient_phi_z;
+        TracelessSymTensor Grad;
+        for (int i = 0; i < 5; i++)
+            Grad.component[i] = nabla_h[i];
+        h = h * Beta;
+        for (int i = 0; i < 5; i++) {
+            Grad.component[i] *= Beta;
+        }
+        return {h, Grad};
     }
-    h = h * Beta;
-    for (int i = 0; i < 5; i++) {
-        nabla_h[i] *= Beta;
-    }
+}
+
+DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &params, const Vec2 &pos, const Vec3 &q,
+                                                        const real_t down_disk_angle, FieldCache *cache = nullptr,
+                                                        const LUTNode *LUTptr = nullptr,
+                                                        const FieldResult *H_cache = nullptr)
+{
+    auto [h, nabla_h] = (H_cache == nullptr) ? eval_mag_field(pos, down_disk_angle, cache, LUTptr) : *H_cache;
+
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     constexpr real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
     const real_t A_ = -D_ * params.gamma_m * params.alpha * params.alpha * Eta;
     const real_t B_ = E_ * params.gamma_m * params.alpha * params.alpha * Eta;
     Vec3 v = A_ * h + B_ * q;
-    Vec3 Force = make_Vec3((nabla_h[0] * v.x + nabla_h[1] * v.y + nabla_h[2] * v.z),
-                           (nabla_h[1] * v.x + nabla_h[3] * v.y + nabla_h[4] * v.z),
-                           (nabla_h[2] * v.x + nabla_h[4] * v.y + (-nabla_h[0] - nabla_h[3]) * v.z));
-    TracelessSymTensor Grad;
-    for (int i = 0; i < 5; i++)
-        Grad.component[i] = nabla_h[i];
-    return {h, Force, Grad};
+    Vec3 Force = make_Vec3((nabla_h.component[0] * v.x + nabla_h.component[1] * v.y + nabla_h.component[2] * v.z),
+                           (nabla_h.component[1] * v.x + nabla_h.component[3] * v.y + nabla_h.component[4] * v.z),
+                           (nabla_h.component[2] * v.x + nabla_h.component[4] * v.y +
+                            (-nabla_h.component[0] - nabla_h.component[3]) * v.z));
+    return {h, Force, nabla_h};
 }
-
-
-// MARK: H convective derivative
 
 DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, const TracelessSymTensor &grad)
 {
@@ -263,11 +284,14 @@ DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, co
 
 // MARK: RHS eval
 
-DEVICE INLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliding_dir,
-                            FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr)
+DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliding_dir,
+                              FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
+                              const FieldResult *H_cache = nullptr)
 {
+    // the caller should cope with selection by giving nullptr when magField cache is not valid
     const Vec3 q_world = rotate(in.attitude, in.q);
-    const auto [h, F, grad] = eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr);
+    const auto [h, F, grad] =
+        eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
     const real_t N = params.gamma_g - F.z;
@@ -331,3 +355,16 @@ enum class AdvanceStepResult {
     kStepSolverSelfContradict,
     kStepLUTOutOfDomain,
 };
+
+// RK2 is kept inline because additional checks are performed between stages.
+
+// Remove roundoff drift from the sticking constraint while preserving the
+// contact impulse balance used at a sliding-to-sticking event.
+DEVICE INLINE void project_pure_rolling(State &in, const SolverParams &params)
+{
+    Vec2 vf = (in.speed + Eta * params.alpha * make_Vec2(in.omega.y, -in.omega.x)) / (REAL_LITERAL(1.0) + Eta);
+    Vec3 omegaf = make_Vec3((Eta * in.omega.x - in.speed.y / params.alpha) / (1 + Eta),
+                            (Eta * in.omega.y + in.speed.x / params.alpha) / (1 + Eta), in.omega.z);
+    in.speed = vf;
+    in.omega = omegaf;
+}
