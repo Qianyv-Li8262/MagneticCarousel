@@ -21,3 +21,8 @@
 /*.csv
 /*.png
 /kernels/generated/
+
+# Local scripts and analysis outputs.
+/scripts/
+/results/
+/slow-somega-scan/
