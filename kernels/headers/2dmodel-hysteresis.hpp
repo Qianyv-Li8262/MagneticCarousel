@@ -283,17 +283,21 @@ DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, co
 
 
 // MARK: RHS eval
-
-DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, bool &sliding, Vec2 &sliding_dir,
-                              FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
-                              const FieldResult *H_cache = nullptr)
+template <bool ExportFM>
+DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, const bool &sliding,
+                              const Vec2 &sliding_dir, FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
+                              const FieldResult *H_cache = nullptr, Vec3 *Fext = nullptr, Vec3 *Mext = nullptr)
 {
     // the caller should cope with selection by giving nullptr when magField cache is not valid
     const Vec3 q_world = vec_cast<real_t>(rotate(in.attitude, in.q));
-    const auto [h, F, grad] =
-        eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
+
+    auto [h, F, grad] = eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
+    if constexpr (ExportFM) {
+        *Fext = F;
+        *Mext = M;
+    }
     const real_t N = params.gamma_g - F.z;
     if (N < REAL_LITERAL(0.0))
         return false;
@@ -350,7 +354,7 @@ enum class AdvanceStepResult {
     kStepOk,
     kStepBallFly,
     kStepFinerRetry,
-    kStepNumericalSingularity,
+    kStepNumericalUnstable,
     kStepNaNOrInf,
     kStepSolverSelfContradict,
     kStepLUTOutOfDomain,
@@ -371,13 +375,92 @@ DEVICE INLINE void project_pure_rolling(State &in, const SolverParams &params)
     const accumulator_t omega_y = static_cast<accumulator_t>(in.omega.y);
     const accumulator_t omega_z = static_cast<accumulator_t>(in.omega.z);
 
-    const StateVec2 vf = make_Vec2(
-        static_cast<accumulator_t>((speed_x + eta * alpha * omega_y) / denominator),
-        static_cast<accumulator_t>((speed_y - eta * alpha * omega_x) / denominator));
-    const StateVec3 omegaf = make_Vec3(
-        static_cast<accumulator_t>((eta * omega_x - speed_y / alpha) / denominator),
-        static_cast<accumulator_t>((eta * omega_y + speed_x / alpha) / denominator),
-        static_cast<accumulator_t>(omega_z));
+    const StateVec2 vf = make_Vec2(static_cast<accumulator_t>((speed_x + eta * alpha * omega_y) / denominator),
+                                   static_cast<accumulator_t>((speed_y - eta * alpha * omega_x) / denominator));
+    const StateVec3 omegaf = make_Vec3(static_cast<accumulator_t>((eta * omega_x - speed_y / alpha) / denominator),
+                                       static_cast<accumulator_t>((eta * omega_y + speed_x / alpha) / denominator),
+                                       static_cast<accumulator_t>(omega_z));
     in.speed = vf;
     in.omega = omegaf;
+}
+
+
+DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State &in,
+                                                     bool &sliding, Vec2 &sliding_dir, FieldCache *cache = nullptr,
+                                                     const LUTNode *LUTptr = nullptr, FieldResult *H_cache = nullptr,
+                                                     bool &isHCacheValid)
+{
+    if (sliding) {
+        Vec3 F_start;
+        Vec3 M_start;
+        State Statedot_start;
+        if (isHCacheValid) {
+            if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache, &F_start,
+                               &M_start);
+            } else {
+                eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache, &F_start,
+                               &M_start);
+            }
+        } else {
+            if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr, &F_start,
+                               &M_start);
+            } else {
+                eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr, &F_start,
+                               &M_start);
+            }
+        }
+        const Vec2 G = make_Vec2(F_start.x, F_start.y) - params.delta * length(in.speed) * in.speed;
+        const Vec2 a = G - params.alpha * make_Vec2(-M_start.y, M_start.x);
+        real_t A = length(a);
+        real_t b = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * F_start.z;
+        if (A < b) {
+            real_t D_c = (b - A) * (b + A);
+            Vec2 s0 = in.speed - params.alpha * make_Vec2(-in.omega.y, in.omega.x);
+            real_t Q = b * length(s0) + a * s0;
+            if (Q < dt * D_c) {
+
+                // MARK: WIP
+
+            } else {
+                goto NO_PREDICTED_TRANSIT;
+            }
+        } else {
+        NO_PREDICTED_TRANSIT:
+            State rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
+            Vec2 s_mid = rk2midpoint.speed - params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x);
+            Vec2 sliddir_mid = s_mid / length(s_mid);
+            Vec3 F_mid;
+            Vec3 M_mid;
+            State Statedot_mid;
+            if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, nullptr, nullptr, nullptr,
+                               &F_mid, &M_mid);
+            } else {
+                eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, cache, LUTptr, nullptr, &F_mid,
+                               &M_mid);
+            }
+            const Vec2 Gmid =
+                make_Vec2(F_mid.x, F_mid.y) - params.delta * length(rk2midpoint.speed) * rk2midpoint.speed;
+            const Vec2 amid = Gmid - params.alpha * make_Vec2(-M_mid.y, M_mid.x);
+            real_t Amid = length(amid);
+            real_t bmid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * F_mid.z;
+            if (Amid < bmid) {
+                real_t D_cmid = (bmid - Amid) * (bmid + Amid);
+                Vec2 s0mid = rk2midpoint.speed - params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x);
+                real_t Qmid = bmid * length(s_mid) + amid * s_mid;
+                if (Qmid < dt * REAL_LITERAL(0.5) * D_cmid) {
+                    return AdvanceStepResult::kStepFinerRetry;
+                }
+            }
+            in = in + dt * Statedot_mid;
+            Vec2 sf = in.speed - params.alpha * make_Vec2(-in.omega.y, in.omega.x);
+            sliding_dir = sf / length(sf);
+            isHCacheValid = false;
+            return AdvanceStepResult::kStepOk;
+        }
+    } else {
+        // MARK: WIP
+    }
 }
