@@ -257,6 +257,37 @@ inline dd_real dd_cos(const dd_real &value) noexcept
     return cosine;
 }
 
+// Return the principal argument of x + i*y.  The binary64 atan2 call supplies
+// a correctly quadrant-reduced initial angle; a double-double rotation then
+// gives the remaining angular error, preserving double-double precision for
+// ordinary finite inputs.
+inline dd_real dd_atan2(const dd_real &y, const dd_real &x) noexcept
+{
+    const double y_double = static_cast<double>(y);
+    const double x_double = static_cast<double>(x);
+
+    // Preserve the standard library's NaN, infinity, signed-zero, and origin
+    // semantics.  The refinement below is only meaningful for finite,
+    // nonzero vectors.
+    if (!dd_isfinite(y) || !dd_isfinite(x) || (y == dd_real(0.0) && x == dd_real(0.0)))
+        return dd_real(std::atan2(y_double, x_double));
+
+    const dd_real angle(std::atan2(y_double, x_double));
+    const dd_real scale = dd_abs(x) > dd_abs(y) ? dd_abs(x) : dd_abs(y);
+    const dd_real scaled_y = y / scale;
+    const dd_real scaled_x = x / scale;
+    dd_real sine, cosine;
+    dd_sincos(angle, sine, cosine);
+
+    // Rotate (x, y) by -angle.  atan2 of the small residual is the correction
+    // to angle; calculating that residual in dd retains the low components of
+    // both inputs.  Scaling first also prevents overflow for large finite
+    // coordinates and underflow for tiny ones.
+    const dd_real residual_y = scaled_y * cosine - scaled_x * sine;
+    const dd_real residual_x = scaled_x * cosine + scaled_y * sine;
+    return angle + dd_real(std::atan2(static_cast<double>(residual_y), static_cast<double>(residual_x)));
+}
+
 namespace std {
 template <> class numeric_limits<dd_real> {
 public:

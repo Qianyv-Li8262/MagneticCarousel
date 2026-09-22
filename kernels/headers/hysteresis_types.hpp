@@ -28,6 +28,7 @@
 #ifndef __CUDACC__
 #include <cmath>
 using std::cosf;
+using std::atan2f;
 using std::fabsf;
 using std::remainderf;
 using std::sinf;
@@ -40,6 +41,7 @@ using real_t = dd_real;
 #elif defined(USE_FP64) && !defined(__CUDACC__)
 using real_t = double;
 #define REAL_COS_IMPL std::cos
+#define REAL_ATAN2_IMPL std::atan2
 #define REAL_FABS_IMPL std::fabs
 #define REAL_REMAINDER_IMPL std::remainder
 #define REAL_SIN_IMPL std::sin
@@ -48,6 +50,7 @@ using real_t = double;
 #elif defined(USE_FP64) && defined(__CUDACC__)
 using real_t = double;
 #define REAL_COS_IMPL cos
+#define REAL_ATAN2_IMPL atan2
 #define REAL_FABS_IMPL fabs
 #define REAL_REMAINDER_IMPL remainder
 #define REAL_SIN_IMPL sin
@@ -56,6 +59,7 @@ using real_t = double;
 #else
 using real_t = float;
 #define REAL_COS_IMPL cosf
+#define REAL_ATAN2_IMPL atan2f
 #define REAL_FABS_IMPL fabsf
 #define REAL_REMAINDER_IMPL remainderf
 #define REAL_SIN_IMPL sinf
@@ -72,6 +76,7 @@ using accumulator_t = real_t;
 
 #if defined(USE_DD) && !defined(__CUDACC__)
 DEVICE HOST INLINE real_t real_cos(const real_t value) { return dd_cos(value); }
+DEVICE HOST INLINE real_t real_atan2(const real_t y, const real_t x) { return dd_atan2(y, x); }
 DEVICE HOST INLINE real_t real_fabs(const real_t value) { return dd_abs(value); }
 DEVICE HOST INLINE real_t real_remainder(const real_t value, const real_t divisor) { return dd_remainder(value, divisor); }
 DEVICE HOST INLINE real_t real_sin(const real_t value) { return dd_sin(value); }
@@ -82,6 +87,10 @@ DEVICE HOST INLINE const real_t &real_two_pi() { return dd_two_pi(); }
 DEVICE HOST INLINE real_t real_cos(const real_t value)
 {
     return REAL_COS_IMPL(value);
+}
+DEVICE HOST INLINE real_t real_atan2(const real_t y, const real_t x)
+{
+    return REAL_ATAN2_IMPL(y, x);
 }
 DEVICE HOST INLINE real_t real_fabs(const real_t value)
 {
@@ -114,6 +123,7 @@ DEVICE HOST INLINE real_t real_two_pi()
 #endif
 
 #undef REAL_COS_IMPL
+#undef REAL_ATAN2_IMPL
 #undef REAL_FABS_IMPL
 #undef REAL_REMAINDER_IMPL
 #undef REAL_SIN_IMPL
