@@ -860,6 +860,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
     }
 }
 
+
+// MARK: fwd1step
 // Advance one complete interval. A rejected interval is split into its left
 // and right halves; the node number encodes the pending right halves.
 DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State &in,
