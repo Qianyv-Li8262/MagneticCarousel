@@ -86,6 +86,7 @@ if(BUILD_TESTING)
     add_native_test(test_fwd_lut_domain)
     target_compile_definitions(test_fwd_lut_domain PRIVATE FIELD_EVAL_MODE=1)
     add_native_test(test_rolling_step)
+    add_native_test(test_magnetic_force_direction)
 
     foreach(precision IN ITEMS fp32 fp64)
         set(name test_state_projection_${precision}_kahan)

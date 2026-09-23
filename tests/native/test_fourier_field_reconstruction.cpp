@@ -78,8 +78,8 @@ int main()
 
     const real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const real_t D = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
-    const real_t force_h_coefficient = -D * params.gamma_m * params.alpha * params.alpha * Eta;
-    const real_t force_q_coefficient = E * params.gamma_m * params.alpha * params.alpha * Eta;
+    const real_t force_h_coefficient = D * params.gamma_m * params.alpha * params.alpha * Eta;
+    const real_t force_q_coefficient = -E * params.gamma_m * params.alpha * params.alpha * Eta;
     const Vec3 v = force_h_coefficient * h + force_q_coefficient * q;
     const Vec3 force = make_Vec3(Gxx * v.x + Gxy * v.y + Gxz * v.z, Gxy * v.x + Gyy * v.y + Gyz * v.z,
                                  Gxz * v.x + Gyz * v.y + (-Gxx - Gyy) * v.z);
