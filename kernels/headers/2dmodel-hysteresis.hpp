@@ -358,6 +358,7 @@ enum class AdvanceStepResult {
     kStepNaNOrInf,
     kStepSolverSelfContradict,
     kStepLUTOutOfDomain,
+    kStepRefinementRecursionLimit,
 };
 
 // RK2 is kept inline because additional checks are performed between stages.
