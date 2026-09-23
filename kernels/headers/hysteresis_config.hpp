@@ -14,3 +14,10 @@ inline constexpr real_t Beta =REAL_LITERAL(0.11504); // this is \frac{m k^3}{4\p
 // Mechanical parameters
 inline constexpr real_t Eta= REAL_LITERAL(0.4);
 inline constexpr real_t Mu =REAL_LITERAL(0.02); // friction
+
+enum class AttitudeNormalizeMode {
+    kExact,
+    kNewtonOnce,
+};
+
+inline constexpr AttitudeNormalizeMode kAttitudeNormalizeMode = AttitudeNormalizeMode::kNewtonOnce;

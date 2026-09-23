@@ -384,6 +384,25 @@ DEVICE INLINE void project_pure_rolling(State &in, const SolverParams &params)
     in.omega = omegaf;
 }
 
+DEVICE INLINE bool normalize_attitude(State &in)
+{
+    const real_t squared_norm = static_cast<real_t>(norm_sq(in.attitude));
+    if (!real_isfinite(squared_norm) || squared_norm <= REAL_LITERAL(0.0))
+        return false;
+
+    real_t scale;
+    if constexpr (kAttitudeNormalizeMode == AttitudeNormalizeMode::kExact) {
+        scale = REAL_LITERAL(1.0) / real_sqrt(squared_norm);
+    } else {
+        // One Newton step for 1 / sqrt(squared_norm), starting from 1.
+        scale = REAL_LITERAL(0.5) * (REAL_LITERAL(3.0) - squared_norm);
+    }
+    if (!real_isfinite(scale) || scale <= REAL_LITERAL(0.0))
+        return false;
+    in.attitude = in.attitude * scale;
+    return true;
+}
+
 
 DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State &in,
                                                      bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
@@ -453,6 +472,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
                 State state_at_tc = in + tc * dot_estimate;
                 project_pure_rolling(state_at_tc, params);
+                if (!normalize_attitude(state_at_tc))
+                    return AdvanceStepResult::kStepNumericalUnstable;
                 const Vec3 q_world = vec_cast<real_t>(rotate(state_at_tc.attitude, state_at_tc.q));
                 auto [h, F, grad] = eval_mag_field_and_force(params, state_at_tc.pos, q_world,
                                                              state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
@@ -515,6 +536,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 
                     final_state = state_at_tc + remaining * dot_rolling_mid;
                     project_pure_rolling(final_state, params);
+                    if (!normalize_attitude(final_state))
+                        return AdvanceStepResult::kStepNumericalUnstable;
                     const Vec3 q_final = vec_cast<real_t>(rotate(final_state.attitude, final_state.q));
                     const auto [h_final, F_final, grad_final] = eval_mag_field_and_force(
                         params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
@@ -583,7 +606,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     return AdvanceStepResult::kStepFinerRetry;
                 }
             }
-            const State final_state = in + dt * Statedot_mid;
+            State final_state = in + dt * Statedot_mid;
+            if (!normalize_attitude(final_state))
+                return AdvanceStepResult::kStepNumericalUnstable;
             Vec2 sf = vec_cast<real_t>(final_state.speed +
                                        params.alpha * make_Vec2(-final_state.omega.y, final_state.omega.x));
             const real_t sf_norm = length(sf);
