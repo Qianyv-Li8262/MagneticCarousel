@@ -404,6 +404,18 @@ DEVICE INLINE bool normalize_attitude(State &in)
     return true;
 }
 
+DEVICE INLINE bool state_in_lut_domain(const State &state)
+{
+    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+        constexpr real_t radius = static_cast<real_t>(magnet_number) / REAL_LITERAL(2.0);
+        constexpr real_t rho_min = kLUTLowerBoundRatio * radius;
+        constexpr real_t rho_max = kLUTUpperBoundRatio * radius;
+        const real_t rho2 = static_cast<real_t>(state.pos * state.pos);
+        return real_isfinite(rho2) && rho2 >= rho_min * rho_min && rho2 <= rho_max * rho_max;
+    }
+    return true;
+}
+
 // MARK: Try 1 step
 DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State &in,
                                                      bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
@@ -562,6 +574,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     final_field = {h_final, grad_final};
                 }
 
+                if (!state_in_lut_domain(final_state))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
                 if (H_cache != nullptr)
                     *H_cache = final_field;
                 in = final_state;
@@ -622,6 +636,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (sf_norm == REAL_LITERAL(0.0))
                 return AdvanceStepResult::kStepFinerRetry;
             const Vec2 final_dir = sf / sf_norm;
+            if (!state_in_lut_domain(final_state))
+                return AdvanceStepResult::kStepLUTOutOfDomain;
             in = final_state;
             sliding_dir = final_dir;
             isHCacheValid = false;
@@ -708,6 +724,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const real_t g_final = A_final - b_final;
 
         if (g_mid <= REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0)) {
+            if (!state_in_lut_domain(trial_final))
+                return AdvanceStepResult::kStepLUTOutOfDomain;
             if (H_cache != nullptr)
                 *H_cache = {h_final, grad_final};
             in = trial_final;
@@ -830,6 +848,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             final_dir = sf / sf_norm;
         }
 
+        if (!state_in_lut_domain(final_state))
+            return AdvanceStepResult::kStepLUTOutOfDomain;
         if (remaining == REAL_LITERAL(0.0) && H_cache != nullptr)
             *H_cache = event_field;
         in = final_state;
@@ -837,5 +857,64 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         sliding_dir = final_dir;
         isHCacheValid = remaining == REAL_LITERAL(0.0) && H_cache != nullptr;
         return AdvanceStepResult::kStepOk;
+    }
+}
+
+// Advance one complete interval. A rejected interval is split into its left
+// and right halves; the node number encodes the pending right halves.
+DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State &in,
+                                           bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
+                                           FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
+                                           FieldResult *H_cache = nullptr)
+{
+    constexpr int max_depth = kStepRefinementRecursionDepth;
+    static_assert(max_depth >= 0 && max_depth <= 30, "refinement depth must fit in unsigned int");
+    if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0))
+        return AdvanceStepResult::kStepNumericalUnstable;
+    if (!state_in_lut_domain(in))
+        return AdvanceStepResult::kStepLUTOutOfDomain;
+
+    State work = in;
+    bool work_sliding = sliding;
+    Vec2 work_dir = sliding_dir;
+    bool work_cache_valid = isHCacheValid && H_cache != nullptr;
+    FieldResult work_field{};
+    if (work_cache_valid)
+        work_field = *H_cache;
+
+    unsigned int node = 1;
+    int depth = 0;
+    real_t h = dt;
+    for (;;) {
+        const AdvanceStepResult result = try_advance_1_step(h, params, work, work_sliding, work_dir,
+                                                             work_cache_valid, cache, LUTptr,
+                                                             H_cache != nullptr ? &work_field : nullptr);
+        if (result == AdvanceStepResult::kStepFinerRetry) {
+            const real_t half = h * REAL_LITERAL(0.5);
+            if (depth == max_depth || half == REAL_LITERAL(0.0) || half == h)
+                return AdvanceStepResult::kStepRefinementRecursionLimit;
+            node <<= 1;
+            ++depth;
+            h = half;
+            continue;
+        }
+        if (result != AdvanceStepResult::kStepOk)
+            return result;
+
+        while (node > 1 && (node & 1u)) {
+            node >>= 1;
+            --depth;
+            h *= REAL_LITERAL(2.0);
+        }
+        if (node == 1) {
+            in = work;
+            sliding = work_sliding;
+            sliding_dir = work_dir;
+            isHCacheValid = work_cache_valid;
+            if (H_cache != nullptr && work_cache_valid)
+                *H_cache = work_field;
+            return AdvanceStepResult::kStepOk;
+        }
+        ++node;
     }
 }
