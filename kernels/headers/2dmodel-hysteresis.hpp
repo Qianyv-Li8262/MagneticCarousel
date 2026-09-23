@@ -396,22 +396,22 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         State Statedot_start;
         if (isHCacheValid) {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache, &F_start,
-                               &M_start))
+                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
+                                    &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             } else {
                 if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache, &F_start,
-                               &M_start))
+                                    &M_start))
                     return AdvanceStepResult::kStepBallFly;
             }
         } else {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr, &F_start,
-                               &M_start))
+                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr,
+                                    &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             } else {
                 if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr, &F_start,
-                               &M_start))
+                                    &M_start))
                     return AdvanceStepResult::kStepBallFly;
             }
         }
@@ -428,17 +428,52 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!real_isfinite(Q) || !real_isfinite(D_c) || !real_isfinite(dt * D_c))
                 return AdvanceStepResult::kStepNaNOrInf;
             if (Q <= dt * D_c) {
-
-                // MARK: WIP
-                return AdvanceStepResult::kStepNumericalUnstable; // Capture branch not implemented yet.
-
+                real_t tc = Q / D_c;
+                State state_at_halftc = in + tc * REAL_LITERAL(0.5) * Statedot_start;
+                State dot_estimate;
+                Vec2 s_mid =
+                    vec_cast<real_t>(state_at_halftc.speed +
+                                     params.alpha * make_Vec2(-state_at_halftc.omega.y, state_at_halftc.omega.x));
+                const real_t s_mid_norm = length(s_mid);
+                if (!real_isfinite(s_mid_norm))
+                    return AdvanceStepResult::kStepNaNOrInf;
+                if (s_mid_norm == REAL_LITERAL(0.0))
+                    return AdvanceStepResult::kStepFinerRetry;
+                Vec2 sliddir_mid = s_mid / s_mid_norm;
+                if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                    if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, nullptr, nullptr,
+                                         nullptr))
+                        return AdvanceStepResult::kStepBallFly;
+                } else {
+                    if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, cache, LUTptr,
+                                         nullptr))
+                        return AdvanceStepResult::kStepBallFly;
+                }
+                State state_at_tc = in + tc * dot_estimate;
+                project_pure_rolling(state_at_tc, params);
+                const Vec3 q_world = vec_cast<real_t>(rotate(state_at_tc.attitude, state_at_tc.q));
+                auto [h, F, grad] = eval_mag_field_and_force(params, state_at_tc.pos, q_world,
+                                                             state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
+                constexpr real_t E_ =
+                    (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+                const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
+                const real_t N = params.gamma_g - F.z;
+                const Vec2 G_ = make_Vec2(F.x, F.y) - params.delta * length(state_at_tc.speed) * state_at_tc.speed;
+                const Vec2 a_ = G_ + params.alpha * make_Vec2(-M.y, M.x);
+                real_t A_ = length(a_);
+                real_t b_ = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * (params.gamma_g - F.z);
+                if (A_ > b_)
+                    return AdvanceStepResult::kStepFinerRetry;
+                sliding=false;
+                
             } else {
                 goto NO_PREDICTED_TRANSIT;
             }
         } else {
         NO_PREDICTED_TRANSIT:
             State rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
-            Vec2 s_mid = vec_cast<real_t>(rk2midpoint.speed + params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x));
+            Vec2 s_mid = vec_cast<real_t>(rk2midpoint.speed +
+                                          params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x));
             const real_t s_mid_norm = length(s_mid);
             if (!real_isfinite(s_mid_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
@@ -450,11 +485,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             State Statedot_mid;
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                 if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, nullptr, nullptr, nullptr,
-                               &F_mid, &M_mid))
+                                    &F_mid, &M_mid))
                     return AdvanceStepResult::kStepBallFly;
             } else {
-                if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, cache, LUTptr, nullptr, &F_mid,
-                               &M_mid))
+                if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, cache, LUTptr, nullptr,
+                                    &F_mid, &M_mid))
                     return AdvanceStepResult::kStepBallFly;
             }
             const Vec2 Gmid =
@@ -467,15 +502,15 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (Amid < bmid) {
                 real_t D_cmid = (bmid - Amid) * (bmid + Amid);
                 real_t Qmid = bmid * length(s_mid) + amid * s_mid;
-                if (!real_isfinite(Qmid) || !real_isfinite(D_cmid) ||
-                    !real_isfinite(dt * REAL_LITERAL(0.5) * D_cmid))
+                if (!real_isfinite(Qmid) || !real_isfinite(D_cmid) || !real_isfinite(dt * REAL_LITERAL(0.5) * D_cmid))
                     return AdvanceStepResult::kStepNaNOrInf;
                 if (Qmid <= dt * REAL_LITERAL(0.5) * D_cmid) {
                     return AdvanceStepResult::kStepFinerRetry;
                 }
             }
             const State final_state = in + dt * Statedot_mid;
-            Vec2 sf = vec_cast<real_t>(final_state.speed + params.alpha * make_Vec2(-final_state.omega.y, final_state.omega.x));
+            Vec2 sf = vec_cast<real_t>(final_state.speed +
+                                       params.alpha * make_Vec2(-final_state.omega.y, final_state.omega.x));
             const real_t sf_norm = length(sf);
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
