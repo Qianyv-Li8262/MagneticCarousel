@@ -1,360 +1,106 @@
-cmake_minimum_required(VERSION 3.24...4.4)
+cmake_minimum_required(VERSION 3.24)
+project(iypt16_hysteresis_2d LANGUAGES CXX)
 
-project(
-    iypt16_hysteresis
-    VERSION 0.1.0
-    LANGUAGES CXX
-)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-find_package(
-    Python
-    COMPONENTS Interpreter Development.Module
-    REQUIRED
-)
-
+# Use pybind11 from the same Python environment as the extension.
+if(NOT pybind11_DIR)
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+        OUTPUT_VARIABLE pybind11_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+endif()
 find_package(pybind11 CONFIG REQUIRED)
-
-find_package(
-    Boost 1.91
-    CONFIG
-    REQUIRED
-    COMPONENTS multiprecision
-)
-
+find_package(Boost CONFIG REQUIRED COMPONENTS multiprecision)
 include(CTest)
 
 set(KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
-set(HEADER_DIR "${KERNEL_DIR}/headers")
-set(GENERATED_DIR "${KERNEL_DIR}/generated")
-set(EXTENSION_DIR "${CMAKE_BINARY_DIR}/extensions")
+set(IYPT16_FIELD_MODE "exact" CACHE STRING "Magnetic field evaluation: exact or lut")
+set_property(CACHE IYPT16_FIELD_MODE PROPERTY STRINGS exact lut)
+if(NOT IYPT16_FIELD_MODE STREQUAL "exact" AND NOT IYPT16_FIELD_MODE STREQUAL "lut")
+    message(FATAL_ERROR "IYPT16_FIELD_MODE must be exact or lut")
+endif()
 
-add_executable(
-    generate_field_lut
+add_executable(generate_field_lut
     "${KERNEL_DIR}/tools/generate_field_lut.cpp"
 )
+target_compile_features(generate_field_lut PRIVATE cxx_std_17)
+target_include_directories(generate_field_lut PRIVATE "${KERNEL_DIR}/headers")
+target_link_libraries(generate_field_lut PRIVATE Boost::multiprecision)
 
-target_compile_features(
-    generate_field_lut
-    PRIVATE cxx_std_17
+if(IYPT16_FIELD_MODE STREQUAL "lut")
+    set(FIELD_LUT_DIR "${CMAKE_BINARY_DIR}/field-lut")
+    set(FIELD_LUT_FP32 "${FIELD_LUT_DIR}/field_lut_fp32.bin")
+    set(FIELD_LUT_FP64 "${FIELD_LUT_DIR}/field_lut_fp64.bin")
+    add_custom_command(
+        OUTPUT "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${FIELD_LUT_DIR}"
+        COMMAND "$<TARGET_FILE:generate_field_lut>" "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
+        DEPENDS generate_field_lut
+                "${KERNEL_DIR}/tools/generate_field_lut.cpp"
+                "${KERNEL_DIR}/headers/hysteresis_config_field.hpp"
+        VERBATIM
+    )
+    add_custom_target(generate_field_lut_files DEPENDS "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}")
+endif()
+
+pybind11_add_module(hysteresis_fp64 MODULE NO_EXTRAS
+    "${KERNEL_DIR}/2dmodel-hysteresis.cpp"
+    "${KERNEL_DIR}/bindings/pybind.cpp"
 )
-
-target_include_directories(
-    generate_field_lut
-    PRIVATE "${HEADER_DIR}"
-)
-
-target_link_libraries(
-    generate_field_lut
-    PRIVATE Boost::multiprecision
-)
-
-set(FIELD_LUT_DIR "${CMAKE_BINARY_DIR}/field-lut")
-set(FIELD_LUT_FP32 "${FIELD_LUT_DIR}/field_lut_fp32.bin")
-set(FIELD_LUT_FP64 "${FIELD_LUT_DIR}/field_lut_fp64.bin")
-
-add_custom_command(
-    OUTPUT
-        "${FIELD_LUT_FP32}"
-        "${FIELD_LUT_FP64}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${FIELD_LUT_DIR}"
-    COMMAND
-        "$<TARGET_FILE:generate_field_lut>"
-        "${FIELD_LUT_FP32}"
-        "${FIELD_LUT_FP64}"
-    DEPENDS
-        generate_field_lut
-        "${KERNEL_DIR}/tools/generate_field_lut.cpp"
-        "${HEADER_DIR}/hysteresis_config_field.hpp"
-    COMMENT "Generating FP32 and FP64 magnetic field spline LUTs"
-    VERBATIM
-)
-
-add_custom_target(
-    generate_field_lut_files
-    ALL
-    DEPENDS
-        "${FIELD_LUT_FP32}"
-        "${FIELD_LUT_FP64}"
+target_compile_features(hysteresis_fp64 PRIVATE cxx_std_17)
+target_compile_definitions(hysteresis_fp64 PRIVATE USE_FP64 MODULE_NAME=hysteresis)
+if(IYPT16_FIELD_MODE STREQUAL "lut")
+    target_compile_definitions(hysteresis_fp64 PRIVATE FIELD_EVAL_MODE=1)
+    target_compile_definitions(hysteresis_fp64 PRIVATE IYPT16_FP64_LUT_PATH="${FIELD_LUT_FP64}")
+    add_dependencies(hysteresis_fp64 generate_field_lut_files)
+endif()
+target_include_directories(hysteresis_fp64 PRIVATE "${KERNEL_DIR}/headers")
+set_target_properties(hysteresis_fp64 PROPERTIES
+    OUTPUT_NAME hysteresis
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp64"
 )
 
 if(BUILD_TESTING)
-    add_executable(
-        test_boost_multiprecision
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_boost_multiprecision.cpp"
-    )
-
-    target_compile_features(
-        test_boost_multiprecision
-        PRIVATE cxx_std_17
-    )
-
-    target_link_libraries(
-        test_boost_multiprecision
-        PRIVATE Boost::multiprecision
-    )
-
-    add_test(
-        NAME boost_multiprecision
-        COMMAND test_boost_multiprecision
-    )
-
-    add_executable(
-        test_lut_interpolation
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_lut_interpolation.cpp"
-    )
-
-    target_compile_features(test_lut_interpolation PRIVATE cxx_std_17)
-    target_include_directories(test_lut_interpolation PRIVATE "${HEADER_DIR}")
-
-    add_test(
-        NAME lut_interpolation
-        COMMAND test_lut_interpolation
-    )
-
-    add_executable(
-        test_fourier_field_reconstruction
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_fourier_field_reconstruction.cpp"
-    )
-
-    target_compile_features(test_fourier_field_reconstruction PRIVATE cxx_std_17)
-    target_compile_definitions(test_fourier_field_reconstruction PRIVATE FIELD_EVAL_MODE=1)
-    target_include_directories(test_fourier_field_reconstruction PRIVATE "${HEADER_DIR}")
-
-    add_test(
-        NAME fourier_field_reconstruction
-        COMMAND test_fourier_field_reconstruction
-    )
-    foreach(precision IN ITEMS fp32 fp64)
-        set(projection_test test_state_projection_${precision}_kahan)
-        add_executable(${projection_test} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_state_projection.cpp")
-        target_compile_features(${projection_test} PRIVATE cxx_std_17)
-        target_include_directories(${projection_test} PRIVATE "${HEADER_DIR}")
-        target_compile_definitions(${projection_test} PRIVATE USE_KAHAN)
-        if(precision STREQUAL "fp64")
-            target_compile_definitions(${projection_test} PRIVATE USE_FP64)
+    function(add_native_test name)
+        add_executable(${name} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/${name}.cpp")
+        target_compile_features(${name} PRIVATE cxx_std_17)
+        target_include_directories(${name} PRIVATE "${KERNEL_DIR}/headers")
+        # These tests use assert; keep the checks active in Release builds.
+        if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(${name} PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(${name} PRIVATE -UNDEBUG)
         endif()
-        add_test(NAME state_projection_${precision}_kahan COMMAND ${projection_test})
+        add_test(NAME ${name} COMMAND ${name})
+    endfunction()
+
+    add_native_test(test_boost_multiprecision)
+    target_link_libraries(test_boost_multiprecision PRIVATE Boost::multiprecision)
+    add_native_test(test_lut_interpolation)
+    add_native_test(test_fourier_field_reconstruction)
+    target_compile_definitions(test_fourier_field_reconstruction PRIVATE FIELD_EVAL_MODE=1)
+    add_native_test(test_fwd_lut_domain)
+    target_compile_definitions(test_fwd_lut_domain PRIVATE FIELD_EVAL_MODE=1)
+    add_native_test(test_rolling_step)
+
+    foreach(precision IN ITEMS fp32 fp64)
+        set(name test_state_projection_${precision}_kahan)
+        add_executable(${name} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_state_projection.cpp")
+        target_compile_features(${name} PRIVATE cxx_std_17)
+        target_include_directories(${name} PRIVATE "${KERNEL_DIR}/headers")
+        target_compile_definitions(${name} PRIVATE USE_KAHAN)
+        if(precision STREQUAL "fp64")
+            target_compile_definitions(${name} PRIVATE USE_FP64)
+        endif()
+        if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(${name} PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(${name} PRIVATE -UNDEBUG)
+        endif()
+        add_test(NAME ${name} COMMAND ${name})
     endforeach()
 endif()
-
-# ---------------------------------------------------------------------------
-# FP32
-# ---------------------------------------------------------------------------
-
-pybind11_add_module(
-    hysteresis_fp32
-    MODULE
-    NO_EXTRAS
-    "${KERNEL_DIR}/bindings/pybind.cpp"
-    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-)
-
-target_compile_features(
-    hysteresis_fp32
-    PRIVATE cxx_std_17
-)
-
-
-
-target_compile_definitions(
-    hysteresis_fp32
-    PRIVATE MODULE_NAME=hysteresis
-)
-
-target_include_directories(
-    hysteresis_fp32
-    PRIVATE "${HEADER_DIR}"
-)
-
-set_target_properties(
-    hysteresis_fp32
-    PROPERTIES
-        OUTPUT_NAME "hysteresis"
-        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp32"
-        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp32"
-)
-
-# ---------------------------------------------------------------------------
-# Kahan FP32 (CPU reproduction of the default CUDA state arithmetic)
-# ---------------------------------------------------------------------------
-
-pybind11_add_module(
-    hysteresis_fp32_kahan
-    MODULE
-    NO_EXTRAS
-    "${KERNEL_DIR}/bindings/pybind.cpp"
-    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-)
-
-target_compile_features(
-    hysteresis_fp32_kahan
-    PRIVATE cxx_std_17
-)
-
-target_compile_definitions(
-    hysteresis_fp32_kahan
-    PRIVATE
-        USE_KAHAN
-        MODULE_NAME=hysteresis
-)
-
-target_include_directories(
-    hysteresis_fp32_kahan
-    PRIVATE "${HEADER_DIR}"
-)
-
-set_target_properties(
-    hysteresis_fp32_kahan
-    PROPERTIES
-        OUTPUT_NAME "hysteresis"
-        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp32-kahan"
-        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp32-kahan"
-)
-
-# ---------------------------------------------------------------------------
-# FP64
-# ---------------------------------------------------------------------------
-
-pybind11_add_module(
-    hysteresis_fp64
-    MODULE
-    NO_EXTRAS
-    "${KERNEL_DIR}/bindings/pybind.cpp"
-    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-    "${KERNEL_DIR}/hysteresis_critical_slow_cpu.cpp"
-    "${KERNEL_DIR}/hysteresis_phase_boundary_cpu.cpp"
-)
-
-target_compile_features(
-    hysteresis_fp64
-    PRIVATE cxx_std_17
-)
-
-
-
-target_compile_definitions(
-    hysteresis_fp64
-    PRIVATE
-        USE_FP64
-        MODULE_NAME=hysteresis
-)
-
-target_include_directories(
-    hysteresis_fp64
-    PRIVATE "${HEADER_DIR}"
-)
-
-set_target_properties(
-    hysteresis_fp64
-    PROPERTIES
-        OUTPUT_NAME "hysteresis"
-        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp64"
-        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/fp64"
-)
-
-# ---------------------------------------------------------------------------
-# Double-double
-# ---------------------------------------------------------------------------
-
-pybind11_add_module(
-    hysteresis_dd
-    MODULE
-    NO_EXTRAS
-    "${KERNEL_DIR}/bindings/pybind.cpp"
-    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-    "${KERNEL_DIR}/hysteresis_critical_slow_cpu.cpp"
-)
-
-target_compile_features(
-    hysteresis_dd
-    PRIVATE cxx_std_17
-)
-
-
-
-target_compile_definitions(
-    hysteresis_dd
-    PRIVATE
-        USE_DD
-        MODULE_NAME=hysteresis_dd
-)
-
-target_include_directories(
-    hysteresis_dd
-    PRIVATE "${HEADER_DIR}"
-)
-
-set_target_properties(
-    hysteresis_dd
-    PROPERTIES
-        OUTPUT_NAME "hysteresis_dd"
-        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/dd"
-        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/dd"
-)
-
-# ---------------------------------------------------------------------------
-# Trajectory dump — FP32
-# ---------------------------------------------------------------------------
-
-pybind11_add_module(
-    hysteresis_dump_fp32
-    MODULE
-    NO_EXTRAS
-    "${KERNEL_DIR}/bindings/pybind_dump.cpp"
-    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-)
-
-target_compile_features(
-    hysteresis_dump_fp32
-    PRIVATE cxx_std_17
-)
-
-
-target_include_directories(
-    hysteresis_dump_fp32
-    PRIVATE "${HEADER_DIR}"
-)
-
-set_target_properties(
-    hysteresis_dump_fp32
-    PROPERTIES
-        OUTPUT_NAME "hysteresis_dump"
-        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/dump-fp32"
-        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/dump-fp32"
-)
-
-# ---------------------------------------------------------------------------
-# Trajectory dump — FP64
-# ---------------------------------------------------------------------------
-
-pybind11_add_module(
-    hysteresis_dump_fp64
-    MODULE
-    NO_EXTRAS
-    "${KERNEL_DIR}/bindings/pybind_dump.cpp"
-    "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
-)
-
-target_compile_features(
-    hysteresis_dump_fp64
-    PRIVATE cxx_std_17
-)
-
-
-target_compile_definitions(
-    hysteresis_dump_fp64
-    PRIVATE USE_FP64
-)
-
-target_include_directories(
-    hysteresis_dump_fp64
-    PRIVATE "${HEADER_DIR}"
-)
-
-set_target_properties(
-    hysteresis_dump_fp64
-    PROPERTIES
-        OUTPUT_NAME "hysteresis_dump"
-        LIBRARY_OUTPUT_DIRECTORY "${EXTENSION_DIR}/dump-fp64"
-        RUNTIME_OUTPUT_DIRECTORY "${EXTENSION_DIR}/dump-fp64"
-)
