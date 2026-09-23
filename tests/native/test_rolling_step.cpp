@@ -1,0 +1,56 @@
+#include "2dmodel-hysteresis.hpp"
+
+#include <cassert>
+#include <cmath>
+
+int main()
+{
+    SolverParams params = {REAL_LITERAL(1.0), REAL_LITERAL(0.0), REAL_LITERAL(1.0),
+                           REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
+    State state{};
+    state.pos.x = REAL_LITERAL(4.0);
+    state.speed.x = REAL_LITERAL(1.0);
+    state.omega.y = REAL_LITERAL(1.0);
+    state.attitude.real = REAL_LITERAL(1.0);
+    bool sliding = false;
+    Vec2 direction = {REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
+    bool valid = false;
+    FieldResult field{};
+    const real_t dt = REAL_LITERAL(0.001);
+
+    // No magnetic force or drag: a rolling ball keeps its velocity.
+    assert(try_advance_1_step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
+           AdvanceStepResult::kStepOk);
+    assert(!sliding && valid);
+    assert(real_fabs(static_cast<real_t>(state.pos.x) - (REAL_LITERAL(4.0) + dt)) < REAL_LITERAL(1e-6));
+    assert(real_fabs(static_cast<real_t>(state.speed.x) - REAL_LITERAL(1.0)) < REAL_LITERAL(1e-6));
+    assert(real_fabs(static_cast<real_t>(state.speed.x - params.alpha * state.omega.y)) < REAL_LITERAL(1e-6));
+    const FieldResult expected = eval_mag_field(state.pos, state.down_disk_angle);
+    assert(field.h.x == expected.h.x && field.h.y == expected.h.y && field.h.z == expected.h.z);
+    for (int i = 0; i < 5; ++i)
+        assert(field.hGrad3d.component[i] == expected.hGrad3d.component[i]);
+
+    // Cross-step cache reuse gives the same accepted state as recomputation.
+    State uncached = state;
+    bool uncached_mode = sliding;
+    Vec2 uncached_dir = direction;
+    bool uncached_valid = false;
+    assert(try_advance_1_step(dt, params, uncached, uncached_mode, uncached_dir, uncached_valid) ==
+           AdvanceStepResult::kStepOk);
+    assert(!uncached_valid);
+    assert(try_advance_1_step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
+           AdvanceStepResult::kStepOk);
+    assert(static_cast<real_t>(state.pos.x) == static_cast<real_t>(uncached.pos.x));
+    assert(static_cast<real_t>(state.q.x) == static_cast<real_t>(uncached.q.x));
+
+    // Excessive drag makes the supplied Rolling mode inconsistent at entry.
+    params.delta = REAL_LITERAL(1.0);
+    const State before = state;
+    const FieldResult field_before = field;
+    assert(try_advance_1_step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
+           AdvanceStepResult::kStepSolverSelfContradict);
+    assert(static_cast<real_t>(state.pos.x) == static_cast<real_t>(before.pos.x));
+    assert(static_cast<real_t>(state.speed.x) == static_cast<real_t>(before.speed.x));
+    assert(!sliding && valid && direction.x == REAL_LITERAL(0.0) && direction.y == REAL_LITERAL(0.0));
+    assert(field.h.x == field_before.h.x);
+}
