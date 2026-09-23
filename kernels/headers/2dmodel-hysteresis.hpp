@@ -771,8 +771,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                  cache, LUTptr, &event_field))
                 return AdvanceStepResult::kStepBallFly;
             const State sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
-            const Vec2 s_mid = vec_cast<real_t>(sliding_mid.speed +
-                                               params.alpha * make_Vec2(-sliding_mid.omega.y, sliding_mid.omega.x));
+            // Release starts at zero slip: avoid cancellation between midpoint speed and spin.
+            const Vec2 s_mid = (remaining * REAL_LITERAL(0.5) * (A_event - b_event)) * launch_dir;
             const real_t s_mid_norm = length(s_mid);
             if (!real_isfinite(s_mid_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
