@@ -497,29 +497,30 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 
                 const real_t remaining = dt - tc;
                 State final_state = state_at_tc;
+                FieldResult final_field = {h, grad};
                 if (remaining > REAL_LITERAL(0.0)) {
-                    const bool rolling = false;
+                    const bool ksliding = false;
                     const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
                     State dot_rolling_start;
                     State dot_rolling_mid;
                     Vec3 F_rolling_mid;
                     Vec3 M_rolling_mid;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, rolling, no_sliding_dir, nullptr,
-                                             nullptr, nullptr))
+                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, ksliding, no_sliding_dir, nullptr,
+                                             nullptr, &final_field))
                             return AdvanceStepResult::kStepBallFly;
                     } else {
-                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, rolling, no_sliding_dir, cache,
-                                             LUTptr, nullptr))
+                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, ksliding, no_sliding_dir, cache,
+                                             LUTptr, &final_field))
                             return AdvanceStepResult::kStepBallFly;
                     }
                     const State rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, rolling, no_sliding_dir, nullptr,
+                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, nullptr,
                                             nullptr, nullptr, &F_rolling_mid, &M_rolling_mid))
                             return AdvanceStepResult::kStepBallFly;
                     } else {
-                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, rolling, no_sliding_dir, cache,
+                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, cache,
                                             LUTptr, nullptr, &F_rolling_mid, &M_rolling_mid))
                             return AdvanceStepResult::kStepBallFly;
                     }
@@ -557,12 +558,15 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         return AdvanceStepResult::kStepNaNOrInf;
                     if (A_final > b_final)
                         return AdvanceStepResult::kStepFinerRetry;
+                    final_field = {h_final, grad_final};
                 }
 
+                if (H_cache != nullptr)
+                    *H_cache = final_field;
                 in = final_state;
                 sliding = false;
                 sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
-                isHCacheValid = false;
+                isHCacheValid = H_cache != nullptr;
                 return AdvanceStepResult::kStepOk;
             } else {
                 goto NO_PREDICTED_TRANSIT;
@@ -623,7 +627,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             return AdvanceStepResult::kStepOk;
         }
     } else {
-        // MARK: WIP
-        return AdvanceStepResult::kStepNumericalUnstable; // Rolling branches not implemented yet.
+        State start = in;
+        project_pure_rolling(start,params);
+        Vec3 F_start;
+        Vec3 M_start;
     }
 }
