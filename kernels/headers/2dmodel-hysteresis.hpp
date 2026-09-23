@@ -429,6 +429,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 return AdvanceStepResult::kStepNaNOrInf;
             if (Q <= dt * D_c) {
                 real_t tc = Q / D_c;
+                if (!real_isfinite(tc) || tc <= REAL_LITERAL(0.0) || tc > dt)
+                    return AdvanceStepResult::kStepNumericalUnstable;
                 State state_at_halftc = in + tc * REAL_LITERAL(0.5) * Statedot_start;
                 State dot_estimate;
                 Vec2 s_mid =
@@ -458,14 +460,87 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
                 const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
                 const real_t N = params.gamma_g - F.z;
+                if (!real_isfinite(N) || !real_isfinite(F.x) || !real_isfinite(F.y) || !real_isfinite(M.x) ||
+                    !real_isfinite(M.y))
+                    return AdvanceStepResult::kStepNaNOrInf;
+                if (N < REAL_LITERAL(0.0))
+                    return AdvanceStepResult::kStepBallFly;
                 const Vec2 G_ = make_Vec2(F.x, F.y) - params.delta * length(state_at_tc.speed) * state_at_tc.speed;
                 const Vec2 a_ = G_ + params.alpha * make_Vec2(-M.y, M.x);
                 real_t A_ = length(a_);
-                real_t b_ = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * (params.gamma_g - F.z);
+                real_t b_ = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N;
+                if (!real_isfinite(A_) || !real_isfinite(b_))
+                    return AdvanceStepResult::kStepNaNOrInf;
                 if (A_ > b_)
                     return AdvanceStepResult::kStepFinerRetry;
-                sliding=false;
-                
+
+                const real_t remaining = dt - tc;
+                State final_state = state_at_tc;
+                if (remaining > REAL_LITERAL(0.0)) {
+                    const bool rolling = false;
+                    const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+                    State dot_rolling_start;
+                    State dot_rolling_mid;
+                    Vec3 F_rolling_mid;
+                    Vec3 M_rolling_mid;
+                    if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, rolling, no_sliding_dir, nullptr,
+                                             nullptr, nullptr))
+                            return AdvanceStepResult::kStepBallFly;
+                    } else {
+                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, rolling, no_sliding_dir, cache,
+                                             LUTptr, nullptr))
+                            return AdvanceStepResult::kStepBallFly;
+                    }
+                    const State rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
+                    if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, rolling, no_sliding_dir, nullptr,
+                                            nullptr, nullptr, &F_rolling_mid, &M_rolling_mid))
+                            return AdvanceStepResult::kStepBallFly;
+                    } else {
+                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, rolling, no_sliding_dir, cache,
+                                            LUTptr, nullptr, &F_rolling_mid, &M_rolling_mid))
+                            return AdvanceStepResult::kStepBallFly;
+                    }
+                    const real_t N_mid = params.gamma_g - F_rolling_mid.z;
+                    const Vec2 G_mid = make_Vec2(F_rolling_mid.x, F_rolling_mid.y) -
+                                       params.delta * length(rolling_mid.speed) * rolling_mid.speed;
+                    const Vec2 a_mid = G_mid + params.alpha * make_Vec2(-M_rolling_mid.y, M_rolling_mid.x);
+                    const real_t A_mid = length(a_mid);
+                    const real_t b_mid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_mid;
+                    if (!real_isfinite(A_mid) || !real_isfinite(b_mid))
+                        return AdvanceStepResult::kStepNaNOrInf;
+                    if (A_mid > b_mid)
+                        return AdvanceStepResult::kStepFinerRetry;
+
+                    final_state = state_at_tc + remaining * dot_rolling_mid;
+                    project_pure_rolling(final_state, params);
+                    const Vec3 q_final = vec_cast<real_t>(rotate(final_state.attitude, final_state.q));
+                    const auto [h_final, F_final, grad_final] = eval_mag_field_and_force(
+                        params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
+                    const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
+                    const real_t N_final = params.gamma_g - F_final.z;
+                    if (!real_isfinite(N_final) || !real_isfinite(F_final.x) || !real_isfinite(F_final.y) ||
+                        !real_isfinite(M_final.x) || !real_isfinite(M_final.y))
+                        return AdvanceStepResult::kStepNaNOrInf;
+                    if (N_final < REAL_LITERAL(0.0))
+                        return AdvanceStepResult::kStepBallFly;
+                    const Vec2 G_final =
+                        make_Vec2(F_final.x, F_final.y) - params.delta * length(final_state.speed) * final_state.speed;
+                    const Vec2 a_final = G_final + params.alpha * make_Vec2(-M_final.y, M_final.x);
+                    const real_t A_final = length(a_final);
+                    const real_t b_final = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_final;
+                    if (!real_isfinite(A_final) || !real_isfinite(b_final))
+                        return AdvanceStepResult::kStepNaNOrInf;
+                    if (A_final > b_final)
+                        return AdvanceStepResult::kStepFinerRetry;
+                }
+
+                in = final_state;
+                sliding = false;
+                sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+                isHCacheValid = false;
+                return AdvanceStepResult::kStepOk;
             } else {
                 goto NO_PREDICTED_TRANSIT;
             }
