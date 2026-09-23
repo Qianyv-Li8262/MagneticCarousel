@@ -18,9 +18,21 @@ int main()
     FieldResult field{};
     const real_t dt = REAL_LITERAL(0.001);
 
+    // The public full-step wrapper agrees with a directly accepted step.
+    State wrapped = state;
+    bool wrapped_sliding = sliding;
+    Vec2 wrapped_dir = direction;
+    bool wrapped_valid = valid;
+    FieldResult wrapped_field{};
+    assert(fwd1step(dt, params, wrapped, wrapped_sliding, wrapped_dir, wrapped_valid,
+                    nullptr, nullptr, &wrapped_field) == AdvanceStepResult::kStepOk);
+
     // No magnetic force or drag: a rolling ball keeps its velocity.
     assert(try_advance_1_step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
            AdvanceStepResult::kStepOk);
+    assert(wrapped.pos.x == state.pos.x && wrapped.speed.x == state.speed.x);
+    assert(wrapped_sliding == sliding && wrapped_valid == valid);
+    assert(wrapped_field.h.x == field.h.x && wrapped_field.h.y == field.h.y);
     assert(!sliding && valid);
     assert(real_fabs(static_cast<real_t>(state.pos.x) - (REAL_LITERAL(4.0) + dt)) < REAL_LITERAL(1e-6));
     assert(real_fabs(static_cast<real_t>(state.speed.x) - REAL_LITERAL(1.0)) < REAL_LITERAL(1e-6));
@@ -53,4 +65,7 @@ int main()
     assert(static_cast<real_t>(state.speed.x) == static_cast<real_t>(before.speed.x));
     assert(!sliding && valid && direction.x == REAL_LITERAL(0.0) && direction.y == REAL_LITERAL(0.0));
     assert(field.h.x == field_before.h.x);
+    assert(fwd1step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
+           AdvanceStepResult::kStepSolverSelfContradict);
+    assert(state.pos.x == before.pos.x && field.h.x == field_before.h.x);
 }

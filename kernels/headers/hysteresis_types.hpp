@@ -16,6 +16,7 @@
 #define HOST __host__
 #define INLINE __forceinline__
 #define NOINLINE __noinline__
+#define CONFIG_CONST __device__ constexpr
 #define REAL_ISFINITE_IMPL isfinite
 #else
 #define DEVICE
@@ -23,6 +24,7 @@
 #define HOST
 #define INLINE inline
 #define NOINLINE
+#define CONFIG_CONST inline constexpr
 #define REAL_ISFINITE_IMPL std::isfinite
 #endif
 
