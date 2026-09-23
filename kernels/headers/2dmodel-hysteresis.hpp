@@ -628,8 +628,38 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         }
     } else {
         State start = in;
-        project_pure_rolling(start,params);
+        project_pure_rolling(start, params);
         Vec3 F_start;
         Vec3 M_start;
+        State Statedot_start;
+        if (isHCacheValid) {
+            if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
+                                    &F_start, &M_start))
+                    return AdvanceStepResult::kStepBallFly;
+            } else {
+                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache,
+                                    &F_start, &M_start))
+                    return AdvanceStepResult::kStepBallFly;
+            }
+        } else {
+            if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
+                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr,
+                                    &F_start, &M_start))
+                    return AdvanceStepResult::kStepBallFly;
+            } else {
+                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr,
+                                    &F_start, &M_start))
+                    return AdvanceStepResult::kStepBallFly;
+            }
+        }
+        const Vec2 G = make_Vec2(F_start.x, F_start.y) - params.delta * length(start.speed) * start.speed;
+        const Vec2 a = G + params.alpha * make_Vec2(-M_start.y, M_start.x);
+        real_t A = length(a);
+        real_t b = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * (params.gamma_g - F_start.z);
+        if (!real_isfinite(A) || !real_isfinite(b))
+            return AdvanceStepResult::kStepNaNOrInf;
+        if (A > b)
+            return AdvanceStepResult::kStepSolverSelfContradict;
     }
 }
