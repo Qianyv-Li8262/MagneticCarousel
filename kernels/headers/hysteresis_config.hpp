@@ -9,7 +9,7 @@ CONFIG_CONST real_t K =REAL_LITERAL(1.0909091e-3);
 CONFIG_CONST real_t Xi_JA= (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITERAL(1.0) + Alpha_JA * (Mu_r - REAL_LITERAL(1.0)))));
 
 // Magnetic dipole strength
-CONFIG_CONST real_t Beta = REAL_LITERAL(0.21504);
+CONFIG_CONST real_t Beta = REAL_LITERAL(0.079370775450601);
 // Beta is m k^3 / (4 pi M_s).
 
 // Mechanical parameters

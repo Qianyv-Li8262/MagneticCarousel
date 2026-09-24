@@ -14,7 +14,7 @@ bool close(const real_t actual, const real_t expected)
 
 } // namespace
 
-int main()
+bool check_reconstruction(const real_t rho, FieldCache &cache)
 {
     constexpr real_t radius = static_cast<real_t>(magnet_number) / REAL_LITERAL(2.0);
     constexpr real_t rho_min = kLUTLowerBoundRatio * radius;
@@ -35,14 +35,13 @@ int main()
         };
     }
 
-    const real_t rho = REAL_LITERAL(3.7);
     const real_t phi = REAL_LITERAL(0.61);
     const real_t disk_angle = REAL_LITERAL(-0.23);
     const Vec2 pos = make_Vec2(rho * real_cos(phi), rho * real_sin(phi));
     const Vec3 q = make_Vec3(REAL_LITERAL(0.17), REAL_LITERAL(-0.31), REAL_LITERAL(0.26));
     const SolverParams params = {REAL_LITERAL(0.7), REAL_LITERAL(0.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0),
                                  REAL_LITERAL(0.8)};
-    const FieldForceResult actual = eval_mag_field_and_force(params, pos, q, disk_angle, nullptr, lut.data());
+    const FieldForceResult actual = eval_mag_field_and_force(params, pos, q, disk_angle, &cache, lut.data());
 
     constexpr real_t m = static_cast<real_t>(magnet_number / 2);
     const real_t relative_angle = m * (phi - disk_angle);
@@ -85,7 +84,18 @@ int main()
                                  Gxz * v.x + Gyz * v.y + (-Gxx - Gyy) * v.z);
 
     return close(actual.h.x, h.x) && close(actual.h.y, h.y) && close(actual.h.z, h.z) &&
-                   close(actual.Force.x, force.x) && close(actual.Force.y, force.y) && close(actual.Force.z, force.z)
-               ? EXIT_SUCCESS
-               : EXIT_FAILURE;
+                   close(actual.Force.x, force.x) && close(actual.Force.y, force.y) && close(actual.Force.z, force.z);
+}
+
+int main()
+{
+    // Cache-enabled builds require a valid cache, just like the trajectory solver.
+    FieldCache cache{};
+    // Cold cache, a different point in the same interval, another interval, then back.
+    // Every call uses the same synthetic LUT values and an independent analytic reference.
+    for (const real_t rho : {REAL_LITERAL(3.7), REAL_LITERAL(3.701), REAL_LITERAL(4.2), REAL_LITERAL(3.7)}) {
+        if (!check_reconstruction(rho, cache))
+            return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
 }

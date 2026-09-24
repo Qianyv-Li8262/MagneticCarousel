@@ -2,7 +2,8 @@
 
 From src2d, build with ``cmake --preset local-cpu`` and
 ``cmake --build --preset local-cpu-release``, then run with the daily Python.
-The default solver parameters are temporary demonstration values.
+The defaults use the 1D reference coefficients converted to disk-angular time
+for eight alternating magnets; finite curvature still changes the field.
 """
 
 from __future__ import annotations
@@ -21,13 +22,36 @@ DT = 1.0e-3
 STEPS_PER_FRAME = 1000
 FPS = 30
 
-# Temporary values selected to make the new two-dimensional interface visible.
-# gamma = Eta * alpha**2 * gamma_m, with Eta = 0.4 in hysteresis_config.hpp.
+# Radius and angular-speed multipliers at the same selected point as the 1D animation.
+SR = 0.428571
+SOMEGA = 0.1
+
+# Eight alternating magnets give four field periods per disk revolution.
+# Converting from 1D phase time to disk-angular time multiplies the three
+# acceleration coefficients by 4**2. These references assume magnet_number=8.
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
-GAMMA_G = 2.0
-GAMMA_M = 0.02
-GAMMA = 0.4 * ALPHA * ALPHA * GAMMA_M
+GAMMA_G = 2.64965696
+GAMMA = 7830.34224
+GAMMA_M = 176182.704
+
+
+def scaled_model_parameters() -> tuple[float, float, float, float, float]:
+    """Scale ball radius and disk angular speed as in the 1D animation."""
+    if not np.isfinite(SR) or SR <= 0.0:
+        raise ValueError("SR must be finite and positive")
+    if not np.isfinite(SOMEGA) or SOMEGA <= 0.0:
+        raise ValueError("SOMEGA must be finite and positive")
+
+    inverse_sr = 1.0 / SR
+    inverse_somega_squared = 1.0 / (SOMEGA * SOMEGA)
+    return (
+        ALPHA * SR,
+        DELTA * inverse_sr,
+        GAMMA_G * inverse_somega_squared,
+        GAMMA * inverse_somega_squared,
+        GAMMA_M * inverse_sr * inverse_sr * inverse_somega_squared,
+    )
 
 
 def load_hysteresis():
@@ -78,7 +102,7 @@ def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
         raise ValueError("dt and steps_per_frame must be positive")
 
     module = load_hysteresis()
-    params = module.SolverParams(ALPHA, DELTA, GAMMA_G, GAMMA, GAMMA_M)
+    params = module.SolverParams(*scaled_model_parameters())
     state = make_initial_state(module)
     sliding = None
     sliding_dir = None
@@ -88,11 +112,13 @@ def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
     magnet_radius = magnet_count / 2
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count
 
-    fig = plt.figure(figsize=(12, 6), layout="constrained")
-    grid = fig.add_gridspec(2, 2, width_ratios=(1.5, 1.0))
+    fig = plt.figure(figsize=(14, 9), layout="constrained")
+    grid = fig.add_gridspec(4, 2, width_ratios=(1.3, 1.0))
     scene = fig.add_subplot(grid[:, 0])
     radial_axis = fig.add_subplot(grid[0, 1])
     angular_axis = fig.add_subplot(grid[1, 1], sharex=radial_axis)
+    displacement_axis = fig.add_subplot(grid[2, 1], sharex=radial_axis)
+    velocity_axis = fig.add_subplot(grid[3, 1], sharex=radial_axis)
 
     extent = magnet_radius + 1.0
     scene.set(xlim=(-extent, extent), ylim=(-extent, extent), xlabel="x", ylabel="y")
@@ -103,21 +129,36 @@ def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
     magnets = scene.scatter([], [], s=140, c="0.48", edgecolors="0.28", linewidths=0.8, zorder=2)
     (path_line,) = scene.plot([], [], color="tab:blue", linewidth=1.6, alpha=0.85, zorder=3)
     (ball,) = scene.plot([], [], "o", color="tab:orange", markeredgecolor="white", markersize=12, zorder=4)
-    status = scene.text(0.02, 0.98, "", transform=scene.transAxes, va="top", family="monospace")
+    status = scene.text(0.02, 0.98, "", transform=scene.transAxes, va="top", family="monospace",
+                        fontsize=9, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
     scene.set_title(f"Top view · {magnet_count} rotating magnets · {module.field_mode} field")
 
     times = [0.0]
     radial = [float(np.hypot(state[1], state[2]))]
     polar = [float(np.arctan2(state[2], state[1]))]
+    initial_angle = polar[0]
+    # Arithmetic mean of all displayed radius samples, including the initial state.
+    radius_sum = radial[0]
+    mean_radial = [radial[0]]
+    equivalent_x = [0.0]
+    speeds = [float(np.hypot(state[3], state[4]))]
+    tangential_speeds = [float((state[1] * state[4] - state[2] * state[3]) / radial[0])]
     xs = [float(state[1])]
     ys = [float(state[2])]
     (radial_line,) = radial_axis.plot(times, radial, color="tab:blue")
     (polar_line,) = angular_axis.plot(times, polar, color="tab:purple")
+    (displacement_line,) = displacement_axis.plot(times, equivalent_x, color="tab:green")
+    (speed_line,) = velocity_axis.plot(times, speeds, color="tab:orange", label="COM speed |v|")
+    (tangential_line,) = velocity_axis.plot(times, tangential_speeds, color="tab:red", label="signed tangential v")
     radial_axis.set_ylabel("r(t)")
-    angular_axis.set(xlabel="time", ylabel="φ(t) [rad]")
-    for axis in (radial_axis, angular_axis):
+    angular_axis.set_ylabel("φ(t) [rad]")
+    displacement_axis.set_ylabel("x_eq = mean(r) Δφ")
+    velocity_axis.set(xlabel="time (2D units)", ylabel="velocity (2D units)")
+    velocity_axis.legend(loc="upper right", fontsize=8)
+    velocity_axis.axhline(0, color="0.5", linewidth=0.7)
+    for axis in (radial_axis, angular_axis, displacement_axis, velocity_axis):
         axis.grid(alpha=0.25)
-    fig.suptitle("Single 2D trajectory · temporary demonstration parameters")
+    fig.suptitle(f"Single 2D trajectory · sr={SR:g}, sω={SOMEGA:g}")
 
     def render():
         angle = base_angles + float(state[0])
@@ -126,16 +167,29 @@ def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
         path_line.set_data(xs, ys)
         radial_line.set_data(times, radial)
         polar_line.set_data(times, polar)
+        displacement_line.set_data(times, equivalent_x)
+        speed_line.set_data(times, speeds)
+        tangential_line.set_data(times, tangential_speeds)
         radial_axis.set_xlim(0, max(1.0, time * 1.05))
-        for axis, values in ((radial_axis, radial), (angular_axis, polar)):
+        for axis, values in ((radial_axis, radial), (angular_axis, polar),
+                             (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds)):
             lower, upper = min(values), max(values)
             padding = max(0.05, 0.1 * (upper - lower))
             axis.set_ylim(lower - padding, upper + padding)
-        status.set_text(f"t = {time:.3f}\nr = {radial[-1]:.4f}\nφ = {polar[-1]:.4f}\n{'sliding' if sliding else 'rolling'}")
-        return magnets, ball, path_line, radial_line, polar_line, status
+        status.set_text(
+            f"t = {time:.3f}  (1D t = {magnet_radius * time:.3f})\n"
+            f"r = {radial[-1]:.6f}  mean(r) = {mean_radial[-1]:.6f}\n"
+            f"φ = {polar[-1]:.6f}  x_eq = {equivalent_x[-1]:.6f}\n"
+            f"v = ({float(state[3]):.6f}, {float(state[4]):.6f})\n"
+            f"|v| = {speeds[-1]:.6f}  v_tan = {tangential_speeds[-1]:.6f}\n"
+            f"v_tan / {magnet_radius:g} (1D units) = {tangential_speeds[-1] / magnet_radius:.6f}\n"
+            f"{'sliding' if sliding else 'rolling'}"
+        )
+        return (magnets, ball, path_line, radial_line, polar_line, displacement_line,
+                speed_line, tangential_line, status)
 
     def update(_frame):
-        nonlocal state, sliding, sliding_dir, time, completed_steps
+        nonlocal state, sliding, sliding_dir, time, completed_steps, radius_sum
         state, sliding, sliding_dir = module.evolve_trajectory(
             state, dt, steps_per_frame, params, sliding, sliding_dir, completed_steps
         )
@@ -147,11 +201,19 @@ def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
         radial.append(float(np.hypot(state[1], state[2])))
         angle = float(np.arctan2(state[2], state[1]))
         polar.append(polar[-1] + (angle - polar[-1] + np.pi) % (2 * np.pi) - np.pi)
+        radius_sum += radial[-1]
+        mean_radial.append(radius_sum / len(radial))
+        equivalent_x.append(mean_radial[-1] * (polar[-1] - initial_angle))
+        speeds.append(float(np.hypot(state[3], state[4])))
+        tangential_speeds.append(
+            float((state[1] * state[4] - state[2] * state[3]) / radial[-1])
+            if radial[-1] > 0.0 else float("nan")
+        )
         return render()
 
     render()
     animation = FuncAnimation(
-        fig, update, frames=frames, interval=1000 / FPS,
+        fig, update, init_func=render, frames=frames, interval=1000 / FPS,
         blit=False, cache_frame_data=False,
     )
     return fig, animation
