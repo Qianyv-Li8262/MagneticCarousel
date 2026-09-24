@@ -2,6 +2,7 @@
 #include <pybind11/pybind11.h>
 
 #include <cmath>
+#include <cstdint>
 
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
@@ -13,7 +14,7 @@ namespace py = pybind11;
 #endif
 
 State evolve_trajectory(const State &initial, real_t dt, int steps, const SolverParams &params,
-                        bool &sliding, Vec2 &sliding_dir, bool initialize);
+                        bool &sliding, Vec2 &sliding_dir, bool initialize, std::int64_t start_step);
 
 // [disk angle, pos x/y, speed x/y, quaternion w/x/y/z,
 //  omega x/y/z, hysteresis q x/y/z]. Time is tracked by Python.
@@ -56,7 +57,7 @@ py::array_t<real_t> state_to_numpy(const State &s)
 
 py::tuple evolve_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &initial,
                        real_t dt, int steps, const SolverParams &params,
-                       const py::object &mode, const py::object &direction)
+                       const py::object &mode, const py::object &direction, std::int64_t start_step)
 {
     const bool initialize = mode.is_none() && direction.is_none();
     if (mode.is_none() != direction.is_none())
@@ -73,7 +74,7 @@ py::tuple evolve_numpy(const py::array_t<real_t, py::array::c_style | py::array:
     }
     {
         py::gil_scoped_release release;
-        state = evolve_trajectory(state, dt, steps, params, sliding, sliding_dir, initialize);
+        state = evolve_trajectory(state, dt, steps, params, sliding, sliding_dir, initialize, start_step);
     }
     py::array_t<real_t> direction_out(2);
     direction_out.mutable_at(0) = sliding_dir.x;
@@ -86,6 +87,7 @@ PYBIND11_MODULE(MODULE_NAME, m)
     m.doc() = "Single CPU trajectory for the two-dimensional hysteresis model";
     m.attr("real_dtype") = py::dtype::of<real_t>();
     m.attr("state_size") = state_size;
+    m.attr("magnet_number") = magnet_number;
     m.attr("field_mode") = kFieldEvalMode == FieldEvalMode::kExact ? "exact" : "fourier-spline";
     py::class_<SolverParams>(m, "SolverParams")
         .def(py::init<real_t, real_t, real_t, real_t, real_t>(),
@@ -98,7 +100,7 @@ PYBIND11_MODULE(MODULE_NAME, m)
         .def_readwrite("gamma_m", &SolverParams::gamma_m);
     m.def("evolve_trajectory", &evolve_numpy, py::arg("initial"), py::arg("dt"),
           py::arg("steps"), py::arg("params"), py::arg("sliding") = py::none(),
-          py::arg("sliding_dir") = py::none(),
+          py::arg("sliding_dir") = py::none(), py::arg("start_step") = 0,
           "Advance one trajectory chunk and return (state, sliding, sliding_dir). "
           "Pass the returned mode and direction into the next chunk.");
 }

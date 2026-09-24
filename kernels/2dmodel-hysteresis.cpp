@@ -4,6 +4,10 @@
 #include <string>
 #include <fstream>
 #include <vector>
+#include <cstdint>
+#include <limits>
+#include <sstream>
+#include <iomanip>
 
 namespace {
 
@@ -58,11 +62,13 @@ const LUTNode *trajectory_lut()
 // Each call advances one trajectory chunk. Contact mode and direction are
 // carried into the next chunk; the field cache remains local to this call.
 State evolve_trajectory(const State &initial, real_t dt, int steps, const SolverParams &params,
-                        bool &sliding, Vec2 &sliding_dir, bool initialize)
+                        bool &sliding, Vec2 &sliding_dir, bool initialize, std::int64_t start_step)
 {
     validate_params(params);
     if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0) || steps < 0)
         throw std::invalid_argument("evolve: dt must be positive and steps non-negative");
+    if (start_step < 0 || start_step > std::numeric_limits<std::int64_t>::max() - steps)
+        throw std::invalid_argument("evolve: invalid start_step");
 
     State state = initial;
     if (initialize)
@@ -73,13 +79,38 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
     bool field_cache_valid = false;
     FieldCache cache{};
     FieldResult field_cache{};
+    RetryDiagnostics retry_diagnostics{};
     const LUTNode *lut = trajectory_lut();
     for (int i = 0; i < steps; ++i) {
         const AdvanceStepResult result = fwd1step(dt, params, state, sliding, sliding_dir,
-                                                  field_cache_valid, &cache, lut, &field_cache);
-        if (result != AdvanceStepResult::kStepOk)
-            throw std::runtime_error("evolve: step " + std::to_string(i) +
-                                     " failed with status " + std::to_string(static_cast<int>(result)));
+                                                  field_cache_valid, &cache, lut, &field_cache,
+                                                  &retry_diagnostics);
+        if (result != AdvanceStepResult::kStepOk) {
+            std::ostringstream message;
+            message << std::setprecision(17)
+                    << "evolve: global step " << start_step + i << " (chunk step " << i << ")"
+                    << " failed with status " << static_cast<int>(result)
+                    << "; last_retry_id=" << retry_diagnostics.last_reason + 1
+                    << "; depth=" << retry_diagnostics.last_depth
+                    << "; substep_dt=" << retry_diagnostics.last_dt
+                    << "; retry_counts=";
+            for (int r = 0; r < 12; ++r)
+                message << (r == 0 ? "" : ",") << r + 1 << ":" << retry_diagnostics.counts[r];
+            message << "; last_state_pos=(" << retry_diagnostics.last_state.pos.x << ","
+                    << retry_diagnostics.last_state.pos.y << ")"
+                    << "; last_state_speed=(" << retry_diagnostics.last_state.speed.x << ","
+                    << retry_diagnostics.last_state.speed.y << ")"
+                    << "; last_state_omega=(" << retry_diagnostics.last_state.omega.x << ","
+                    << retry_diagnostics.last_state.omega.y << ","
+                    << retry_diagnostics.last_state.omega.z << ")"
+                    << "; release=(g_start=" << retry_diagnostics.release_g_start
+                    << ",g_mid=" << retry_diagnostics.release_g_mid
+                    << ",g_final=" << retry_diagnostics.release_g_final
+                    << ",A_event=" << retry_diagnostics.release_A_event
+                    << ",b_event=" << retry_diagnostics.release_b_event
+                    << ",tr=" << retry_diagnostics.release_tr << ")";
+            throw std::runtime_error(message.str());
+        }
     }
     return state;
 }

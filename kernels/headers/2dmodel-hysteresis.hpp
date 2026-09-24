@@ -259,8 +259,8 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
 
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     constexpr real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
-    const real_t A_ = -D_ * params.gamma_m * params.alpha * params.alpha * Eta;
-    const real_t B_ = E_ * params.gamma_m * params.alpha * params.alpha * Eta;
+    const real_t A_ = D_ * params.gamma_m * params.alpha * params.alpha * Eta;
+    const real_t B_ = -E_ * params.gamma_m * params.alpha * params.alpha * Eta;
     Vec3 v = A_ * h + B_ * q;
     Vec3 Force = make_Vec3((nabla_h.component[0] * v.x + nabla_h.component[1] * v.y + nabla_h.component[2] * v.z),
                            (nabla_h.component[1] * v.x + nabla_h.component[3] * v.y + nabla_h.component[4] * v.z),
@@ -359,6 +359,33 @@ enum class AdvanceStepResult {
     kStepSolverSelfContradict,
     kStepLUTOutOfDomain,
     kStepRefinementRecursionLimit,
+    // Temporary diagnostic statuses: one per finer-retry return site.
+    kRetrySlidingHalfTcZero,
+    kRetrySlidingContactCannotStick,
+    kRetrySlidingRollingMidRelease,
+    kRetrySlidingRollingFinalRelease,
+    kRetrySlidingMidZero,
+    kRetrySlidingMidPredictsContact,
+    kRetrySlidingFinalZero,
+    kRetryRollingThresholdRecross,
+    kRetryRollingEventInvalid,
+    kRetryRollingReleaseMidZero,
+    kRetryRollingReleaseMidContact,
+    kRetryRollingReleaseFinalZero,
+};
+
+struct RetryDiagnostics {
+    unsigned long long counts[12] = {};
+    int last_reason = -1;
+    int last_depth = -1;
+    real_t last_dt = REAL_LITERAL(0.0);
+    State last_state{};
+    real_t release_g_start = REAL_LITERAL(0.0);
+    real_t release_g_mid = REAL_LITERAL(0.0);
+    real_t release_g_final = REAL_LITERAL(0.0);
+    real_t release_A_event = REAL_LITERAL(0.0);
+    real_t release_b_event = REAL_LITERAL(0.0);
+    real_t release_tr = REAL_LITERAL(0.0);
 };
 
 // RK2 is kept inline because additional checks are performed between stages.
@@ -420,7 +447,8 @@ DEVICE INLINE bool state_in_lut_domain(const State &state)
 DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State &in,
                                                      bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
                                                      FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
-                                                     FieldResult *H_cache = nullptr)
+                                                     FieldResult *H_cache = nullptr,
+                                                     RetryDiagnostics *diagnostics = nullptr)
 {
     if (sliding) {
         Vec3 F_start;
@@ -472,7 +500,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!real_isfinite(s_mid_norm))
                     return AdvanceStepResult::kStepNaNOrInf;
                 if (s_mid_norm == REAL_LITERAL(0.0))
-                    return AdvanceStepResult::kStepFinerRetry;
+                    return AdvanceStepResult::kRetrySlidingHalfTcZero;
                 Vec2 sliddir_mid = s_mid / s_mid_norm;
                 if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                     if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, nullptr, nullptr,
@@ -506,7 +534,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!real_isfinite(A_) || !real_isfinite(b_))
                     return AdvanceStepResult::kStepNaNOrInf;
                 if (A_ > b_)
-                    return AdvanceStepResult::kStepFinerRetry;
+                    return AdvanceStepResult::kRetrySlidingContactCannotStick;
 
                 const real_t remaining = dt - tc;
                 State final_state = state_at_tc;
@@ -546,7 +574,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     if (!real_isfinite(A_mid) || !real_isfinite(b_mid))
                         return AdvanceStepResult::kStepNaNOrInf;
                     if (A_mid > b_mid)
-                        return AdvanceStepResult::kStepFinerRetry;
+                        return AdvanceStepResult::kRetrySlidingRollingMidRelease;
 
                     final_state = state_at_tc + remaining * dot_rolling_mid;
                     project_pure_rolling(final_state, params);
@@ -570,7 +598,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     if (!real_isfinite(A_final) || !real_isfinite(b_final))
                         return AdvanceStepResult::kStepNaNOrInf;
                     if (A_final > b_final)
-                        return AdvanceStepResult::kStepFinerRetry;
+                        return AdvanceStepResult::kRetrySlidingRollingFinalRelease;
                     final_field = {h_final, grad_final};
                 }
 
@@ -595,7 +623,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!real_isfinite(s_mid_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
             if (s_mid_norm == REAL_LITERAL(0.0))
-                return AdvanceStepResult::kStepFinerRetry;
+                return AdvanceStepResult::kRetrySlidingMidZero;
             Vec2 sliddir_mid = s_mid / s_mid_norm;
             Vec3 F_mid;
             Vec3 M_mid;
@@ -622,7 +650,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!real_isfinite(Qmid) || !real_isfinite(D_cmid) || !real_isfinite(dt * REAL_LITERAL(0.5) * D_cmid))
                     return AdvanceStepResult::kStepNaNOrInf;
                 if (Qmid <= dt * REAL_LITERAL(0.5) * D_cmid) {
-                    return AdvanceStepResult::kStepFinerRetry;
+                    return AdvanceStepResult::kRetrySlidingMidPredictsContact;
                 }
             }
             State final_state = in + dt * Statedot_mid;
@@ -634,7 +662,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
             if (sf_norm == REAL_LITERAL(0.0))
-                return AdvanceStepResult::kStepFinerRetry;
+                return AdvanceStepResult::kRetrySlidingFinalZero;
             const Vec2 final_dir = sf / sf_norm;
             if (!state_in_lut_domain(final_state))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
@@ -734,7 +762,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             return AdvanceStepResult::kStepOk;
         }
         if (g_mid > REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0))
-            return AdvanceStepResult::kStepFinerRetry;
+            return AdvanceStepResult::kRetryRollingThresholdRecross;
 
         real_t tr;
         if (g_mid > REAL_LITERAL(0.0)) {
@@ -778,8 +806,17 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const real_t b_event = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_event;
         if (!real_isfinite(A_event) || !real_isfinite(b_event))
             return AdvanceStepResult::kStepNaNOrInf;
-        if (A_event < b_event || A_event == REAL_LITERAL(0.0))
-            return AdvanceStepResult::kStepFinerRetry;
+        if (A_event < b_event || A_event == REAL_LITERAL(0.0)) {
+            if (diagnostics != nullptr) {
+                diagnostics->release_g_start = g_start;
+                diagnostics->release_g_mid = g_mid;
+                diagnostics->release_g_final = g_final;
+                diagnostics->release_A_event = A_event;
+                diagnostics->release_b_event = b_event;
+                diagnostics->release_tr = tr;
+            }
+            return AdvanceStepResult::kRetryRollingEventInvalid;
+        }
         const Vec2 launch_dir = a_event / A_event;
         const real_t remaining = dt - tr;
         State final_state = state_at_tr;
@@ -817,7 +854,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (s_mid_norm == REAL_LITERAL(0.0)) {
                 // The first derivative can vanish exactly at release (A == b).
                 if (A_sliding_mid <= b_sliding_mid)
-                    return AdvanceStepResult::kStepFinerRetry;
+                    return AdvanceStepResult::kRetryRollingReleaseMidZero;
                 sliddir_mid = a_sliding_mid / A_sliding_mid;
             } else {
                 sliddir_mid = s_mid / s_mid_norm;
@@ -828,7 +865,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         !real_isfinite(remaining * REAL_LITERAL(0.5) * D_cmid))
                         return AdvanceStepResult::kStepNaNOrInf;
                     if (Qmid <= remaining * REAL_LITERAL(0.5) * D_cmid)
-                        return AdvanceStepResult::kStepFinerRetry;
+                        return AdvanceStepResult::kRetryRollingReleaseMidContact;
                 }
             }
             State dot_sliding_mid;
@@ -844,7 +881,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
             if (sf_norm == REAL_LITERAL(0.0))
-                return AdvanceStepResult::kStepFinerRetry;
+                return AdvanceStepResult::kRetryRollingReleaseFinalZero;
             final_dir = sf / sf_norm;
         }
 
@@ -867,7 +904,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State &in,
                                            bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
                                            FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
-                                           FieldResult *H_cache = nullptr)
+                                           FieldResult *H_cache = nullptr,
+                                           RetryDiagnostics *diagnostics = nullptr)
 {
     constexpr int max_depth = kStepRefinementRecursionDepth;
     static_assert(max_depth >= 0 && max_depth <= 30, "refinement depth must fit in unsigned int");
@@ -890,8 +928,21 @@ DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &
     for (;;) {
         const AdvanceStepResult result = try_advance_1_step(h, params, work, work_sliding, work_dir,
                                                              work_cache_valid, cache, LUTptr,
-                                                             H_cache != nullptr ? &work_field : nullptr);
-        if (result == AdvanceStepResult::kStepFinerRetry) {
+                                                             H_cache != nullptr ? &work_field : nullptr,
+                                                             diagnostics);
+        if (result == AdvanceStepResult::kStepFinerRetry ||
+            (result >= AdvanceStepResult::kRetrySlidingHalfTcZero &&
+             result <= AdvanceStepResult::kRetryRollingReleaseFinalZero)) {
+            if (diagnostics != nullptr) {
+                const int reason = static_cast<int>(result) -
+                                   static_cast<int>(AdvanceStepResult::kRetrySlidingHalfTcZero);
+                if (reason >= 0 && reason < 12)
+                    ++diagnostics->counts[reason];
+                diagnostics->last_reason = reason;
+                diagnostics->last_depth = depth;
+                diagnostics->last_dt = h;
+                diagnostics->last_state = work;
+            }
             const real_t half = h * REAL_LITERAL(0.5);
             if (depth == max_depth || half == REAL_LITERAL(0.0) || half == h)
                 return AdvanceStepResult::kStepRefinementRecursionLimit;
