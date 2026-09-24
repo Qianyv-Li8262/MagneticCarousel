@@ -452,6 +452,36 @@ DEVICE INLINE bool state_in_lut_domain(const State &state)
     return true;
 }
 
+// A zero-slip endpoint can either stick or launch on the next step.
+// Shared by the ordinary sliding and post-release paths; never normalize zero slip.
+DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const SolverParams &params,
+                                                        bool &sliding, Vec2 &direction,
+                                                        FieldCache *cache = nullptr,
+                                                        const LUTNode *LUTptr = nullptr)
+{
+    const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
+    const FieldForceResult field = eval_mag_field_and_force(
+        params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
+    constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) /
+                         (REAL_LITERAL(2.0) + Mu_r);
+    const Vec3 torque = -params.gamma_m * E * cross(q_world, field.h);
+    const real_t N = params.gamma_g - field.Force.z;
+    if (!real_isfinite(N))
+        return AdvanceStepResult::kStepNaNOrInf;
+    if (N < REAL_LITERAL(0.0))
+        return AdvanceStepResult::kStepBallFly;
+    const Vec2 a = make_Vec2(field.Force.x, field.Force.y) -
+                   params.delta * length(state.speed) * state.speed +
+                   params.alpha * make_Vec2(-torque.y, torque.x);
+    const real_t A = length(a);
+    const real_t b = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N;
+    if (!real_isfinite(A) || !real_isfinite(b))
+        return AdvanceStepResult::kStepNaNOrInf;
+    sliding = A > b;
+    direction = sliding ? a / A : make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+    return AdvanceStepResult::kStepOk;
+}
+
 // MARK: Try 1 step
 DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State &in,
                                                      bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
@@ -555,8 +585,6 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
                     State dot_rolling_start;
                     State dot_rolling_mid;
-                    Vec3 F_rolling_mid;
-                    Vec3 M_rolling_mid;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                         if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, ksliding, no_sliding_dir, nullptr,
                                              nullptr, &final_field))
@@ -630,9 +658,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t s_mid_norm = length(s_mid);
             if (!real_isfinite(s_mid_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
-            if (s_mid_norm == REAL_LITERAL(0.0))
-                return AdvanceStepResult::kRetrySlidingMidZero;
-            Vec2 sliddir_mid = s_mid / s_mid_norm;
+            // Preserve the incoming direction at a zero-slip RK stage; the capture check below still applies.
+            const Vec2 sliddir_mid = s_mid_norm > REAL_LITERAL(0.0) ? s_mid / s_mid_norm : sliding_dir;
             Vec3 F_mid;
             Vec3 M_mid;
             State Statedot_mid;
@@ -669,13 +696,20 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t sf_norm = length(sf);
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
-            if (sf_norm == REAL_LITERAL(0.0)) {
-                sliding = false;
-            } // sliding-dir is undefined if sliding=false, i think we dont need to rewrite that vector and use goto
-            const Vec2 final_dir = sf / sf_norm;
             if (!state_in_lut_domain(final_state))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
+            bool final_sliding = true;
+            Vec2 final_dir;
+            if (sf_norm == REAL_LITERAL(0.0)) {
+                const AdvanceStepResult mode_result = resolve_zero_slip_mode(
+                    final_state, params, final_sliding, final_dir, cache, LUTptr);
+                if (mode_result != AdvanceStepResult::kStepOk)
+                    return mode_result;
+            } else {
+                final_dir = sf / sf_norm;
+            }
             in = final_state;
+            sliding = final_sliding;
             sliding_dir = final_dir;
             isHCacheValid = false;
             return AdvanceStepResult::kStepOk;
@@ -760,7 +794,13 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             return AdvanceStepResult::kStepNaNOrInf;
         const real_t g_final = A_final - b_final;
 
-        if (g_mid <= REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0)) {
+        if constexpr (kDebugChkEight) {
+            if (g_mid > REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0))
+                printf("[DEBUG] Found Event 8: g_mid = %.17g, g_final = %.17g\n",
+                       static_cast<double>(g_mid), static_cast<double>(g_final));
+        }
+        // Ignore a transient midpoint excursion when the endpoint can still roll.
+        if (g_final <= REAL_LITERAL(0.0)) {
             if (!state_in_lut_domain(trial_final))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
             if (H_cache != nullptr)
@@ -769,12 +809,6 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             sliding_dir = no_sliding_dir;
             isHCacheValid = H_cache != nullptr;
             return AdvanceStepResult::kStepOk;
-        }
-        if constexpr (kDebugChkEight) {
-            if (g_mid > REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0)) {
-                printf("[DEBUG] Found Event 8: g_mid = %f, g_final = %f", static_cast<float>(g_mid),
-                       static_cast<float>(g_final));
-            }
         }
 
         real_t tr;
@@ -824,6 +858,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const real_t remaining = dt - tr;
         State final_state = state_at_tr;
         Vec2 final_dir = launch_dir;
+        bool final_sliding = true;
         if (remaining > REAL_LITERAL(0.0)) {
             State dot_sliding_start;
             if (!eval_rhs<false>(state_at_tr, dot_sliding_start, params, ksliding, launch_dir, cache, LUTptr,
@@ -854,14 +889,13 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t b_sliding_mid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_sliding_mid;
             if (!real_isfinite(A_sliding_mid) || !real_isfinite(b_sliding_mid))
                 return AdvanceStepResult::kStepNaNOrInf;
-            Vec2 sliddir_mid;
             if (s_mid_norm == REAL_LITERAL(0.0)) {
-                // The first derivative can vanish exactly at release (A == b).
-                if (A_sliding_mid <= b_sliding_mid)
-                    return AdvanceStepResult::kRetryRollingReleaseMidZero;
-                sliddir_mid = a_sliding_mid / A_sliding_mid;
+                if constexpr (kDebugChkTen) {
+                    if (A_sliding_mid <= b_sliding_mid)
+                        printf("[DEBUG] Found Event 10: A_mid = %.17g, b_mid = %.17g\n",
+                               static_cast<double>(A_sliding_mid), static_cast<double>(b_sliding_mid));
+                }
             } else {
-                sliddir_mid = s_mid / s_mid_norm;
                 if (A_sliding_mid < b_sliding_mid) {
                     const real_t D_cmid = (b_sliding_mid - A_sliding_mid) * (b_sliding_mid + A_sliding_mid);
                     const real_t Qmid = b_sliding_mid * s_mid_norm + a_sliding_mid * s_mid;
@@ -873,7 +907,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
             }
             State dot_sliding_mid;
-            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, sliddir_mid, cache, LUTptr,
+            // Like the 1D solver, keep the selected direction throughout this release segment.
+            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, launch_dir, cache, LUTptr,
                                  &mid_field))
                 return AdvanceStepResult::kStepBallFly;
             final_state = state_at_tr + remaining * dot_sliding_mid;
@@ -884,9 +919,16 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t sf_norm = length(sf);
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
-            if (sf_norm == REAL_LITERAL(0.0))
-                return AdvanceStepResult::kRetryRollingReleaseFinalZero;
-            final_dir = sf / sf_norm;
+            if (sf_norm == REAL_LITERAL(0.0)) {
+                if (!state_in_lut_domain(final_state))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
+                const AdvanceStepResult mode_result = resolve_zero_slip_mode(
+                    final_state, params, final_sliding, final_dir, cache, LUTptr);
+                if (mode_result != AdvanceStepResult::kStepOk)
+                    return mode_result;
+            } else {
+                final_dir = sf / sf_norm;
+            }
         }
 
         if (!state_in_lut_domain(final_state))
@@ -894,7 +936,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         if (remaining == REAL_LITERAL(0.0) && H_cache != nullptr)
             *H_cache = event_field;
         in = final_state;
-        sliding = true;
+        sliding = final_sliding;
         sliding_dir = final_dir;
         isHCacheValid = remaining == REAL_LITERAL(0.0) && H_cache != nullptr;
         return AdvanceStepResult::kStepOk;

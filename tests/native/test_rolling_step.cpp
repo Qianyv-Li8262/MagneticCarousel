@@ -68,4 +68,30 @@ int main()
     assert(fwd1step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
            AdvanceStepResult::kStepSolverSelfContradict);
     assert(state.pos.x == before.pos.x && field.h.x == field_before.h.x);
+
+    // Zero slip alone does not decide sticking: static friction must support the load.
+    State contact{};
+    contact.pos.x = REAL_LITERAL(4.0);
+    contact.attitude.real = REAL_LITERAL(1.0);
+    bool contact_sliding = true;
+    Vec2 contact_direction = {REAL_LITERAL(1.0), REAL_LITERAL(0.0)};
+    assert(resolve_zero_slip_mode(contact, params, contact_sliding, contact_direction) ==
+           AdvanceStepResult::kStepOk);
+    assert(!contact_sliding && contact_direction.x == REAL_LITERAL(0.0) &&
+           contact_direction.y == REAL_LITERAL(0.0));
+
+    // Rolling at unit speed under unit quadratic drag requires |f| = eta/(1+eta),
+    // exceeding mu*N = 0.02; it must launch in the negative x direction.
+    contact.speed.x = REAL_LITERAL(1.0);
+    contact.omega.y = REAL_LITERAL(1.0);
+    assert(resolve_zero_slip_mode(contact, params, contact_sliding, contact_direction) ==
+           AdvanceStepResult::kStepOk);
+    assert(contact_sliding && contact_direction.x == REAL_LITERAL(-1.0) &&
+           contact_direction.y == REAL_LITERAL(0.0));
+
+    // The returned zero-slip launch state is valid input for the next complete step.
+    bool contact_cache_valid = false;
+    assert(fwd1step(dt, params, contact, contact_sliding, contact_direction, contact_cache_valid) ==
+           AdvanceStepResult::kStepOk);
+    assert(contact_sliding && real_isfinite(contact_direction.x) && real_isfinite(contact_direction.y));
 }
