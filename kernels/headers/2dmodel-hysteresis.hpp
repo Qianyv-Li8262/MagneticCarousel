@@ -3,6 +3,10 @@
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
 
+#ifndef __CUDACC__
+#include <cstdio>
+#endif
+
 struct TracelessSymTensor {
     real_t component[5];
 };
@@ -255,7 +259,9 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
                                                         const LUTNode *LUTptr = nullptr,
                                                         const FieldResult *H_cache = nullptr)
 {
-    auto [h, nabla_h] = (H_cache == nullptr) ? eval_mag_field(pos, down_disk_angle, cache, LUTptr) : *H_cache;
+    const FieldResult field = (H_cache == nullptr) ? eval_mag_field(pos, down_disk_angle, cache, LUTptr) : *H_cache;
+    const Vec3 &h = field.h;
+    const TracelessSymTensor &nabla_h = field.hGrad3d;
 
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     constexpr real_t D_ = (Mu_r - REAL_LITERAL(1.0)) / (Mu_r + REAL_LITERAL(2.0));
@@ -291,7 +297,10 @@ DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &p
     // the caller should cope with selection by giving nullptr when magField cache is not valid
     const Vec3 q_world = vec_cast<real_t>(rotate(in.attitude, in.q));
 
-    auto [h, F, grad] = eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
+    const FieldForceResult field_force =
+        eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
+    const Vec3 &h = field_force.h;
+    const Vec3 &F = field_force.Force;
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
     if constexpr (ExportFM) {
@@ -320,7 +329,7 @@ DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &p
         out.speed = make_Vec2(params.alpha * out.omega.y, -params.alpha * out.omega.x);
     }
 
-    const auto h_ext_dot = eval_body_field_derivative(in, h, grad);
+    const auto h_ext_dot = eval_body_field_derivative(in, h, field_force.hGrad3d);
 
     Vec3 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (Mu_r + REAL_LITERAL(2.0)));
     // assume ReLU use the 0 branch
@@ -500,7 +509,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!real_isfinite(s_mid_norm))
                     return AdvanceStepResult::kStepNaNOrInf;
                 if (s_mid_norm == REAL_LITERAL(0.0))
-                    return AdvanceStepResult::kRetrySlidingHalfTcZero;
+                    return AdvanceStepResult::kStepNumericalUnstable;
                 Vec2 sliddir_mid = s_mid / s_mid_norm;
                 if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                     if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, nullptr, nullptr,
@@ -516,8 +525,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!normalize_attitude(state_at_tc))
                     return AdvanceStepResult::kStepNumericalUnstable;
                 const Vec3 q_world = vec_cast<real_t>(rotate(state_at_tc.attitude, state_at_tc.q));
-                auto [h, F, grad] = eval_mag_field_and_force(params, state_at_tc.pos, q_world,
-                                                             state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
+                const FieldForceResult field_force = eval_mag_field_and_force(
+                    params, state_at_tc.pos, q_world, state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
+                const Vec3 &h = field_force.h;
+                const Vec3 &F = field_force.Force;
                 constexpr real_t E_ =
                     (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
                 const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
@@ -538,7 +549,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 
                 const real_t remaining = dt - tc;
                 State final_state = state_at_tc;
-                FieldResult final_field = {h, grad};
+                FieldResult final_field = {h, field_force.hGrad3d};
                 if (remaining > REAL_LITERAL(0.0)) {
                     const bool ksliding = false;
                     const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
@@ -557,32 +568,24 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     }
                     const State rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, nullptr,
-                                            nullptr, nullptr, &F_rolling_mid, &M_rolling_mid))
+                        if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, nullptr,
+                                             nullptr, nullptr))
                             return AdvanceStepResult::kStepBallFly;
                     } else {
-                        if (!eval_rhs<true>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, cache,
-                                            LUTptr, nullptr, &F_rolling_mid, &M_rolling_mid))
+                        if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, cache,
+                                             LUTptr, nullptr))
                             return AdvanceStepResult::kStepBallFly;
                     }
-                    const real_t N_mid = params.gamma_g - F_rolling_mid.z;
-                    const Vec2 G_mid = make_Vec2(F_rolling_mid.x, F_rolling_mid.y) -
-                                       params.delta * length(rolling_mid.speed) * rolling_mid.speed;
-                    const Vec2 a_mid = G_mid + params.alpha * make_Vec2(-M_rolling_mid.y, M_rolling_mid.x);
-                    const real_t A_mid = length(a_mid);
-                    const real_t b_mid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_mid;
-                    if (!real_isfinite(A_mid) || !real_isfinite(b_mid))
-                        return AdvanceStepResult::kStepNaNOrInf;
-                    if (A_mid > b_mid)
-                        return AdvanceStepResult::kRetrySlidingRollingMidRelease;
 
                     final_state = state_at_tc + remaining * dot_rolling_mid;
                     project_pure_rolling(final_state, params);
                     if (!normalize_attitude(final_state))
                         return AdvanceStepResult::kStepNumericalUnstable;
                     const Vec3 q_final = vec_cast<real_t>(rotate(final_state.attitude, final_state.q));
-                    const auto [h_final, F_final, grad_final] = eval_mag_field_and_force(
+                    const FieldForceResult field_force_final = eval_mag_field_and_force(
                         params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
+                    const Vec3 &h_final = field_force_final.h;
+                    const Vec3 &F_final = field_force_final.Force;
                     const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
                     const real_t N_final = params.gamma_g - F_final.z;
                     if (!real_isfinite(N_final) || !real_isfinite(F_final.x) || !real_isfinite(F_final.y) ||
@@ -597,18 +600,23 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     const real_t b_final = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_final;
                     if (!real_isfinite(A_final) || !real_isfinite(b_final))
                         return AdvanceStepResult::kStepNaNOrInf;
-                    if (A_final > b_final)
-                        return AdvanceStepResult::kRetrySlidingRollingFinalRelease;
-                    final_field = {h_final, grad_final};
+                    if (A_final > b_final) {
+                        final_field = {h_final, field_force_final.hGrad3d};
+                        sliding = true;
+                        sliding_dir = a_final / A_final;
+                        goto FINALE;
+                    }
+                    final_field = {h_final, field_force_final.hGrad3d};
                 }
 
+                sliding = false;
+                sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+            FINALE:
                 if (!state_in_lut_domain(final_state))
                     return AdvanceStepResult::kStepLUTOutOfDomain;
                 if (H_cache != nullptr)
                     *H_cache = final_field;
                 in = final_state;
-                sliding = false;
-                sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
                 isHCacheValid = H_cache != nullptr;
                 return AdvanceStepResult::kStepOk;
             } else {
@@ -661,8 +669,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t sf_norm = length(sf);
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
-            if (sf_norm == REAL_LITERAL(0.0))
-                return AdvanceStepResult::kRetrySlidingFinalZero;
+            if (sf_norm == REAL_LITERAL(0.0)) {
+                sliding = false;
+            } // sliding-dir is undefined if sliding=false, i think we dont need to rewrite that vector and use goto
             const Vec2 final_dir = sf / sf_norm;
             if (!state_in_lut_domain(final_state))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
@@ -715,11 +724,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         State Statedot_mid;
         Vec3 F_mid;
         Vec3 M_mid;
-        if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, krolling, no_sliding_dir, cache, LUTptr,
-                            nullptr, &F_mid, &M_mid))
+        if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, krolling, no_sliding_dir, cache, LUTptr, nullptr, &F_mid,
+                            &M_mid))
             return AdvanceStepResult::kStepBallFly;
-        const Vec2 G_mid = make_Vec2(F_mid.x, F_mid.y) -
-                           params.delta * length(rk2midpoint.speed) * rk2midpoint.speed;
+        const Vec2 G_mid = make_Vec2(F_mid.x, F_mid.y) - params.delta * length(rk2midpoint.speed) * rk2midpoint.speed;
         const Vec2 a_mid = G_mid + params.alpha * make_Vec2(-M_mid.y, M_mid.x);
         const real_t A_mid = length(a_mid);
         const real_t b_mid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * (params.gamma_g - F_mid.z);
@@ -732,18 +740,19 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         if (!normalize_attitude(trial_final))
             return AdvanceStepResult::kStepNumericalUnstable;
         const Vec3 q_final = vec_cast<real_t>(rotate(trial_final.attitude, trial_final.q));
-        const auto [h_final, F_final, grad_final] = eval_mag_field_and_force(
+        const FieldForceResult field_force_final = eval_mag_field_and_force(
             params, trial_final.pos, q_final, trial_final.down_disk_angle, cache, LUTptr, nullptr);
-        constexpr real_t E_ =
-            (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+        const Vec3 &h_final = field_force_final.h;
+        const Vec3 &F_final = field_force_final.Force;
+        constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
         const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
         const real_t N_final = params.gamma_g - F_final.z;
         if (!real_isfinite(N_final))
             return AdvanceStepResult::kStepNaNOrInf;
         if (N_final < REAL_LITERAL(0.0))
             return AdvanceStepResult::kStepBallFly;
-        const Vec2 G_final = make_Vec2(F_final.x, F_final.y) -
-                             params.delta * length(trial_final.speed) * trial_final.speed;
+        const Vec2 G_final =
+            make_Vec2(F_final.x, F_final.y) - params.delta * length(trial_final.speed) * trial_final.speed;
         const Vec2 a_final = G_final + params.alpha * make_Vec2(-M_final.y, M_final.x);
         const real_t A_final = length(a_final);
         const real_t b_final = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_final;
@@ -755,21 +764,24 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!state_in_lut_domain(trial_final))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
             if (H_cache != nullptr)
-                *H_cache = {h_final, grad_final};
+                *H_cache = {h_final, field_force_final.hGrad3d};
             in = trial_final;
             sliding_dir = no_sliding_dir;
             isHCacheValid = H_cache != nullptr;
             return AdvanceStepResult::kStepOk;
         }
-        if (g_mid > REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0))
-            return AdvanceStepResult::kRetryRollingThresholdRecross;
+        if constexpr (kDebugChkEight) {
+            if (g_mid > REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0)) {
+                printf("[DEBUG] Found Event 8: g_mid = %f, g_final = %f", static_cast<float>(g_mid),
+                       static_cast<float>(g_final));
+            }
+        }
 
         real_t tr;
         if (g_mid > REAL_LITERAL(0.0)) {
             tr = dt * REAL_LITERAL(0.5) * (-g_start) / (g_mid - g_start);
         } else {
-            tr = dt * REAL_LITERAL(0.5) +
-                 dt * REAL_LITERAL(0.5) * (-g_mid) / (g_final - g_mid);
+            tr = dt * REAL_LITERAL(0.5) + dt * REAL_LITERAL(0.5) * (-g_mid) / (g_final - g_mid);
         }
         if (!real_isfinite(tr))
             return AdvanceStepResult::kStepNaNOrInf;
@@ -780,8 +792,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         if (tr > REAL_LITERAL(0.0)) {
             const State state_at_halftr = start + tr * REAL_LITERAL(0.5) * Statedot_start;
             State dot_estimate;
-            if (!eval_rhs<false>(state_at_halftr, dot_estimate, params, krolling, no_sliding_dir,
-                                 cache, LUTptr, nullptr))
+            if (!eval_rhs<false>(state_at_halftr, dot_estimate, params, krolling, no_sliding_dir, cache, LUTptr,
+                                 nullptr))
                 return AdvanceStepResult::kStepBallFly;
             state_at_tr = start + tr * dot_estimate;
             project_pure_rolling(state_at_tr, params);
@@ -790,52 +802,45 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         }
 
         const Vec3 q_event = vec_cast<real_t>(rotate(state_at_tr.attitude, state_at_tr.q));
-        const auto [h_event, F_event, grad_event] = eval_mag_field_and_force(
+        const FieldForceResult field_force_event = eval_mag_field_and_force(
             params, state_at_tr.pos, q_event, state_at_tr.down_disk_angle, cache, LUTptr, nullptr);
-        const FieldResult event_field = {h_event, grad_event};
+        const Vec3 &h_event = field_force_event.h;
+        const Vec3 &F_event = field_force_event.Force;
+        const FieldResult event_field = {h_event, field_force_event.hGrad3d};
         const Vec3 M_event = -params.gamma_m * E_ * cross(q_event, h_event);
         const real_t N_event = params.gamma_g - F_event.z;
         if (!real_isfinite(N_event))
             return AdvanceStepResult::kStepNaNOrInf;
         if (N_event < REAL_LITERAL(0.0))
             return AdvanceStepResult::kStepBallFly;
-        const Vec2 G_event = make_Vec2(F_event.x, F_event.y) -
-                             params.delta * length(state_at_tr.speed) * state_at_tr.speed;
+        const Vec2 G_event =
+            make_Vec2(F_event.x, F_event.y) - params.delta * length(state_at_tr.speed) * state_at_tr.speed;
         const Vec2 a_event = G_event + params.alpha * make_Vec2(-M_event.y, M_event.x);
         const real_t A_event = length(a_event);
         const real_t b_event = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_event;
         if (!real_isfinite(A_event) || !real_isfinite(b_event))
             return AdvanceStepResult::kStepNaNOrInf;
-        if (A_event < b_event || A_event == REAL_LITERAL(0.0)) {
-            if (diagnostics != nullptr) {
-                diagnostics->release_g_start = g_start;
-                diagnostics->release_g_mid = g_mid;
-                diagnostics->release_g_final = g_final;
-                diagnostics->release_A_event = A_event;
-                diagnostics->release_b_event = b_event;
-                diagnostics->release_tr = tr;
-            }
-            return AdvanceStepResult::kRetryRollingEventInvalid;
-        }
-        const Vec2 launch_dir = a_event / A_event;
+        const Vec2 launch_dir = a_final / A_final;
         const real_t remaining = dt - tr;
         State final_state = state_at_tr;
         Vec2 final_dir = launch_dir;
         if (remaining > REAL_LITERAL(0.0)) {
             State dot_sliding_start;
-            if (!eval_rhs<false>(state_at_tr, dot_sliding_start, params, ksliding, launch_dir,
-                                 cache, LUTptr, &event_field))
+            if (!eval_rhs<false>(state_at_tr, dot_sliding_start, params, ksliding, launch_dir, cache, LUTptr,
+                                 &event_field))
                 return AdvanceStepResult::kStepBallFly;
             const State sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
             // Release starts at zero slip: avoid cancellation between midpoint speed and spin.
-            const Vec2 s_mid = (remaining * REAL_LITERAL(0.5) * (A_event - b_event)) * launch_dir;
+            const Vec2 s_mid = (remaining * REAL_LITERAL(0.5) * (a_event - b_event * launch_dir));
             const real_t s_mid_norm = length(s_mid);
             if (!real_isfinite(s_mid_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
             const Vec3 q_mid = vec_cast<real_t>(rotate(sliding_mid.attitude, sliding_mid.q));
-            const auto [h_sliding_mid, F_sliding_mid, grad_sliding_mid] = eval_mag_field_and_force(
+            const FieldForceResult field_force_sliding_mid = eval_mag_field_and_force(
                 params, sliding_mid.pos, q_mid, sliding_mid.down_disk_angle, cache, LUTptr, nullptr);
-            const FieldResult mid_field = {h_sliding_mid, grad_sliding_mid};
+            const Vec3 &h_sliding_mid = field_force_sliding_mid.h;
+            const Vec3 &F_sliding_mid = field_force_sliding_mid.Force;
+            const FieldResult mid_field = {h_sliding_mid, field_force_sliding_mid.hGrad3d};
             const Vec3 M_sliding_mid = -params.gamma_m * E_ * cross(q_mid, h_sliding_mid);
             const real_t N_sliding_mid = params.gamma_g - F_sliding_mid.z;
             if (!real_isfinite(N_sliding_mid))
@@ -844,8 +849,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 return AdvanceStepResult::kStepBallFly;
             const Vec2 G_sliding_mid = make_Vec2(F_sliding_mid.x, F_sliding_mid.y) -
                                        params.delta * length(sliding_mid.speed) * sliding_mid.speed;
-            const Vec2 a_sliding_mid = G_sliding_mid +
-                                       params.alpha * make_Vec2(-M_sliding_mid.y, M_sliding_mid.x);
+            const Vec2 a_sliding_mid = G_sliding_mid + params.alpha * make_Vec2(-M_sliding_mid.y, M_sliding_mid.x);
             const real_t A_sliding_mid = length(a_sliding_mid);
             const real_t b_sliding_mid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_sliding_mid;
             if (!real_isfinite(A_sliding_mid) || !real_isfinite(b_sliding_mid))
@@ -869,14 +873,14 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
             }
             State dot_sliding_mid;
-            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, sliddir_mid,
-                                 cache, LUTptr, &mid_field))
+            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, sliddir_mid, cache, LUTptr,
+                                 &mid_field))
                 return AdvanceStepResult::kStepBallFly;
             final_state = state_at_tr + remaining * dot_sliding_mid;
             if (!normalize_attitude(final_state))
                 return AdvanceStepResult::kStepNumericalUnstable;
             const Vec2 sf = vec_cast<real_t>(final_state.speed +
-                                            params.alpha * make_Vec2(-final_state.omega.y, final_state.omega.x));
+                                             params.alpha * make_Vec2(-final_state.omega.y, final_state.omega.x));
             const real_t sf_norm = length(sf);
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
@@ -901,10 +905,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 // MARK: fwd1step
 // Advance one complete interval. A rejected interval is split into its left
 // and right halves; the node number encodes the pending right halves.
-DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State &in,
-                                           bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
-                                           FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
-                                           FieldResult *H_cache = nullptr,
+DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State &in, bool &sliding,
+                                           Vec2 &sliding_dir, bool &isHCacheValid, FieldCache *cache = nullptr,
+                                           const LUTNode *LUTptr = nullptr, FieldResult *H_cache = nullptr,
                                            RetryDiagnostics *diagnostics = nullptr)
 {
     constexpr int max_depth = kStepRefinementRecursionDepth;
@@ -926,16 +929,15 @@ DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &
     int depth = 0;
     real_t h = dt;
     for (;;) {
-        const AdvanceStepResult result = try_advance_1_step(h, params, work, work_sliding, work_dir,
-                                                             work_cache_valid, cache, LUTptr,
-                                                             H_cache != nullptr ? &work_field : nullptr,
-                                                             diagnostics);
+        const AdvanceStepResult result =
+            try_advance_1_step(h, params, work, work_sliding, work_dir, work_cache_valid, cache, LUTptr,
+                               H_cache != nullptr ? &work_field : nullptr, diagnostics);
         if (result == AdvanceStepResult::kStepFinerRetry ||
             (result >= AdvanceStepResult::kRetrySlidingHalfTcZero &&
              result <= AdvanceStepResult::kRetryRollingReleaseFinalZero)) {
             if (diagnostics != nullptr) {
-                const int reason = static_cast<int>(result) -
-                                   static_cast<int>(AdvanceStepResult::kRetrySlidingHalfTcZero);
+                const int reason =
+                    static_cast<int>(result) - static_cast<int>(AdvanceStepResult::kRetrySlidingHalfTcZero);
                 if (reason >= 0 && reason < 12)
                     ++diagnostics->counts[reason];
                 diagnostics->last_reason = reason;

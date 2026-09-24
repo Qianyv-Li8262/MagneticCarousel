@@ -25,3 +25,5 @@ enum class AttitudeNormalizeMode {
 };
 
 CONFIG_CONST AttitudeNormalizeMode kAttitudeNormalizeMode = AttitudeNormalizeMode::kNewtonOnce;
+
+CONFIG_CONST bool kDebugChkEight = false;
