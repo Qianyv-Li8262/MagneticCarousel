@@ -652,6 +652,16 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             }
         } else {
         NO_PREDICTED_TRANSIT:
+            // Resolve the friction direction when slip is small. The capture
+            // prediction above takes priority over this sliding-step guard.
+            const Vec2 s_start =
+                vec_cast<real_t>(in.speed + params.alpha * make_Vec2(-in.omega.y, in.omega.x));
+            const real_t s_start_norm = length(s_start);
+            if (!real_isfinite(s_start_norm))
+                return AdvanceStepResult::kStepNaNOrInf;
+            if (s_start_norm > REAL_LITERAL(0.0) &&
+                dt * (A + b) > REAL_LITERAL(0.5) * s_start_norm)
+                return AdvanceStepResult::kStepFinerRetry;
             State rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
             Vec2 s_mid = vec_cast<real_t>(rk2midpoint.speed +
                                           params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x));
@@ -854,7 +864,17 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const real_t b_event = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_event;
         if (!real_isfinite(A_event) || !real_isfinite(b_event))
             return AdvanceStepResult::kStepNaNOrInf;
-        const Vec2 launch_dir = a_final / A_final;
+        if (A_event == REAL_LITERAL(0.0))
+            return AdvanceStepResult::kRetryRollingEventInvalid;
+        // The event-to-end segment starts at zero slip. Average the two
+        // available driving-force directions for its first RK2 stage.
+        const Vec2 dir_sum = a_event / A_event + a_final / A_final;
+        const real_t dir_sum_norm = length(dir_sum);
+        if (!real_isfinite(dir_sum_norm))
+            return AdvanceStepResult::kStepNaNOrInf;
+        if (dir_sum_norm == REAL_LITERAL(0.0))
+            return AdvanceStepResult::kRetryRollingEventInvalid;
+        const Vec2 launch_dir = dir_sum / dir_sum_norm;
         const real_t remaining = dt - tr;
         State final_state = state_at_tr;
         Vec2 final_dir = launch_dir;
@@ -889,6 +909,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t b_sliding_mid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N_sliding_mid;
             if (!real_isfinite(A_sliding_mid) || !real_isfinite(b_sliding_mid))
                 return AdvanceStepResult::kStepNaNOrInf;
+            if (A_sliding_mid == REAL_LITERAL(0.0))
+                return AdvanceStepResult::kRetryRollingReleaseMidZero;
             if (s_mid_norm == REAL_LITERAL(0.0)) {
                 if constexpr (kDebugChkTen) {
                     if (A_sliding_mid <= b_sliding_mid)
@@ -907,8 +929,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
             }
             State dot_sliding_mid;
-            // Like the 1D solver, keep the selected direction throughout this release segment.
-            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, launch_dir, cache, LUTptr,
+            const Vec2 mid_sliding_dir = a_sliding_mid / A_sliding_mid;
+            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, mid_sliding_dir, cache, LUTptr,
                                  &mid_field))
                 return AdvanceStepResult::kStepBallFly;
             final_state = state_at_tr + remaining * dot_sliding_mid;
