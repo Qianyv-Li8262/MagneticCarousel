@@ -1,5 +1,6 @@
 """Time X steps of the current CPU build. Run with the build's Python environment."""
 
+import argparse
 import importlib.machinery
 import importlib.util
 from time import perf_counter
@@ -31,8 +32,14 @@ INITIAL_STATE = [
 
 
 def main():
-    if not isinstance(X, int) or not 0 < X <= 2**31 - 1:
+    parser = argparse.ArgumentParser(description="Time a complete C++ 2D trajectory")
+    parser.add_argument("--steps", type=int, default=X)
+    parser.add_argument("--magnets", type=int, default=8)
+    args = parser.parse_args()
+    if not 0 < args.steps <= 2**31 - 1:
         raise ValueError("X must be a positive int32 step count")
+    if args.magnets < 2 or args.magnets % 2:
+        raise ValueError("magnet count must be positive and even")
 
     # Search only the selected build; never silently load another installed module.
     directory = extension_dir("fp64")
@@ -42,6 +49,7 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     state = np.array(INITIAL_STATE, dtype=module.real_dtype)
+    state[1] = args.magnets / 2
     params = module.SolverParams(
         0.33333333 * SR,
         1.7212357e-4 / SR,
@@ -53,14 +61,14 @@ def main():
     # Zero steps initializes any lazy LUT without advancing the initial state.
     module.evolve_trajectory(state, DT, 0, params)
     start = perf_counter()
-    final_state, _, _ = module.evolve_trajectory(state, DT, X, params)
+    final_state, _, _ = module.evolve_trajectory(state, DT, args.steps, params)
     elapsed = perf_counter() - start
 
     if not np.isfinite(final_state).all():
         raise RuntimeError("Solver returned a non-finite final state")
     print(f"Build: {module.__file__}")
     print(f"Field: {module.field_mode}; dtype: {module.real_dtype}")
-    print(f"{X} steps: {elapsed:.6f} s ({elapsed / X * 1e6:.3f} us/step)")
+    print(f"{args.steps} steps: {elapsed:.6f} s ({elapsed / args.steps * 1e6:.3f} us/step)")
 
 
 if __name__ == "__main__":

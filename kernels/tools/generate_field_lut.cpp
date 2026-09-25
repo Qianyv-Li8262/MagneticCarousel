@@ -48,7 +48,17 @@ mp_real hypergeometric_2f1(const mp_real &a, const mp_real &b, const mp_real &c,
     return boost::math::hypergeometric_pFq({a, b}, {c}, x);
 }
 
-radial_function evaluate_radial_function(const int harmonic, const mp_real &t)
+mp_real mode_pochhammer_over_factorial(const int harmonic)
+{
+    const mp_real three_halves("1.5");
+    mp_real result = 1;
+    for (int j = 0; j < harmonic; ++j)
+        result *= (three_halves + j) / (j + 1);
+    return result;
+}
+
+radial_function evaluate_radial_function(const int harmonic, const mp_real &t,
+                                         const mp_real &pochhammer_over_factorial)
 {
     const mp_real m = harmonic;
     const mp_real three_halves("1.5");
@@ -57,10 +67,6 @@ radial_function evaluate_radial_function(const int harmonic, const mp_real &t)
     const mp_real b = three_halves;
     const mp_real c = m + 1;
     const mp_real x = t * t;
-
-    mp_real pochhammer_over_factorial = 1;
-    for (int j = 0; j < harmonic; ++j)
-        pochhammer_over_factorial *= (three_halves + j) / (j + 1);
 
     const mp_real F0 = hypergeometric_2f1(a, b, c, x);
     const mp_real F1 = hypergeometric_2f1(a + 1, b + 1, c + 1, x);
@@ -81,7 +87,7 @@ radial_function evaluate_radial_function(const int harmonic, const mp_real &t)
 }
 
 radial_sample evaluate_mode(const int harmonic, const mp_real &rho, const mp_real &z, const mp_real &R,
-                            const int magnets)
+                            const int magnets, const mp_real &pochhammer_over_factorial)
 {
     const mp_real chi = (z * z + rho * rho + R * R) / (2 * rho * R);
     const mp_real discriminant = sqrt(chi * chi - 1);
@@ -96,7 +102,7 @@ radial_sample evaluate_mode(const int harmonic, const mp_real &rho, const mp_rea
                                     (discriminant * discriminant * discriminant) -
                                 t * d2chi_drho_dz / discriminant;
 
-    const radial_function radial = evaluate_radial_function(harmonic, t);
+    const radial_function radial = evaluate_radial_function(harmonic, t, pochhammer_over_factorial);
     const mp_real rho_to_three_halves = rho * sqrt(rho);
     const mp_real R_to_three_halves = R * sqrt(R);
     const mp_real scale = 2 * magnets / (R_to_three_halves * rho_to_three_halves);
@@ -249,10 +255,12 @@ int main(int argc, char **argv)
         nodes.reserve(static_cast<std::size_t>(kFieldFourierModeCount) * kSplineNodes);
         for (int mode = 0; mode < kFieldFourierModeCount; ++mode) {
             const int harmonic = (2 * mode + 1) * magnet_number / 2;
+            const mp_real pochhammer_over_factorial = mode_pochhammer_over_factorial(harmonic);
             std::vector<radial_sample> samples(kSplineNodes);
             std::vector<mp_real> A(kSplineNodes), Z(kSplineNodes);
             for (int node = 0; node < kSplineNodes; ++node) {
-                samples[node] = evaluate_mode(harmonic, rho[node], z, R, magnet_number);
+                samples[node] = evaluate_mode(harmonic, rho[node], z, R, magnet_number,
+                                              pochhammer_over_factorial);
                 A[node] = samples[node].A;
                 Z[node] = samples[node].Z;
             }
