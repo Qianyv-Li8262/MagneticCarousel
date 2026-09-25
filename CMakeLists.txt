@@ -21,11 +21,15 @@ set(IYPT16_FIELD_MODE "exact" CACHE STRING "Magnetic field evaluation: exact or 
 set_property(CACHE IYPT16_FIELD_MODE PROPERTY STRINGS exact lut)
 set(IYPT16_LUT_CACHE_MODE "0" CACHE STRING "LUT cache: 0=off, 1=nodes, 2=spline coefficients")
 set_property(CACHE IYPT16_LUT_CACHE_MODE PROPERTY STRINGS 0 1 2)
+set(IYPT16_FIELD_LUT_THREADS "24" CACHE STRING "CPU threads used to generate the field LUT")
 if(NOT IYPT16_FIELD_MODE STREQUAL "exact" AND NOT IYPT16_FIELD_MODE STREQUAL "lut")
     message(FATAL_ERROR "IYPT16_FIELD_MODE must be exact or lut")
 endif()
 if(NOT IYPT16_LUT_CACHE_MODE MATCHES "^[012]$")
     message(FATAL_ERROR "IYPT16_LUT_CACHE_MODE must be 0, 1, or 2")
+endif()
+if(NOT IYPT16_FIELD_LUT_THREADS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "IYPT16_FIELD_LUT_THREADS must be a positive integer")
 endif()
 
 add_executable(generate_field_lut
@@ -34,6 +38,15 @@ add_executable(generate_field_lut
 target_compile_features(generate_field_lut PRIVATE cxx_std_17)
 target_include_directories(generate_field_lut PRIVATE "${KERNEL_DIR}/headers")
 target_link_libraries(generate_field_lut PRIVATE Boost::multiprecision)
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # Clang's Windows driver finds its bundled libomp, although FindOpenMP
+    # currently fails to identify the import library in this toolchain.
+    target_compile_options(generate_field_lut PRIVATE -fopenmp)
+    target_link_options(generate_field_lut PRIVATE -fopenmp)
+else()
+    find_package(OpenMP REQUIRED COMPONENTS CXX)
+    target_link_libraries(generate_field_lut PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 if(IYPT16_FIELD_MODE STREQUAL "lut" OR BUILD_TESTING)
     set(FIELD_LUT_DIR "${CMAKE_BINARY_DIR}/field-lut")
@@ -42,7 +55,10 @@ if(IYPT16_FIELD_MODE STREQUAL "lut" OR BUILD_TESTING)
     add_custom_command(
         OUTPUT "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${FIELD_LUT_DIR}"
-        COMMAND "$<TARGET_FILE:generate_field_lut>" "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
+        COMMAND "${CMAKE_COMMAND}" -E env
+                "OMP_NUM_THREADS=${IYPT16_FIELD_LUT_THREADS}"
+                "OMP_DYNAMIC=FALSE" "OMP_PLACES=cores" "OMP_PROC_BIND=spread"
+                "$<TARGET_FILE:generate_field_lut>" "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
         DEPENDS generate_field_lut
                 "${KERNEL_DIR}/tools/generate_field_lut.cpp"
                 "${KERNEL_DIR}/headers/hysteresis_config_field.hpp"

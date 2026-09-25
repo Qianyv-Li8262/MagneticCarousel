@@ -3,7 +3,7 @@
 From src2d, build with ``cmake --preset local-cpu`` and
 ``cmake --build --preset local-cpu-release``, then run with the daily Python.
 The defaults use the 1D reference coefficients converted to disk-angular time
-for eight alternating magnets; finite curvature still changes the field.
+for the compiled magnet count; finite curvature still changes the field.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import numpy as np
 from project_paths import extension_dir
 
 
-DT = 1.0e-3
+DT_AT_EIGHT_MAGNETS = 1.0e-3
 STEPS_PER_FRAME = 1000
 FPS = 30
 
@@ -26,9 +26,8 @@ FPS = 30
 SR = 0.428571
 SOMEGA = 0.1
 
-# Eight alternating magnets give four field periods per disk revolution.
-# Converting from 1D phase time to disk-angular time multiplies the three
-# acceleration coefficients by 4**2. These references assume magnet_number=8.
+# These are the 8-magnet references. The field period rate is N/2 per
+# revolution, so the three acceleration coefficients scale as (N/8)**2.
 ALPHA = 0.33333333
 DELTA = 1.7212357e-4
 GAMMA_G = 2.64965696
@@ -36,22 +35,32 @@ GAMMA = 7830.34224
 GAMMA_M = 176182.704
 
 
-def scaled_model_parameters() -> tuple[float, float, float, float, float]:
-    """Scale ball radius and disk angular speed as in the 1D animation."""
-    if not np.isfinite(SR) or SR <= 0.0:
+def scaled_model_parameters(magnet_count: int, *, sr=SR, somega=SOMEGA) -> tuple[float, float, float, float, float]:
+    """Keep the same local 1D reference when the compiled magnet count changes."""
+    if magnet_count < 2 or magnet_count % 2:
+        raise ValueError("magnet count must be positive and even")
+    if not np.isfinite(sr) or sr <= 0.0:
         raise ValueError("SR must be finite and positive")
-    if not np.isfinite(SOMEGA) or SOMEGA <= 0.0:
+    if not np.isfinite(somega) or somega <= 0.0:
         raise ValueError("SOMEGA must be finite and positive")
 
-    inverse_sr = 1.0 / SR
-    inverse_somega_squared = 1.0 / (SOMEGA * SOMEGA)
+    inverse_sr = 1.0 / sr
+    inverse_somega_squared = 1.0 / (somega * somega)
+    magnet_time_scale_squared = (magnet_count / 8.0) ** 2
     return (
-        ALPHA * SR,
+        ALPHA * sr,
         DELTA * inverse_sr,
-        GAMMA_G * inverse_somega_squared,
-        GAMMA * inverse_somega_squared,
-        GAMMA_M * inverse_sr * inverse_sr * inverse_somega_squared,
+        GAMMA_G * inverse_somega_squared * magnet_time_scale_squared,
+        GAMMA * inverse_somega_squared * magnet_time_scale_squared,
+        GAMMA_M * inverse_sr * inverse_sr * inverse_somega_squared * magnet_time_scale_squared,
     )
+
+
+def timestep_for_magnets(magnet_count: int) -> float:
+    """Use the same phase-time step as dt=0.001 with eight magnets."""
+    if magnet_count < 2 or magnet_count % 2:
+        raise ValueError("magnet count must be positive and even")
+    return DT_AT_EIGHT_MAGNETS * 8.0 / magnet_count
 
 
 def load_hysteresis():
@@ -93,22 +102,23 @@ def make_initial_state(module):
     return state
 
 
-def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
+def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
 
+    module = load_hysteresis()
+    magnet_count = module.magnet_number
+    if dt is None:
+        dt = timestep_for_magnets(magnet_count)
     if not np.isfinite(dt) or dt <= 0 or steps_per_frame <= 0:
         raise ValueError("dt and steps_per_frame must be positive")
-
-    module = load_hysteresis()
-    params = module.SolverParams(*scaled_model_parameters())
+    params = module.SolverParams(*scaled_model_parameters(magnet_count))
     state = make_initial_state(module)
     sliding = None
     sliding_dir = None
     time = 0.0
     completed_steps = 0
-    magnet_count = module.magnet_number
     magnet_radius = magnet_count / 2
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count
 
@@ -221,7 +231,8 @@ def animate(*, dt=DT, steps_per_frame=STEPS_PER_FRAME, frames=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dt", type=float, default=DT)
+    parser.add_argument("--dt", type=float, default=None,
+                        help="2D time step (default: 0.001 * 8 / compiled magnet count)")
     parser.add_argument("--steps-per-frame", type=int, default=STEPS_PER_FRAME)
     parser.add_argument("--frames", type=int, help="stop after this many display frames")
     args = parser.parse_args()

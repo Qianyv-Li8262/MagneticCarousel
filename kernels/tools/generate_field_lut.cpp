@@ -5,10 +5,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -18,6 +20,12 @@
 namespace
 {
 using mp_real = boost::multiprecision::cpp_dec_float_100;
+using clock_type = std::chrono::steady_clock;
+
+double elapsed_seconds(const clock_type::time_point start, const clock_type::time_point end)
+{
+    return std::chrono::duration<double>(end - start).count();
+}
 
 struct radial_sample
 {
@@ -226,6 +234,7 @@ void write_lut(const std::string &path, const std::vector<SplineNode<mp_real>> &
 int main(int argc, char **argv)
 {
     try {
+        const auto run_start = clock_type::now();
         if (argc != 3) {
             std::cerr << "usage: generate_field_lut <fp32-output.bin> <fp64-output.bin>\n";
             return 2;
@@ -253,28 +262,72 @@ int main(int argc, char **argv)
 
         std::vector<SplineNode<mp_real>> nodes;
         nodes.reserve(static_cast<std::size_t>(kFieldFourierModeCount) * kSplineNodes);
+        const auto setup_end = clock_type::now();
+        double prepare_total = 0, sample_total = 0, solve_a_total = 0, solve_z_total = 0, pack_total = 0;
+        std::cout << std::fixed << std::setprecision(4);
         for (int mode = 0; mode < kFieldFourierModeCount; ++mode) {
+            const auto mode_start = clock_type::now();
             const int harmonic = (2 * mode + 1) * magnet_number / 2;
             const mp_real pochhammer_over_factorial = mode_pochhammer_over_factorial(harmonic);
             std::vector<radial_sample> samples(kSplineNodes);
             std::vector<mp_real> A(kSplineNodes), Z(kSplineNodes);
+            std::exception_ptr first_error;
+            const auto sample_start = clock_type::now();
+#pragma omp parallel for schedule(dynamic, 16)
             for (int node = 0; node < kSplineNodes; ++node) {
-                samples[node] = evaluate_mode(harmonic, rho[node], z, R, magnet_number,
-                                              pochhammer_over_factorial);
-                A[node] = samples[node].A;
-                Z[node] = samples[node].Z;
+                try {
+                    samples[node] = evaluate_mode(harmonic, rho[node], z, R, magnet_number,
+                                                  pochhammer_over_factorial);
+                    A[node] = samples[node].A;
+                    Z[node] = samples[node].Z;
+                } catch (...) {
+#pragma omp critical(field_lut_error)
+                    {
+                        if (!first_error)
+                            first_error = std::current_exception();
+                    }
+                }
             }
+            if (first_error)
+                std::rethrow_exception(first_error);
+            const auto sample_end = clock_type::now();
 
             const std::vector<mp_real> M_A = solve_clamped_second_derivatives(
                 rho, A, samples.front().dA_drho, samples.back().dA_drho);
+            const auto solve_a_end = clock_type::now();
             const std::vector<mp_real> M_Z = solve_clamped_second_derivatives(
                 rho, Z, samples.front().dZ_drho, samples.back().dZ_drho);
+            const auto solve_z_end = clock_type::now();
             for (int node = 0; node < kSplineNodes; ++node)
                 nodes.push_back({A[node], M_A[node], Z[node], M_Z[node]});
+            const auto pack_end = clock_type::now();
+            const double prepare = elapsed_seconds(mode_start, sample_start);
+            const double sample = elapsed_seconds(sample_start, sample_end);
+            const double solve_a = elapsed_seconds(sample_end, solve_a_end);
+            const double solve_z = elapsed_seconds(solve_a_end, solve_z_end);
+            const double pack = elapsed_seconds(solve_z_end, pack_end);
+            prepare_total += prepare;
+            sample_total += sample;
+            solve_a_total += solve_a;
+            solve_z_total += solve_z;
+            pack_total += pack;
+            std::cout << "mode " << mode << " (harmonic " << harmonic << "): prepare=" << prepare
+                      << " s, sample=" << sample << " s, solve_A=" << solve_a
+                      << " s, solve_Z=" << solve_z << " s, pack=" << pack << " s\n" << std::flush;
         }
 
+        const auto write_start = clock_type::now();
         write_lut<float>(argv[1], nodes, kUseBigEndian);
+        const auto write_fp32_end = clock_type::now();
         write_lut<double>(argv[2], nodes, kUseBigEndian);
+        const auto write_fp64_end = clock_type::now();
+        std::cout << "stage totals: setup=" << elapsed_seconds(run_start, setup_end)
+                  << " s, prepare=" << prepare_total << " s, sample=" << sample_total
+                  << " s, solve_A=" << solve_a_total << " s, solve_Z=" << solve_z_total
+                  << " s, pack=" << pack_total
+                  << " s, write_fp32=" << elapsed_seconds(write_start, write_fp32_end)
+                  << " s, write_fp64=" << elapsed_seconds(write_fp32_end, write_fp64_end)
+                  << " s, wall=" << elapsed_seconds(run_start, write_fp64_end) << " s\n";
         std::cout << "generated " << nodes.size() << " AoS nodes per file (A, M_A, Z, M_Z)\n";
         return 0;
     } catch (const std::exception &error) {

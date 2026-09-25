@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <vector>
 
@@ -112,13 +113,24 @@ int main()
     constexpr real_t tolerance = REAL_LITERAL(1e-4);
     bool passed = true;
     const char *names[] = {"Hx", "Hy", "Hz", "Gxx", "Gxy", "Gxz", "Gyy", "Gyz"};
+    real_t maximum_relative_error = REAL_LITERAL(0.0);
+    std::size_t worst_component = 0;
+    std::cout << std::scientific << std::setprecision(9);
     for (std::size_t i = 0; i < peak_error.size(); ++i) {
         const real_t relative_error = peak_error[i] / peak_reference[i];
         std::cout << names[i] << ": max error / peak exact = " << relative_error
                   << " (rho=" << worst_rho[i] << ", phi=" << worst_phi[i] << ")\n";
+        if (relative_error > maximum_relative_error) {
+            maximum_relative_error = relative_error;
+            worst_component = i;
+        }
         if (!std::isfinite(relative_error) || relative_error > tolerance)
             passed = false;
     }
+    std::cout << "Maximum normalized field error: " << maximum_relative_error
+              << " (" << names[worst_component] << ", absolute error=" << peak_error[worst_component]
+              << ", rho=" << worst_rho[worst_component] << ", phi=" << worst_phi[worst_component]
+              << "; tolerance=" << tolerance << ")\n";
     if (!passed)
         std::cerr << "Current Fourier mode count and spline node count exceed the field error tolerance "
                   << tolerance << '\n';
