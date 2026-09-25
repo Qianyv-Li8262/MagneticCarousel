@@ -21,6 +21,10 @@ from project_paths import extension_dir
 DT_AT_EIGHT_MAGNETS = 1.0e-3
 STEPS_PER_FRAME = 1000
 FPS = 30
+FAST_BATCH_SIZE = 5
+FAST_GRAPH_UPDATE_EVERY = 5
+FAST_RESCALE_EVERY = 20
+FAST_MAX_PLOT_POINTS = 2000
 
 # Radius and angular-speed multipliers at the same selected point as the 1D animation.
 SR = 0.428571
@@ -102,7 +106,25 @@ def make_initial_state(module):
     return state
 
 
-def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None):
+def minmax_downsample(times, values, max_points):
+    """Keep each time bucket's extrema when limiting plotted history."""
+    count = len(times)
+    if count <= max_points:
+        return times, values
+    values_array = np.asarray(values)
+    edges = np.linspace(0, count, max(1, max_points // 2) + 1, dtype=np.int64)
+    indices = []
+    for start, stop in zip(edges[:-1], edges[1:]):
+        if start == stop:
+            continue
+        bucket = values_array[start:stop]
+        indices.extend(sorted({int(start + np.argmin(bucket)), int(start + np.argmax(bucket))}))
+    if indices[-1] != count - 1:
+        indices.append(count - 1)
+    return np.asarray(times)[indices], values_array[indices]
+
+
+def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -120,9 +142,9 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None):
     time = 0.0
     completed_steps = 0
     magnet_radius = magnet_count / 2
-    base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count
+    base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count if show_magnets else None
 
-    fig = plt.figure(figsize=(14, 9), layout="constrained")
+    fig = plt.figure(figsize=(14, 9), **({} if fast else {"layout": "constrained"}))
     grid = fig.add_gridspec(4, 2, width_ratios=(1.3, 1.0))
     scene = fig.add_subplot(grid[:, 0])
     radial_axis = fig.add_subplot(grid[0, 1])
@@ -136,7 +158,8 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None):
     scene.grid(alpha=0.12)
     disk = Circle((0, 0), magnet_radius + 0.35, facecolor="0.94", edgecolor="0.48", linewidth=1.5, zorder=0)
     scene.add_patch(disk)
-    magnets = scene.scatter([], [], s=140, c="0.48", edgecolors="0.28", linewidths=0.8, zorder=2)
+    magnets = (scene.scatter([], [], s=140, c="0.48", edgecolors="0.28", linewidths=0.8, zorder=2)
+               if show_magnets else None)
     (path_line,) = scene.plot([], [], color="tab:blue", linewidth=1.6, alpha=0.85, zorder=3)
     (ball,) = scene.plot([], [], "o", color="tab:orange", markeredgecolor="white", markersize=12, zorder=4)
     status = scene.text(0.02, 0.98, "", transform=scene.transAxes, va="top", family="monospace",
@@ -170,22 +193,30 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None):
         axis.grid(alpha=0.25)
     fig.suptitle(f"Single 2D trajectory · sr={SR:g}, sω={SOMEGA:g}")
 
-    def render():
-        angle = base_angles + float(state[0])
-        magnets.set_offsets(np.column_stack((magnet_radius * np.cos(angle), magnet_radius * np.sin(angle))))
+    def render(*, update_graphs=True, rescale=True):
+        if magnets is not None:
+            angle = base_angles + float(state[0])
+            magnets.set_offsets(np.column_stack((magnet_radius * np.cos(angle), magnet_radius * np.sin(angle))))
         ball.set_data([xs[-1]], [ys[-1]])
-        path_line.set_data(xs, ys)
-        radial_line.set_data(times, radial)
-        polar_line.set_data(times, polar)
-        displacement_line.set_data(times, equivalent_x)
-        speed_line.set_data(times, speeds)
-        tangential_line.set_data(times, tangential_speeds)
-        radial_axis.set_xlim(0, max(1.0, time * 1.05))
-        for axis, values in ((radial_axis, radial), (angular_axis, polar),
-                             (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds)):
-            lower, upper = min(values), max(values)
-            padding = max(0.05, 0.1 * (upper - lower))
-            axis.set_ylim(lower - padding, upper + padding)
+        if fast and len(xs) > FAST_MAX_PLOT_POINTS:
+            indices = np.linspace(0, len(xs) - 1, FAST_MAX_PLOT_POINTS, dtype=np.int64)
+            path_line.set_data(np.asarray(xs)[indices], np.asarray(ys)[indices])
+        else:
+            path_line.set_data(xs, ys)
+        if update_graphs:
+            for line, values in ((radial_line, radial), (polar_line, polar),
+                                 (displacement_line, equivalent_x), (speed_line, speeds),
+                                 (tangential_line, tangential_speeds)):
+                display_times, display_values = (minmax_downsample(times, values, FAST_MAX_PLOT_POINTS)
+                                                 if fast else (times, values))
+                line.set_data(display_times, display_values)
+        if rescale:
+            radial_axis.set_xlim(0, max(1.0, time * 1.05))
+            for axis, values in ((radial_axis, radial), (angular_axis, polar),
+                                 (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds)):
+                lower, upper = min(values), max(values)
+                padding = max(0.05, 0.1 * (upper - lower))
+                axis.set_ylim(lower - padding, upper + padding)
         status.set_text(
             f"t = {time:.3f}  (1D t = {magnet_radius * time:.3f})\n"
             f"r = {radial[-1]:.6f}  mean(r) = {mean_radial[-1]:.6f}\n"
@@ -195,33 +226,38 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None):
             f"v_tan / {magnet_radius:g} (1D units) = {tangential_speeds[-1] / magnet_radius:.6f}\n"
             f"{'sliding' if sliding else 'rolling'}"
         )
-        return (magnets, ball, path_line, radial_line, polar_line, displacement_line,
-                speed_line, tangential_line, status)
+        artists = (ball, path_line, radial_line, polar_line, displacement_line,
+                   speed_line, tangential_line, status)
+        return (magnets, *artists) if magnets is not None else artists
 
     def update(_frame):
         nonlocal state, sliding, sliding_dir, time, completed_steps, radius_sum
-        state, sliding, sliding_dir = module.evolve_trajectory(
-            state, dt, steps_per_frame, params, sliding, sliding_dir, completed_steps
-        )
-        completed_steps += steps_per_frame
-        time += dt * steps_per_frame
-        xs.append(float(state[1]))
-        ys.append(float(state[2]))
-        times.append(time)
-        radial.append(float(np.hypot(state[1], state[2])))
-        angle = float(np.arctan2(state[2], state[1]))
-        polar.append(polar[-1] + (angle - polar[-1] + np.pi) % (2 * np.pi) - np.pi)
-        radius_sum += radial[-1]
-        mean_radial.append(radius_sum / len(radial))
-        equivalent_x.append(mean_radial[-1] * (polar[-1] - initial_angle))
-        speeds.append(float(np.hypot(state[3], state[4])))
-        tangential_speeds.append(
-            float((state[1] * state[4] - state[2] * state[3]) / radial[-1])
-            if radial[-1] > 0.0 else float("nan")
-        )
-        return render()
+        for _ in range(FAST_BATCH_SIZE if fast else 1):
+            state, sliding, sliding_dir = module.evolve_trajectory(
+                state, dt, steps_per_frame, params, sliding, sliding_dir, completed_steps
+            )
+            completed_steps += steps_per_frame
+            time += dt * steps_per_frame
+            xs.append(float(state[1]))
+            ys.append(float(state[2]))
+            times.append(time)
+            radial.append(float(np.hypot(state[1], state[2])))
+            angle = float(np.arctan2(state[2], state[1]))
+            polar.append(polar[-1] + (angle - polar[-1] + np.pi) % (2 * np.pi) - np.pi)
+            radius_sum += radial[-1]
+            mean_radial.append(radius_sum / len(radial))
+            equivalent_x.append(mean_radial[-1] * (polar[-1] - initial_angle))
+            speeds.append(float(np.hypot(state[3], state[4])))
+            tangential_speeds.append(
+                float((state[1] * state[4] - state[2] * state[3]) / radial[-1])
+                if radial[-1] > 0.0 else float("nan")
+            )
+        return render(update_graphs=not fast or _frame % FAST_GRAPH_UPDATE_EVERY == 0,
+                      rescale=not fast or _frame % FAST_RESCALE_EVERY == 0)
 
     render()
+    if fast:
+        fig.tight_layout()
     animation = FuncAnimation(
         fig, update, init_func=render, frames=frames, interval=1000 / FPS,
         blit=False, cache_frame_data=False,
@@ -235,6 +271,8 @@ def main():
                         help="2D time step (default: 0.001 * 8 / compiled magnet count)")
     parser.add_argument("--steps-per-frame", type=int, default=STEPS_PER_FRAME)
     parser.add_argument("--frames", type=int, help="stop after this many display frames")
+    parser.add_argument("--hide-magnets", action="store_true", help="omit magnet markers from the animation")
+    parser.add_argument("--fast", action="store_true", help="batch solver steps and reduce plotting overhead")
     args = parser.parse_args()
     if args.frames is not None and args.frames <= 0:
         parser.error("--frames must be positive")
@@ -243,6 +281,8 @@ def main():
     figure, animation = animate(
         dt=args.dt, steps_per_frame=args.steps_per_frame,
         frames=range(args.frames) if args.frames is not None else None,
+        show_magnets=not args.hide_magnets,
+        fast=args.fast,
     )
     plt.show()
 
