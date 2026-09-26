@@ -730,6 +730,22 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             real_t bmid = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * (params.gamma_g - F_mid.z);
             if (!real_isfinite(Amid) || !real_isfinite(bmid))
                 return AdvanceStepResult::kStepNaNOrInf;
+            // Friction changes slip length at first order, but its contribution
+            // to the instantaneous change of slip direction is radial. Use the
+            // midpoint drive to predict that direction without normalizing the
+            // potentially tiny Euler midpoint slip.
+            const Vec2 direction_predictor = s_start + dt * REAL_LITERAL(0.5) * amid;
+            const real_t predictor_norm = length(direction_predictor);
+            if (!real_isfinite(predictor_norm))
+                return AdvanceStepResult::kStepNaNOrInf;
+            if (predictor_norm == REAL_LITERAL(0.0))
+                return AdvanceStepResult::kRetrySlidingMidZero;
+            const Vec2 predicted_dir_mid = direction_predictor / predictor_norm;
+            const Vec2 friction_delta = -Mu * (params.gamma_g - F_mid.z) * (predicted_dir_mid - sliddir_mid);
+            Statedot_mid.speed = Statedot_mid.speed + friction_delta;
+            Statedot_mid.omega = Statedot_mid.omega +
+                                  make_Vec3(friction_delta.y, -friction_delta.x, REAL_LITERAL(0.0)) /
+                                      (Eta * params.alpha);
             if (Amid < bmid) {
                 real_t D_cmid = (bmid - Amid) * (bmid + Amid);
                 real_t Qmid = bmid * length(s_mid) + amid * s_mid;

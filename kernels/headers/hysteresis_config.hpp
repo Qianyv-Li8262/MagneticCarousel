@@ -28,7 +28,6 @@ CONFIG_CONST AttitudeNormalizeMode kAttitudeNormalizeMode = AttitudeNormalizeMod
 
 CONFIG_CONST bool kDebugChkEight = false;
 CONFIG_CONST bool kDebugChkTen = false;
-// Required near zero slip: the friction-direction time scale |slip| / b
-// collapses just after rolling release. Disabling this guard produces
-// first-order trajectory errors and can change escape/capture outcomes.
-CONFIG_CONST bool kFinerStepCheck = true;
+// Diagnostic switch for the near-zero-slip step-size guard. The sliding
+// midpoint direction is predicted separately when this guard is disabled.
+CONFIG_CONST bool kFinerStepCheck = false;
