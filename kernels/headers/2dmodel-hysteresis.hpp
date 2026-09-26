@@ -151,11 +151,10 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
         const real_t node_coordinate = (rho - rho_min) * inv_drho;
         // Keep both spline nodes inside the table, including at rho_max.
         // Invalid trial states are rejected by the integrator before field evaluation.
-        const int left_node_index = !real_isfinite(node_coordinate) || node_coordinate <= REAL_LITERAL(0.0)
-                                        ? 0
-                                        : node_coordinate >= static_cast<real_t>(kSplineNodes - 1)
-                                              ? kSplineNodes - 2
-                                              : static_cast<int>(real_floor(node_coordinate));
+        const int left_node_index = !real_isfinite(node_coordinate) || node_coordinate <= REAL_LITERAL(0.0) ? 0
+                                    : node_coordinate >= static_cast<real_t>(kSplineNodes - 1)
+                                        ? kSplineNodes - 2
+                                        : static_cast<int>(real_floor(node_coordinate));
         const real_t u = node_coordinate - static_cast<real_t>(left_node_index);
 
         real_t h_rho = REAL_LITERAL(0.0);
@@ -460,28 +459,25 @@ DEVICE INLINE bool state_in_lut_domain(const State &state)
 
 // A zero-slip endpoint can either stick or launch on the next step.
 // Shared by the ordinary sliding and post-release paths; never normalize zero slip.
-DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const SolverParams &params,
-                                                        bool &sliding, Vec2 &direction,
-                                                        FieldCache *cache = nullptr,
-                                                        const LUTNode *LUTptr = nullptr)
+DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const SolverParams &params, bool &sliding,
+                                                       Vec2 &direction, FieldCache *cache = nullptr,
+                                                       const LUTNode *LUTptr = nullptr)
 {
     if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
         if (!state_in_lut_domain(state))
             return AdvanceStepResult::kStepLUTOutOfDomain;
     }
     const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
-    const FieldForceResult field = eval_mag_field_and_force(
-        params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
-    constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) /
-                         (REAL_LITERAL(2.0) + Mu_r);
+    const FieldForceResult field =
+        eval_mag_field_and_force(params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
+    constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const Vec3 torque = -params.gamma_m * E * cross(q_world, field.h);
     const real_t N = params.gamma_g - field.Force.z;
     if (!real_isfinite(N))
         return AdvanceStepResult::kStepNaNOrInf;
     if (N < REAL_LITERAL(0.0))
         return AdvanceStepResult::kStepBallFly;
-    const Vec2 a = make_Vec2(field.Force.x, field.Force.y) -
-                   params.delta * length(state.speed) * state.speed +
+    const Vec2 a = make_Vec2(field.Force.x, field.Force.y) - params.delta * length(state.speed) * state.speed +
                    params.alpha * make_Vec2(-torque.y, torque.x);
     const real_t A = length(a);
     const real_t b = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N;
@@ -686,14 +682,23 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         NO_PREDICTED_TRANSIT:
             // Resolve the friction direction when slip is small. The capture
             // prediction above takes priority over this sliding-step guard.
-            const Vec2 s_start =
-                vec_cast<real_t>(in.speed + params.alpha * make_Vec2(-in.omega.y, in.omega.x));
+            const Vec2 s_start = vec_cast<real_t>(in.speed + params.alpha * make_Vec2(-in.omega.y, in.omega.x));
             const real_t s_start_norm = length(s_start);
             if (!real_isfinite(s_start_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
-            if (s_start_norm > REAL_LITERAL(0.0) &&
-                dt * (A + b) > REAL_LITERAL(0.5) * s_start_norm)
-                return AdvanceStepResult::kStepFinerRetry;
+            if constexpr (kFinerStepCheck) {
+                if (s_start_norm > REAL_LITERAL(0.0)) {
+                    // Use the actual initial slip derivative, including cancellation
+                    // between the drive and friction. Its first bound keeps the RK2
+                    // midpoint slip at least 0.75 * |s_start|. The second limits
+                    // transverse friction stiffness, b / |s_start|.
+                    const Vec2 s_dot_start =
+                        vec_cast<real_t>(Statedot_start.speed +
+                                         params.alpha * make_Vec2(-Statedot_start.omega.y, Statedot_start.omega.x));
+                    if (dt * length(s_dot_start) > REAL_LITERAL(0.5) * s_start_norm || dt * b > s_start_norm)
+                        return AdvanceStepResult::kStepFinerRetry;
+                }
+            }
             State rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
             Vec2 s_mid = vec_cast<real_t>(rk2midpoint.speed +
                                           params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x));
@@ -749,8 +754,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             bool final_sliding = true;
             Vec2 final_dir;
             if (sf_norm == REAL_LITERAL(0.0)) {
-                const AdvanceStepResult mode_result = resolve_zero_slip_mode(
-                    final_state, params, final_sliding, final_dir, cache, LUTptr);
+                const AdvanceStepResult mode_result =
+                    resolve_zero_slip_mode(final_state, params, final_sliding, final_dir, cache, LUTptr);
                 if (mode_result != AdvanceStepResult::kStepOk)
                     return mode_result;
             } else {
@@ -852,8 +857,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 
         if constexpr (kDebugChkEight) {
             if (g_mid > REAL_LITERAL(0.0) && g_final <= REAL_LITERAL(0.0))
-                printf("[DEBUG] Found Event 8: g_mid = %.17g, g_final = %.17g\n",
-                       static_cast<double>(g_mid), static_cast<double>(g_final));
+                printf("[DEBUG] Found Event 8: g_mid = %.17g, g_final = %.17g\n", static_cast<double>(g_mid),
+                       static_cast<double>(g_final));
         }
         // Ignore a transient midpoint excursion when the endpoint can still roll.
         if (g_final <= REAL_LITERAL(0.0)) {
@@ -1002,8 +1007,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     if (!state_in_lut_domain(final_state))
                         return AdvanceStepResult::kStepLUTOutOfDomain;
                 }
-                const AdvanceStepResult mode_result = resolve_zero_slip_mode(
-                    final_state, params, final_sliding, final_dir, cache, LUTptr);
+                const AdvanceStepResult mode_result =
+                    resolve_zero_slip_mode(final_state, params, final_sliding, final_dir, cache, LUTptr);
                 if (mode_result != AdvanceStepResult::kStepOk)
                     return mode_result;
             } else {

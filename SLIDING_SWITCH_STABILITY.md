@@ -78,16 +78,18 @@ is `0.01016` (baseline `0.02886`). The corrected trajectory output is under
 
 ## Near-zero-slip sliding-step guard
 
-After the release-stage correction, an ordinary sliding step now requests
-bisection when `dt * (A + b) > 0.5 * |s|` for nonzero starting slip. The existing
-start-of-step capture prediction runs before this check. At the accepted step,
-the Euler RK2 midpoint satisfies `|s_mid| >= 0.75 * |s|`; in particular, its
-friction direction cannot be determined by an almost cancelled slip vector.
-Zero starting slip bypasses this relative-size test and remains subject to the
-existing mode handling.
+For nonzero starting slip, an ordinary sliding step now requests bisection if
+`dt * |s_dot_start| > 0.5 * |s|` or `dt * b > |s|`. Here
+`s_dot_start = a - b * s / |s|` is evaluated from the already computed state
+derivative. The first bound keeps the Euler RK2 midpoint at
+`|s_mid| >= 0.75 * |s|`; the second bounds the local transverse friction
+stiffness `b / |s|`. The start-of-step capture prediction runs before these
+checks. Zero starting slip still uses the existing mode handling. These are
+local step-size criteria, not a proof of global second-order accuracy.
 
-The same FP64 exact-eight-magnet scan completed all seven step sizes with the
-expected transitions in all four cases. Its output is under
+With the previous `dt * (A + b) > 0.5 * |s|` guard, the same FP64
+exact-eight-magnet scan completed all seven step sizes with the expected
+transitions in all four cases. Its output is under
 `runs/sliding-switches-exact8-adaptive-guard/`. For the release-and-recapture
 case, the maximum position difference against the finest computed trajectory
 changed as follows:

@@ -23,14 +23,14 @@ from project_paths import BUILD_DIR, RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
 # ============================= Run settings =============================
-SR_LOWER = 0.05
+SR_LOWER = 0.1
 SR_UPPER = 3.0
-SOMEGA_LOWER = 0.05
+SOMEGA_LOWER = 0.1
 SOMEGA_UPPER = 4.0
 K = 128
 DT = 1.0e-3
-TOTAL_TIME = 1.0
-OBSERVATION_WINDOW = 0.5
+TOTAL_TIME = 2500.0
+OBSERVATION_WINDOW = 500.0
 SAMPLE_TIME = 0.05
 LOCK_THRESHOLD = 0.05
 RADIUS_TOLERANCE = 0.1

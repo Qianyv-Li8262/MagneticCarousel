@@ -28,3 +28,4 @@ CONFIG_CONST AttitudeNormalizeMode kAttitudeNormalizeMode = AttitudeNormalizeMod
 
 CONFIG_CONST bool kDebugChkEight = false;
 CONFIG_CONST bool kDebugChkTen = false;
+CONFIG_CONST bool kFinerStepCheck = false;
