@@ -19,7 +19,7 @@ from project_paths import extension_dir
 
 
 DT_AT_EIGHT_MAGNETS = 1.0e-3
-STEPS_PER_FRAME = 1000
+STEPS_PER_FRAME = 100
 FPS = 30
 FAST_BATCH_SIZE = 5
 FAST_GRAPH_UPDATE_EVERY = 5
@@ -27,8 +27,8 @@ FAST_RESCALE_EVERY = 20
 FAST_MAX_PLOT_POINTS = 2000
 
 # Radius and angular-speed multipliers at the same selected point as the 1D animation.
-SR = 0.428571
-SOMEGA = 0.5
+SR = 1
+SOMEGA = 0.748
 
 # These are the 8-magnet references. The field period rate is N/2 per
 # revolution, so the three acceleration coefficients scale as (N/8)**2.
@@ -67,14 +67,16 @@ def timestep_for_magnets(magnet_count: int) -> float:
     return DT_AT_EIGHT_MAGNETS * 8.0 / magnet_count
 
 
-def load_hysteresis():
-    directory = extension_dir("fp64")
+def load_hysteresis(*, kahan=False):
+    kind = "fp32-kahan" if kahan else "fp64"
+    directory = extension_dir(kind)
     modules = sorted(directory.glob("hysteresis*.pyd"))
     compatible = [path for path in modules if path.name.startswith(f"hysteresis.cp{sys.version_info.major}{sys.version_info.minor}-")]
     if len(compatible) != 1:
         raise RuntimeError(
             f"Expected one extension for Python {sys.version_info.major}.{sys.version_info.minor} "
-            f"in {directory}. Build with CMake using the daily environment."
+            f"in {directory}. Build the {'Kahan FP32' if kahan else 'FP64'} CMake target "
+            f"hysteresis_{'fp32_kahan' if kahan else 'fp64'} using the daily environment."
         )
     path = compatible[0]
     kernels = Path(__file__).resolve().parent / "kernels"
@@ -96,6 +98,9 @@ def load_hysteresis():
     spec.loader.exec_module(module)
     if module.state_size != 15:
         raise RuntimeError("The extension does not expose the two-dimensional state")
+    expected_dtype = np.dtype(np.float32 if kahan else np.float64)
+    if np.dtype(module.real_dtype) != expected_dtype:
+        raise RuntimeError(f"Expected {kind} extension to use {expected_dtype}, got {module.real_dtype}")
     return module
 
 
@@ -124,23 +129,35 @@ def minmax_downsample(times, values, max_points):
     return np.asarray(times)[indices], values_array[indices]
 
 
-def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False):
+def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False, pre=0.0,
+            kahan=False):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
 
-    module = load_hysteresis()
+    module = load_hysteresis(kahan=kahan)
     magnet_count = module.magnet_number
     if dt is None:
         dt = timestep_for_magnets(magnet_count)
     if not np.isfinite(dt) or dt <= 0 or steps_per_frame <= 0:
         raise ValueError("dt and steps_per_frame must be positive")
+    if not np.isfinite(pre) or pre < 0:
+        raise ValueError("pre must be finite and non-negative")
     params = module.SolverParams(*scaled_model_parameters(magnet_count))
     state = make_initial_state(module)
     sliding = None
     sliding_dir = None
-    time = 0.0
-    completed_steps = 0
+    pre_step_count = pre / dt
+    if not np.isfinite(pre_step_count) or pre_step_count > np.iinfo(np.int32).max + 0.5:
+        raise ValueError("pre-evolution exceeds the C++ solver's maximum steps per call")
+    pre_steps = int(round(pre_step_count))
+    if pre_steps:
+        print(f"Pre-evolving in C++ for {pre_steps} steps (t={pre_steps * dt:g})...")
+        state, sliding, sliding_dir = module.evolve_trajectory(
+            state, dt, pre_steps, params, sliding, sliding_dir, 0
+        )
+    time = pre_steps * dt
+    completed_steps = pre_steps
     magnet_radius = magnet_count / 2
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count if show_magnets else None
 
@@ -270,12 +287,18 @@ def main():
     parser.add_argument("--dt", type=float, default=None,
                         help="2D time step (default: 0.001 * 8 / compiled magnet count)")
     parser.add_argument("--steps-per-frame", type=int, default=STEPS_PER_FRAME)
+    parser.add_argument("--pre", type=float, default=0.0,
+                        help="pre-evolve once in C++ to this 2D time, then start the animation (default: 0)")
+    parser.add_argument("--kahan", action="store_true",
+                        help="force-load the Kahan-compensated FP32 extension")
     parser.add_argument("--frames", type=int, help="stop after this many display frames")
     parser.add_argument("--hide-magnets", action="store_true", help="omit magnet markers from the animation")
     parser.add_argument("--fast", action="store_true", help="batch solver steps and reduce plotting overhead")
     args = parser.parse_args()
     if args.frames is not None and args.frames <= 0:
         parser.error("--frames must be positive")
+    if not np.isfinite(args.pre) or args.pre < 0:
+        parser.error("--pre must be finite and non-negative")
     import matplotlib.pyplot as plt
 
     figure, animation = animate(
@@ -283,6 +306,8 @@ def main():
         frames=range(args.frames) if args.frames is not None else None,
         show_magnets=not args.hide_magnets,
         fast=args.fast,
+        pre=args.pre,
+        kahan=args.kahan,
     )
     plt.show()
 

@@ -99,6 +99,33 @@ set_target_properties(hysteresis_fp64 PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp64"
 )
 
+# Kahan-compensated FP32 build used by animate_one_trajectory.py --kahan.
+# Keep the same import name as the FP64 module; the isolated output directory
+# lets the Python loader choose the requested precision explicitly.
+pybind11_add_module(hysteresis_fp32_kahan MODULE NO_EXTRAS
+    "${KERNEL_DIR}/2dmodel-hysteresis.cpp"
+    "${KERNEL_DIR}/bindings/pybind.cpp"
+)
+target_compile_features(hysteresis_fp32_kahan PRIVATE cxx_std_17)
+target_compile_definitions(hysteresis_fp32_kahan PRIVATE USE_KAHAN MODULE_NAME=hysteresis)
+target_compile_definitions(hysteresis_fp32_kahan PRIVATE IYPT16_MAGNET_NUMBER=${IYPT16_MAGNET_NUMBER})
+if(IYPT16_FIELD_MODE STREQUAL "lut")
+    target_compile_definitions(hysteresis_fp32_kahan PRIVATE FIELD_EVAL_MODE=1)
+    if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(hysteresis_fp32_kahan PRIVATE /ULUT_CACHE_MODE /DLUT_CACHE_MODE=${IYPT16_LUT_CACHE_MODE})
+    else()
+        target_compile_options(hysteresis_fp32_kahan PRIVATE -ULUT_CACHE_MODE -DLUT_CACHE_MODE=${IYPT16_LUT_CACHE_MODE})
+    endif()
+    target_compile_definitions(hysteresis_fp32_kahan PRIVATE IYPT16_FP64_LUT_PATH="${FIELD_LUT_FP32}")
+    add_dependencies(hysteresis_fp32_kahan generate_field_lut_files)
+endif()
+target_include_directories(hysteresis_fp32_kahan PRIVATE "${KERNEL_DIR}/headers")
+set_target_properties(hysteresis_fp32_kahan PROPERTIES
+    OUTPUT_NAME hysteresis
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp32-kahan"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp32-kahan"
+)
+
 if(BUILD_TESTING)
     function(add_native_test name)
         add_executable(${name} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/${name}.cpp")

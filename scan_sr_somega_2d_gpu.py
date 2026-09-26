@@ -23,17 +23,18 @@ from project_paths import BUILD_DIR, RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
 # ============================= Run settings =============================
-SR_LOWER = 0.1
-SR_UPPER = 3.0
-SOMEGA_LOWER = 0.1
-SOMEGA_UPPER = 4.0
+SR_LOWER = 0.75
+SR_UPPER = 1.25
+SOMEGA_LOWER = 0.5
+SOMEGA_UPPER = 1.0
 K = 128
 DT = 1.0e-3
-TOTAL_TIME = 2500.0
+TOTAL_TIME = 1500.0
 OBSERVATION_WINDOW = 500.0
 SAMPLE_TIME = 0.05
 LOCK_THRESHOLD = 0.05
-RADIUS_TOLERANCE = 0.1
+SPEED_ONE_THRESHOLD = 0.05
+RADIUS_TOLERANCE = 1
 MAGNET_RADIUS = 4.0  # Eight magnets: R = N/2.
 # At eight magnets, one-dimensional phase time is 4 times the 2D time:
 # TOTAL_TIME=2500 corresponds to a 1D horizon of 10000.
@@ -227,19 +228,30 @@ def radius_in_tolerance(status: np.ndarray, metrics: np.ndarray) -> np.ndarray:
     return (status == 0) & (np.abs(mean_radius - MAGNET_RADIUS) <= RADIUS_TOLERANCE)
 
 
+def speed_matches_disk(status: np.ndarray, metrics: np.ndarray) -> np.ndarray:
+    """The v≈1 band used to identify following in the 1D phase diagram."""
+    mean_v = metrics[..., METRIC_INDEX["mean_v"]]
+    return (status == 0) & (np.abs(mean_v - 1.0) <= SPEED_ONE_THRESHOLD)
+
+
+def forward_orbit_follows_disk(status: np.ndarray, metrics: np.ndarray) -> np.ndarray:
+    """Identify a near-magnet orbit whose mean tangential speed follows the disk."""
+    return speed_matches_disk(status, metrics) & radius_in_tolerance(status, metrics)
+
+
 def save_plot(sr, somega, status, metrics):
     import matplotlib.pyplot as plt
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     valid = status == 0
-    locked = phase_locked(status, metrics)
+    speed_one = speed_matches_disk(status, metrics)
     mean_phase_rate = np.ma.masked_where(
         ~valid, metrics[..., METRIC_INDEX["mean_phase_rate"]]
     )
     mean_velocity_1d = np.ma.masked_where(
         ~valid, metrics[..., METRIC_INDEX["mean_v"]]
     )
-    classification = np.ma.masked_where(~valid, locked.astype(np.int8))
+    classification = np.ma.masked_where(~valid, speed_one.astype(np.int8))
     mean_radius = np.ma.masked_where(~valid, metrics[..., METRIC_INDEX["mean_radius"]])
     radius_mask = np.ma.masked_where(~valid, radius_in_tolerance(status, metrics).astype(np.int8))
     sr_edges = _cell_edges(sr)
@@ -277,8 +289,8 @@ def save_plot(sr, somega, status, metrics):
         cmap=mask_cmap, norm=BoundaryNorm((-0.5, 0.5, 1.5), mask_cmap.N),
     )
     mask_bar = figure.colorbar(classification_image, ax=axes[3], ticks=(0, 1))
-    mask_bar.ax.set_yticklabels(("running", "locked"))
-    axes[3].set(title=rf"Phase mask: $|\langle\dot\psi\rangle| < {LOCK_THRESHOLD:g}$")
+    mask_bar.ax.set_yticklabels(("other speed", "v near 1"))
+    axes[3].set(title=rf"Following-speed mask: $|\langle v\rangle-1|\leq {SPEED_ONE_THRESHOLD:g}$")
 
     radius_cmap = plt.get_cmap("viridis").copy()
     radius_cmap.set_bad("0.65")
@@ -324,7 +336,10 @@ def main(*, use_fp64: bool = False, profile: bool = False):
         return
     sr, somega, status, metrics, states = run_scan()
     locked = phase_locked(status, metrics)
-    print(f"Phase locked: {np.count_nonzero(locked)}/{np.count_nonzero(status == 0)} successful cells.")
+    speed_one = speed_matches_disk(status, metrics)
+    print(f"v≈1 cells: {np.count_nonzero(speed_one)}/{np.count_nonzero(status == 0)} successful cells.")
+    forward_orbit = forward_orbit_follows_disk(status, metrics)
+    print(f"v≈1 cells near the magnet radius: {np.count_nonzero(forward_orbit)} successful cells.")
     if SAVE_DATA_PATH is not None:
         data_path = Path(SAVE_DATA_PATH)
         data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -336,7 +351,10 @@ def main(*, use_fp64: bool = False, profile: bool = False):
             metrics=metrics,
             metric_names=np.asarray(METRIC_NAMES),
             locked=locked,
+            speed_one=speed_one,
+            forward_orbit=forward_orbit,
             lock_threshold=np.asarray(LOCK_THRESHOLD),
+            speed_one_threshold=np.asarray(SPEED_ONE_THRESHOLD),
             mean_radius=metrics[..., METRIC_INDEX["mean_radius"]],
             radius_in_tolerance=radius_in_tolerance(status, metrics),
             magnet_radius=np.asarray(MAGNET_RADIUS),
