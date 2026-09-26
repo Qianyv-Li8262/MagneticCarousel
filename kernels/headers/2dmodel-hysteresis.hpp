@@ -149,7 +149,13 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
         const real_t rho = real_sqrt(pos * pos);
         const real_t phi = real_atan2(pos.y, pos.x);
         const real_t node_coordinate = (rho - rho_min) * inv_drho;
-        const int left_node_index = static_cast<int>(real_floor(node_coordinate));
+        // Keep both spline nodes inside the table, including at rho_max.
+        // Invalid trial states are rejected by the integrator before field evaluation.
+        const int left_node_index = !real_isfinite(node_coordinate) || node_coordinate <= REAL_LITERAL(0.0)
+                                        ? 0
+                                        : node_coordinate >= static_cast<real_t>(kSplineNodes - 1)
+                                              ? kSplineNodes - 2
+                                              : static_cast<int>(real_floor(node_coordinate));
         const real_t u = node_coordinate - static_cast<real_t>(left_node_index);
 
         real_t h_rho = REAL_LITERAL(0.0);
@@ -459,6 +465,10 @@ DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const
                                                         FieldCache *cache = nullptr,
                                                         const LUTNode *LUTptr = nullptr)
 {
+    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+        if (!state_in_lut_domain(state))
+            return AdvanceStepResult::kStepLUTOutOfDomain;
+    }
     const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
     const FieldForceResult field = eval_mag_field_and_force(
         params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
@@ -489,6 +499,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                                      FieldResult *H_cache = nullptr,
                                                      RetryDiagnostics *diagnostics = nullptr)
 {
+    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+        if (!state_in_lut_domain(in))
+            return AdvanceStepResult::kStepLUTOutOfDomain;
+    }
     if (sliding) {
         Vec3 F_start;
         Vec3 M_start;
@@ -541,6 +555,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (s_mid_norm == REAL_LITERAL(0.0))
                     return AdvanceStepResult::kStepNumericalUnstable;
                 Vec2 sliddir_mid = s_mid / s_mid_norm;
+                if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                    if (!state_in_lut_domain(state_at_halftc))
+                        return AdvanceStepResult::kStepLUTOutOfDomain;
+                }
                 if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                     if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, nullptr, nullptr,
                                          nullptr))
@@ -554,6 +572,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 project_pure_rolling(state_at_tc, params);
                 if (!normalize_attitude(state_at_tc))
                     return AdvanceStepResult::kStepNumericalUnstable;
+                if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                    if (!state_in_lut_domain(state_at_tc))
+                        return AdvanceStepResult::kStepLUTOutOfDomain;
+                }
                 const Vec3 q_world = vec_cast<real_t>(rotate(state_at_tc.attitude, state_at_tc.q));
                 const FieldForceResult field_force = eval_mag_field_and_force(
                     params, state_at_tc.pos, q_world, state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
@@ -595,6 +617,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                             return AdvanceStepResult::kStepBallFly;
                     }
                     const State rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
+                    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                        if (!state_in_lut_domain(rolling_mid))
+                            return AdvanceStepResult::kStepLUTOutOfDomain;
+                    }
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                         if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, nullptr,
                                              nullptr, nullptr))
@@ -609,6 +635,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     project_pure_rolling(final_state, params);
                     if (!normalize_attitude(final_state))
                         return AdvanceStepResult::kStepNumericalUnstable;
+                    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                        if (!state_in_lut_domain(final_state))
+                            return AdvanceStepResult::kStepLUTOutOfDomain;
+                    }
                     const Vec3 q_final = vec_cast<real_t>(rotate(final_state.attitude, final_state.q));
                     const FieldForceResult field_force_final = eval_mag_field_and_force(
                         params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
@@ -640,8 +670,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 sliding = false;
                 sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
             FINALE:
-                if (!state_in_lut_domain(final_state))
-                    return AdvanceStepResult::kStepLUTOutOfDomain;
+                if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                    if (!state_in_lut_domain(final_state))
+                        return AdvanceStepResult::kStepLUTOutOfDomain;
+                }
                 if (H_cache != nullptr)
                     *H_cache = final_field;
                 in = final_state;
@@ -670,6 +702,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 return AdvanceStepResult::kStepNaNOrInf;
             // Preserve the incoming direction at a zero-slip RK stage; the capture check below still applies.
             const Vec2 sliddir_mid = s_mid_norm > REAL_LITERAL(0.0) ? s_mid / s_mid_norm : sliding_dir;
+            if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                if (!state_in_lut_domain(rk2midpoint))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
+            }
             Vec3 F_mid;
             Vec3 M_mid;
             State Statedot_mid;
@@ -706,8 +742,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t sf_norm = length(sf);
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
-            if (!state_in_lut_domain(final_state))
-                return AdvanceStepResult::kStepLUTOutOfDomain;
+            if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                if (!state_in_lut_domain(final_state))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
+            }
             bool final_sliding = true;
             Vec2 final_dir;
             if (sf_norm == REAL_LITERAL(0.0)) {
@@ -765,6 +803,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const bool krolling = false;
         const bool ksliding = true;
         const State rk2midpoint = start + dt * REAL_LITERAL(0.5) * Statedot_start;
+        if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+            if (!state_in_lut_domain(rk2midpoint))
+                return AdvanceStepResult::kStepLUTOutOfDomain;
+        }
         State Statedot_mid;
         Vec3 F_mid;
         Vec3 M_mid;
@@ -783,6 +825,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         project_pure_rolling(trial_final, params);
         if (!normalize_attitude(trial_final))
             return AdvanceStepResult::kStepNumericalUnstable;
+        if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+            if (!state_in_lut_domain(trial_final))
+                return AdvanceStepResult::kStepLUTOutOfDomain;
+        }
         const Vec3 q_final = vec_cast<real_t>(rotate(trial_final.attitude, trial_final.q));
         const FieldForceResult field_force_final = eval_mag_field_and_force(
             params, trial_final.pos, q_final, trial_final.down_disk_angle, cache, LUTptr, nullptr);
@@ -811,8 +857,6 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         }
         // Ignore a transient midpoint excursion when the endpoint can still roll.
         if (g_final <= REAL_LITERAL(0.0)) {
-            if (!state_in_lut_domain(trial_final))
-                return AdvanceStepResult::kStepLUTOutOfDomain;
             if (H_cache != nullptr)
                 *H_cache = {h_final, field_force_final.hGrad3d};
             in = trial_final;
@@ -835,6 +879,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         State state_at_tr = start;
         if (tr > REAL_LITERAL(0.0)) {
             const State state_at_halftr = start + tr * REAL_LITERAL(0.5) * Statedot_start;
+            if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                if (!state_in_lut_domain(state_at_halftr))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
+            }
             State dot_estimate;
             if (!eval_rhs<false>(state_at_halftr, dot_estimate, params, krolling, no_sliding_dir, cache, LUTptr,
                                  nullptr))
@@ -845,6 +893,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 return AdvanceStepResult::kStepNumericalUnstable;
         }
 
+        if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+            if (!state_in_lut_domain(state_at_tr))
+                return AdvanceStepResult::kStepLUTOutOfDomain;
+        }
         const Vec3 q_event = vec_cast<real_t>(rotate(state_at_tr.attitude, state_at_tr.q));
         const FieldForceResult field_force_event = eval_mag_field_and_force(
             params, state_at_tr.pos, q_event, state_at_tr.down_disk_angle, cache, LUTptr, nullptr);
@@ -890,6 +942,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const real_t s_mid_norm = length(s_mid);
             if (!real_isfinite(s_mid_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
+            if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                if (!state_in_lut_domain(sliding_mid))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
+            }
             const Vec3 q_mid = vec_cast<real_t>(rotate(sliding_mid.attitude, sliding_mid.q));
             const FieldForceResult field_force_sliding_mid = eval_mag_field_and_force(
                 params, sliding_mid.pos, q_mid, sliding_mid.down_disk_angle, cache, LUTptr, nullptr);
@@ -942,8 +998,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!real_isfinite(sf_norm))
                 return AdvanceStepResult::kStepNaNOrInf;
             if (sf_norm == REAL_LITERAL(0.0)) {
-                if (!state_in_lut_domain(final_state))
-                    return AdvanceStepResult::kStepLUTOutOfDomain;
+                if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                    if (!state_in_lut_domain(final_state))
+                        return AdvanceStepResult::kStepLUTOutOfDomain;
+                }
                 const AdvanceStepResult mode_result = resolve_zero_slip_mode(
                     final_state, params, final_sliding, final_dir, cache, LUTptr);
                 if (mode_result != AdvanceStepResult::kStepOk)
@@ -953,8 +1011,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             }
         }
 
-        if (!state_in_lut_domain(final_state))
-            return AdvanceStepResult::kStepLUTOutOfDomain;
+        if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+            if (!state_in_lut_domain(final_state))
+                return AdvanceStepResult::kStepLUTOutOfDomain;
+        }
         if (remaining == REAL_LITERAL(0.0) && H_cache != nullptr)
             *H_cache = event_field;
         in = final_state;
@@ -978,8 +1038,10 @@ DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &
     static_assert(max_depth >= 0 && max_depth <= 30, "refinement depth must fit in unsigned int");
     if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0))
         return AdvanceStepResult::kStepNumericalUnstable;
-    if (!state_in_lut_domain(in))
-        return AdvanceStepResult::kStepLUTOutOfDomain;
+    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+        if (!state_in_lut_domain(in))
+            return AdvanceStepResult::kStepLUTOutOfDomain;
+    }
 
     State work = in;
     bool work_sliding = sliding;
@@ -1026,6 +1088,10 @@ DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &
             h *= REAL_LITERAL(2.0);
         }
         if (node == 1) {
+            if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+                if (!state_in_lut_domain(work))
+                    return AdvanceStepResult::kStepLUTOutOfDomain;
+            }
             in = work;
             sliding = work_sliding;
             sliding_dir = work_dir;

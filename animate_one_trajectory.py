@@ -28,7 +28,7 @@ FAST_MAX_PLOT_POINTS = 2000
 
 # Radius and angular-speed multipliers at the same selected point as the 1D animation.
 SR = 0.428571
-SOMEGA = 0.1
+SOMEGA = 0.5
 
 # These are the 8-magnet references. The field period rate is N/2 per
 # revolution, so the three acceleration coefficients scale as (N/8)**2.
