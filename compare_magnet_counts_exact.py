@@ -7,8 +7,10 @@ Run with the Python configured in CMakeUserPresets.json::
 
     python compare_magnet_counts_exact.py
 
-Each N has its own build tree and simulation process, so identically named
-Python extensions cannot be confused or reused between magnet counts.
+Each N has its own build tree and simulation process. Set ``magnet_number`` in
+``kernels/headers/hysteresis_config_field.hpp`` to each requested count before
+building it; the header is the sole source of the count. The full automatic
+sweep requires separate source configurations and will stop if they differ.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import importlib.util
 import json
 import math
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -57,10 +60,20 @@ def load_extension(path: Path):
 
 
 def build(count: int) -> Path:
+    config_header = SOURCE_DIR / "kernels" / "headers" / "hysteresis_config_field.hpp"
+    matches = re.findall(
+        r"^\s*CONFIG_CONST\s+int\s+magnet_number\s*=\s*(\d+)\s*;",
+        config_header.read_text(encoding="utf-8"), re.MULTILINE,
+    )
+    if len(matches) != 1 or int(matches[0]) != count:
+        raise ValueError(
+            f"Set magnet_number={count} in {config_header} before building; "
+            f"the header currently specifies {matches[0] if len(matches) == 1 else 'an unreadable value'}."
+        )
     tree = SOURCE_DIR / "build" / "magnet-sweep" / f"exact-{count}"
     subprocess.run(
         ["cmake", "--preset", "local-cpu", "-B", str(tree),
-         f"-DIYPT16_MAGNET_NUMBER={count}", "-DIYPT16_FIELD_MODE=exact", "-DBUILD_TESTING=OFF"],
+         "-DIYPT16_FIELD_MODE=exact", "-DBUILD_TESTING=OFF"],
         cwd=SOURCE_DIR, check=True,
     )
     subprocess.run(

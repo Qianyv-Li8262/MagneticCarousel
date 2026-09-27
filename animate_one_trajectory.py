@@ -12,7 +12,9 @@ for the compiled magnet count; finite curvature still changes the field.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import sys
 
@@ -40,6 +42,77 @@ DELTA = 1.7212357e-4
 GAMMA_G = 2.64965696
 GAMMA = 7830.34224
 GAMMA_M = 176182.704
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_build_config(*, kahan: bool) -> dict:
+    directory = extension_dir("fp32-kahan" if kahan else "fp64")
+    path = directory / "build_config.json"
+    if not path.is_file():
+        raise RuntimeError(f"Build manifest missing: {path}. Rebuild the CPU extension with CMake.")
+    config = json.loads(path.read_text(encoding="utf-8"))
+    if config.get("schema_version") != 1 or config.get("precision") != ("fp32-kahan" if kahan else "fp64"):
+        raise RuntimeError(f"Invalid or mismatched build manifest: {path}")
+    binary_name = config.get("binary")
+    if not isinstance(binary_name, str) or Path(binary_name).name != binary_name:
+        raise RuntimeError(f"Invalid extension name in {path}")
+    binary = directory / binary_name
+    if not binary.is_file() or file_sha256(binary) != config.get("binary_sha256"):
+        raise RuntimeError(f"The CPU extension does not match {path}; rebuild it.")
+    root = Path(__file__).resolve().parent
+    for relative, recorded_hash in config.get("source_sha256", {}).items():
+        source = root / relative
+        if not source.is_file() or file_sha256(source) != recorded_hash:
+            raise RuntimeError(f"Source changed since the build: {source}. Rebuild the CPU extension.")
+    return config
+
+
+def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
+                     frames: int | None, pre: float, fast: bool, show_magnets: bool) -> None:
+    def row(label: str, value: object) -> None:
+        print(f"  {label:<28} {value}")
+
+    def section(title: str) -> None:
+        print(f"\n  [{title}]")
+
+    def display_literal(value: str) -> str:
+        return value.removeprefix("REAL_LITERAL(").removesuffix(")") if value.startswith("REAL_LITERAL(") else value
+
+    count = config["magnet_number"]
+    effective_dt = timestep_for_magnets(count) if dt is None else dt
+    parameters = scaled_model_parameters(count)
+    print("\n=== 2D CPU animation | effective configuration ===")
+    section("Build")
+    cache_info = (str(config["lut_cache_mode"]) if config["field_mode"] == "lut" else "inactive (exact field)")
+    row("Precision / field", f"{config['precision']} / {config['field_mode']}")
+    row("Magnets / radius", f"{count} / {count / 2:g}")
+    row("LUT cache", cache_info)
+    section("C++ field parameters")
+    for label, value in config["field_parameters"].items():
+        row(label, display_literal(value))
+    section("C++ model parameters")
+    for label, value in config["model_parameters"].items():
+        row(label, display_literal(value))
+    section("Trajectory")
+    row("s_r / s_omega", f"{SR:g} / {SOMEGA:g}")
+    for label, value in zip(("alpha", "delta", "gamma_g", "gamma", "gamma_m"), parameters):
+        row(label, f"{value:.9g}")
+    row("dt", f"{effective_dt:.12g}")
+    row("Steps per frame", steps_per_frame)
+    row("Pre-evolution", f"{pre:g}")
+    row("Frames", frames if frames is not None else "unlimited")
+    row("Fast / magnets", f"{fast} / {show_magnets}")
+    section("Files")
+    row("Manifest", extension_dir(config["precision"]) / "build_config.json")
+    row("Extension", extension_dir(config["precision"]) / config["binary"])
+    print(flush=True)
 
 
 def scaled_model_parameters(magnet_count: int, *, sr=SR, somega=SOMEGA) -> tuple[float, float, float, float, float]:
@@ -133,12 +206,17 @@ def minmax_downsample(times, values, max_points):
 
 
 def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False, pre=0.0,
-            kahan=False):
+            kahan=False, expected_config=None):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
 
     module = load_hysteresis(kahan=kahan)
+    if expected_config is not None:
+        if module.magnet_number != expected_config["magnet_number"] or module.field_mode != (
+            "exact" if expected_config["field_mode"] == "exact" else "fourier-spline"
+        ):
+            raise RuntimeError("Loaded CPU extension disagrees with its build manifest")
     magnet_count = module.magnet_number
     if dt is None:
         dt = timestep_for_magnets(magnet_count)
@@ -297,11 +375,31 @@ def main():
     parser.add_argument("--frames", type=int, help="stop after this many display frames")
     parser.add_argument("--hide-magnets", action="store_true", help="omit magnet markers from the animation")
     parser.add_argument("--fast", action="store_true", help="batch solver steps and reduce plotting overhead")
+    parser.add_argument("--dry-run", action="store_true", help="print and validate the build and runtime configuration without starting the animation")
+    parser.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
     args = parser.parse_args()
     if args.frames is not None and args.frames <= 0:
         parser.error("--frames must be positive")
     if not np.isfinite(args.pre) or args.pre < 0:
         parser.error("--pre must be finite and non-negative")
+    if args.steps_per_frame <= 0:
+        parser.error("--steps-per-frame must be positive")
+    if args.dt is not None and (not np.isfinite(args.dt) or args.dt <= 0):
+        parser.error("--dt must be positive and finite")
+    config = read_build_config(kahan=args.kahan)
+    print_run_config(config, dt=args.dt, steps_per_frame=args.steps_per_frame,
+                     frames=args.frames, pre=args.pre, fast=args.fast,
+                     show_magnets=not args.hide_magnets)
+    if args.dry_run:
+        return
+    if not args.yes:
+        try:
+            answer = input("Run this CPU animation? Type yes to continue: ").strip()
+        except EOFError as exc:
+            raise SystemExit("No confirmation received; animation cancelled. Use --yes for non-interactive runs.") from exc
+        if answer != "yes":
+            print("Animation cancelled.")
+            return
     import matplotlib.pyplot as plt
 
     figure, animation = animate(
@@ -311,6 +409,7 @@ def main():
         fast=args.fast,
         pre=args.pre,
         kahan=args.kahan,
+        expected_config=config,
     )
     plt.show()
 

@@ -160,6 +160,7 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
     Vec2 sliding_dir{REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
     bool field_cache_valid = false;
     FieldResult field_cache{};
+    FieldCache lut_cache{};
 
     const int window_start = steps > window_steps ? steps - window_steps : 0;
     const int split_step = window_start + (steps - window_start) / 2;
@@ -188,7 +189,7 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
     int status = 0;
     for (int step = 0; step < steps; ++step) {
         const AdvanceStepResult result = fwd1step(dt, params, ball, sliding, sliding_dir,
-                                                   field_cache_valid, nullptr, field_lut,
+                                                   field_cache_valid, &lut_cache, field_lut,
                                                    &field_cache);
         if (result != AdvanceStepResult::kStepOk) {
             status = static_cast<int>(result) + 1;

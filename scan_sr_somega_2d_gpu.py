@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -26,20 +27,20 @@ from project_paths import BUILD_DIR, RUNS_DIR, SCRATCH_DIR, image_output_path
 
 
 # ============================= Run settings =============================
-SR_LOWER = 0.75
-SR_UPPER = 1.25
-SOMEGA_LOWER = 0.5
-SOMEGA_UPPER = 1.0
+SR_LOWER = 0.1
+SR_UPPER = 6.0
+SOMEGA_LOWER = 0.1
+SOMEGA_UPPER = 5.0
 K = 128
-DT = 1.0e-3
-TOTAL_TIME = 1500.0
-OBSERVATION_WINDOW = 500.0
-SAMPLE_TIME = 0.05
+DT_AT_EIGHT = 1.0e-3
+TOTAL_TIME_AT_EIGHT = 1500.0
+OBSERVATION_WINDOW_AT_EIGHT = 500.0
+SAMPLE_TIME_AT_EIGHT = 0.05
 LOCK_THRESHOLD = 0.05
 SPEED_ONE_THRESHOLD = 0.05
-RADIUS_TOLERANCE = 1
-MAGNET_RADIUS = 4.0  # Eight magnets: R = N/2.
-# At eight magnets, one-dimensional phase time is 4 times the 2D time:
+RADIUS_TOLERANCE_AT_EIGHT = 0.1
+# The following baseline times are for eight magnets. One-dimensional phase
+# time is then 4 times the 2D time:
 # TOTAL_TIME=2500 corresponds to a 1D horizon of 10000.
 # DT=0.001 here corresponds to a 1D phase-time step of 0.004; use
 # DT=0.00025 if a 1D step of 0.001 must also be matched.
@@ -48,28 +49,54 @@ MAGNET_RADIUS = 4.0  # Eight magnets: R = N/2.
 USE_FP64 = False
 # NVRTC field mode: 0 = exact field, 1 = Fourier-spline LUT.
 FIELD_EVAL_MODE = 0
+LUT_CACHE_MODE = 0  # 0 = off, 1 = nodes, 2 = spline coefficients.
 BLOCK_X = 16
 BLOCK_Y = 8
 
 SHOW_PLOT = False
-SAVE_PATH: str | Path | None = SCRATCH_DIR / "phase-behavior" / "sr_somega_2d.png"
-SAVE_DATA_PATH: str | Path | None = RUNS_DIR / "phase-behavior" / "sr_somega_2d.npz"
+SAVE_PATH: str | Path | None = None  # Set below after reading the header.
+SAVE_DATA_PATH: str | Path | None = None
 SAVE_DPI = 180
-# 8-magnet reference parameters from animate_one_trajectory.py.
+# 8-magnet reference parameters from animate_one_trajectory.py. The CUDA
+# kernel applies (N/8)^2 to the three acceleration coefficients.
 REFERENCE_ALPHA = 0.33333333
 REFERENCE_DELTA = 1.7212357e-4
 REFERENCE_GAMMA_G = 2.64965696
 REFERENCE_GAMMA = 7830.34224
 REFERENCE_GAMMA_M = 176182.704
 FOURIER_MODE_COUNT = 7
-SPLINE_NODES = 128
+SPLINE_NODES = 200
 # ========================================================================
 
 
 ROOT = Path(__file__).resolve().parent
 KERNEL_DIR = ROOT / "kernels"
 HEADER_DIR = KERNEL_DIR / "headers"
+CONFIG_HEADER = HEADER_DIR / "hysteresis_config_field.hpp"
 CUDA_SOURCE = KERNEL_DIR / "scan_sr_somega.cu"
+
+
+def read_magnet_number() -> int:
+    source = CONFIG_HEADER.read_text(encoding="utf-8")
+    matches = re.findall(r"^\s*CONFIG_CONST\s+int\s+magnet_number\s*=\s*(\d+)\s*;", source, re.MULTILINE)
+    if len(matches) != 1:
+        raise ValueError(f"Expected one literal magnet_number in {CONFIG_HEADER}; found {len(matches)}")
+    count = int(matches[0])
+    if count < 2 or count % 2:
+        raise ValueError(f"magnet_number must be an even integer >= 2; got {count}")
+    return count
+
+
+MAGNET_NUMBER = read_magnet_number()
+MAGNET_RADIUS = MAGNET_NUMBER / 2.0
+TIME_SCALE = 8.0 / MAGNET_NUMBER
+DT = DT_AT_EIGHT * TIME_SCALE
+TOTAL_TIME = TOTAL_TIME_AT_EIGHT * TIME_SCALE
+OBSERVATION_WINDOW = OBSERVATION_WINDOW_AT_EIGHT * TIME_SCALE
+SAMPLE_TIME = SAMPLE_TIME_AT_EIGHT * TIME_SCALE
+RADIUS_TOLERANCE = RADIUS_TOLERANCE_AT_EIGHT / TIME_SCALE
+SAVE_PATH = SCRATCH_DIR / "phase-behavior" / f"sr_somega_2d-{MAGNET_NUMBER}.png"
+SAVE_DATA_PATH = RUNS_DIR / "phase-behavior" / f"sr_somega_2d-{MAGNET_NUMBER}.npz"
 LUT_PATH = BUILD_DIR / "field-lut" / ("field_lut_fp64.bin" if USE_FP64 else "field_lut_fp32.bin")
 STATE_NAMES = (
     "down_disk_angle", "pos_x", "pos_y", "speed_x", "speed_y",
@@ -131,7 +158,7 @@ def _get_cuda_module(cp):
         f"--include-path={HEADER_DIR}",
         "-lineinfo",
         f"-DFIELD_EVAL_MODE={FIELD_EVAL_MODE}",
-        "-DLUT_CACHE_MODE=0",
+        f"-DLUT_CACHE_MODE={LUT_CACHE_MODE}",
         f"-DIYPT16_SOURCE_SIGNATURE_{signature}=1",
     ]
     if USE_FP64:
@@ -149,6 +176,8 @@ def _get_cuda_module(cp):
 def run_scan():
     if FIELD_EVAL_MODE not in (0, 1):
         raise ValueError("FIELD_EVAL_MODE must be 0 (exact) or 1 (LUT)")
+    if LUT_CACHE_MODE not in (0, 1, 2):
+        raise ValueError("LUT_CACHE_MODE must be 0, 1, or 2")
     if not (0.0 < SR_LOWER <= SR_UPPER and 0.0 < SOMEGA_LOWER <= SOMEGA_UPPER):
         raise ValueError("scan bounds must be finite, positive, and increasing")
     if not 1 <= K <= 46340:
@@ -211,6 +240,11 @@ def run_scan():
     if np.any(success & ~np.all(np.isfinite(metrics), axis=-1)):
         raise RuntimeError("successful CUDA trajectories contain non-finite terminal-window metrics")
     print(f"2D CUDA scan completed in {elapsed:.3f} s: {np.count_nonzero(success)}/{K*K} trajectories succeeded.")
+    failed_status, failed_count = np.unique(status[~success], return_counts=True)
+    if failed_status.size:
+        print("Failed trajectory status counts: " + ", ".join(
+            f"{int(code)}={int(count)}" for code, count in zip(failed_status, failed_count)
+        ))
     return sr, somega, status, metrics, states
 
 
@@ -254,7 +288,10 @@ def save_plot(sr, somega, status, metrics):
     mean_velocity_1d = np.ma.masked_where(
         ~valid, metrics[..., METRIC_INDEX["mean_v"]]
     )
-    classification = np.ma.masked_where(~valid, speed_one.astype(np.int8))
+    mean_v = metrics[..., METRIC_INDEX["mean_v"]]
+    mask_class = speed_one.astype(np.int8)
+    mask_class[mean_v < 0.0] = 2
+    classification = np.ma.masked_where(~valid, mask_class)
     mean_radius = np.ma.masked_where(~valid, metrics[..., METRIC_INDEX["mean_radius"]])
     radius_mask = np.ma.masked_where(~valid, radius_in_tolerance(status, metrics).astype(np.int8))
     sr_edges = _cell_edges(sr)
@@ -282,18 +319,18 @@ def save_plot(sr, somega, status, metrics):
     velocity = axes[2].pcolormesh(
         sr_edges, somega_edges, mean_velocity_1d, shading="flat", cmap=velocity_cmap,
     )
-    axes[2].set(title=r"Terminal mean velocity in 1D units, $\langle v_{\rm tan}/4\rangle$")
-    figure.colorbar(velocity, ax=axes[2], label=r"$\langle v_{\rm tan}/4\rangle$")
+    axes[2].set(title=rf"Terminal mean velocity in 1D units, $\langle v_{{\rm tan}}/{MAGNET_RADIUS:g}\rangle$")
+    figure.colorbar(velocity, ax=axes[2], label=rf"$\langle v_{{\rm tan}}/{MAGNET_RADIUS:g}\rangle$")
 
-    mask_cmap = ListedColormap(("tab:orange", "tab:blue"))
+    mask_cmap = ListedColormap(("green", "red", "blue"))
     mask_cmap.set_bad("0.65")
     classification_image = axes[3].pcolormesh(
         sr_edges, somega_edges, classification, shading="flat",
-        cmap=mask_cmap, norm=BoundaryNorm((-0.5, 0.5, 1.5), mask_cmap.N),
+        cmap=mask_cmap, norm=BoundaryNorm((-0.5, 0.5, 1.5, 2.5), mask_cmap.N),
     )
-    mask_bar = figure.colorbar(classification_image, ax=axes[3], ticks=(0, 1))
-    mask_bar.ax.set_yticklabels(("other speed", "v near 1"))
-    axes[3].set(title=rf"Following-speed mask: $|\langle v\rangle-1|\leq {SPEED_ONE_THRESHOLD:g}$")
+    mask_bar = figure.colorbar(classification_image, ax=axes[3], ticks=(0, 1, 2))
+    mask_bar.ax.set_yticklabels(("other speed", "v near 1", "mean v < 0"))
+    axes[3].set(title=rf"Terminal mean velocity mask: $|\langle v\rangle-1|\leq {SPEED_ONE_THRESHOLD:g}$")
 
     radius_cmap = plt.get_cmap("viridis").copy()
     radius_cmap.set_bad("0.65")
@@ -327,14 +364,71 @@ def steps_to_time() -> float:
     return round(TOTAL_TIME / DT) * DT
 
 
-def main(*, use_fp64: bool = False, profile: bool = False):
-    global USE_FP64, LUT_PATH, TOTAL_TIME, OBSERVATION_WINDOW
+def print_run_config(*, profile: bool) -> None:
+    def row(label: str, value: object) -> None:
+        print(f"  {label:<20} {value}")
+
+    def section(title: str) -> None:
+        print(f"\n  [{title}]")
+
+    steps = round(TOTAL_TIME / DT)
+    window_steps = min(steps, round(OBSERVATION_WINDOW / DT))
+    sample_stride = max(1, round(SAMPLE_TIME / DT))
+    print("\n=== 2D CUDA scan | effective configuration ===")
+    section("Model and grid")
+    row("Magnets / radius", f"{MAGNET_NUMBER} / {MAGNET_RADIUS:g}")
+    row("Grid", f"{K} x {K}")
+    row("s_r range", f"{SR_LOWER:g} .. {SR_UPPER:g}")
+    row("s_omega range", f"{SOMEGA_LOWER:g} .. {SOMEGA_UPPER:g}")
+    row("Precision / field", f"{'FP64' if USE_FP64 else 'Kahan FP32'} / {'exact' if FIELD_EVAL_MODE == 0 else 'LUT'}")
+    row("LUT cache", LUT_CACHE_MODE if FIELD_EVAL_MODE == 1 else "inactive (exact field)")
+    row("CUDA block", f"{BLOCK_X} x {BLOCK_Y}")
+    section("Time (2D units)")
+    row("dt", f"{DT:.12g}")
+    row("Total", f"{TOTAL_TIME:.12g}  ({steps:,} steps)")
+    row("Observation window", f"{OBSERVATION_WINDOW:.12g}  ({window_steps:,} steps)")
+    row("Sample interval", f"{SAMPLE_TIME:.12g}  ({sample_stride:,} steps)")
+    section("Classification")
+    row("Phase lock", f"{LOCK_THRESHOLD:g}")
+    row("Speed near 1", f"{SPEED_ONE_THRESHOLD:g}")
+    row("Radius tolerance", f"{RADIUS_TOLERANCE:g}")
+    section("Reference coefficients at N=8")
+    for label, value in (("alpha", REFERENCE_ALPHA), ("delta", REFERENCE_DELTA),
+                         ("gamma_g", REFERENCE_GAMMA_G), ("gamma", REFERENCE_GAMMA),
+                         ("gamma_m", REFERENCE_GAMMA_M)):
+        row(label, f"{value:.9g}")
+    section("Files")
+    row("Magnet source", CONFIG_HEADER)
+    if FIELD_EVAL_MODE == 1:
+        row("LUT", LUT_PATH)
+        row("LUT shape", f"{FOURIER_MODE_COUNT} modes x {SPLINE_NODES} nodes; verify N={MAGNET_NUMBER}")
+    if not profile:
+        row("Data", SAVE_DATA_PATH)
+        row("Figure", SAVE_PATH)
+    print(flush=True)
+
+
+def main(*, use_fp64: bool = False, profile: bool = False, lut_cache_mode: int = 0,
+         yes: bool = False, dry_run: bool = False):
+    global USE_FP64, LUT_PATH, TOTAL_TIME, OBSERVATION_WINDOW, LUT_CACHE_MODE
     USE_FP64 = bool(use_fp64)
+    LUT_CACHE_MODE = lut_cache_mode
     LUT_PATH = BUILD_DIR / "field-lut" / ("field_lut_fp64.bin" if USE_FP64 else "field_lut_fp32.bin")
     if profile:
-        # Short, isolated Nsight Compute run. Keep the full-scan defaults above.
-        TOTAL_TIME = 1.0
-        OBSERVATION_WINDOW = 0.5
+        TOTAL_TIME = 50.0 * TIME_SCALE
+        OBSERVATION_WINDOW = 0.5 * TIME_SCALE
+    print_run_config(profile=profile)
+    if dry_run:
+        return
+    if not yes:
+        try:
+            answer = input("Run this GPU scan? Type yes to continue: ").strip()
+        except EOFError as exc:
+            raise SystemExit("No confirmation received; GPU scan cancelled. Use --yes for non-interactive runs.") from exc
+        if answer != "yes":
+            print("GPU scan cancelled.")
+            return
+    if profile:
         run_scan()
         return
     sr, somega, status, metrics, states = run_scan()
@@ -370,6 +464,7 @@ def main(*, use_fp64: bool = False, profile: bool = False):
             sample_time=np.asarray(SAMPLE_TIME),
             use_fp64=np.asarray(USE_FP64),
             use_kahan=np.asarray(not USE_FP64),
+            lut_cache_mode=np.asarray(LUT_CACHE_MODE),
         )
         print(f"Saved data to {data_path.resolve()}")
 
@@ -397,7 +492,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--profile",
         action="store_true",
-        help="run a 1.0-time-unit scan without saving data or plots",
+        help="run a 50000-step scan without saving data or plots",
     )
+    parser.add_argument(
+        "--lut-cache-mode", type=int, choices=(0, 1, 2), default=0,
+        help="LUT interpolation cache: 0=off (default), 1=nodes, 2=spline coefficients",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="print the effective configuration without starting the GPU")
+    parser.add_argument("--yes", action="store_true", help="skip the interactive confirmation after printing the configuration")
     args = parser.parse_args()
-    main(use_fp64=args.fp64, profile=args.profile)
+    main(use_fp64=args.fp64, profile=args.profile, lut_cache_mode=args.lut_cache_mode,
+         yes=args.yes, dry_run=args.dry_run)

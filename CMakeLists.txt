@@ -17,14 +17,6 @@ find_package(Boost CONFIG REQUIRED COMPONENTS multiprecision)
 include(CTest)
 
 set(KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
-set(IYPT16_MAGNET_NUMBER "1024" CACHE STRING "Even number of alternating magnets")
-if(NOT IYPT16_MAGNET_NUMBER MATCHES "^[1-9][0-9]*$" OR IYPT16_MAGNET_NUMBER LESS 2)
-    message(FATAL_ERROR "IYPT16_MAGNET_NUMBER must be an even integer >= 2")
-endif()
-math(EXPR IYPT16_MAGNET_REMAINDER "${IYPT16_MAGNET_NUMBER} % 2")
-if(NOT IYPT16_MAGNET_REMAINDER EQUAL 0)
-    message(FATAL_ERROR "IYPT16_MAGNET_NUMBER must be even")
-endif()
 set(IYPT16_FIELD_MODE "exact" CACHE STRING "Magnetic field evaluation: exact or lut")
 set_property(CACHE IYPT16_FIELD_MODE PROPERTY STRINGS exact lut)
 set(IYPT16_LUT_CACHE_MODE "0" CACHE STRING "LUT cache: 0=off, 1=nodes, 2=spline coefficients")
@@ -81,7 +73,6 @@ pybind11_add_module(hysteresis_fp64 MODULE NO_EXTRAS
 )
 target_compile_features(hysteresis_fp64 PRIVATE cxx_std_17)
 target_compile_definitions(hysteresis_fp64 PRIVATE USE_FP64 MODULE_NAME=hysteresis)
-target_compile_definitions(hysteresis_fp64 PRIVATE IYPT16_MAGNET_NUMBER=${IYPT16_MAGNET_NUMBER})
 if(IYPT16_FIELD_MODE STREQUAL "lut")
     target_compile_definitions(hysteresis_fp64 PRIVATE FIELD_EVAL_MODE=1)
     if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -108,7 +99,6 @@ pybind11_add_module(hysteresis_fp32_kahan MODULE NO_EXTRAS
 )
 target_compile_features(hysteresis_fp32_kahan PRIVATE cxx_std_17)
 target_compile_definitions(hysteresis_fp32_kahan PRIVATE USE_KAHAN MODULE_NAME=hysteresis)
-target_compile_definitions(hysteresis_fp32_kahan PRIVATE IYPT16_MAGNET_NUMBER=${IYPT16_MAGNET_NUMBER})
 if(IYPT16_FIELD_MODE STREQUAL "lut")
     target_compile_definitions(hysteresis_fp32_kahan PRIVATE FIELD_EVAL_MODE=1)
     if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -125,6 +115,27 @@ set_target_properties(hysteresis_fp32_kahan PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp32-kahan"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp32-kahan"
 )
+
+# Record the actual extension built in each precision directory. POST_BUILD
+# keeps the manifest tied to the binary rather than to CMake configure time.
+foreach(target IN ITEMS hysteresis_fp64 hysteresis_fp32_kahan)
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py")
+    if(target STREQUAL "hysteresis_fp64")
+        set(manifest_precision "fp64")
+    else()
+        set(manifest_precision "fp32-kahan")
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py"
+                --binary "$<TARGET_FILE:${target}>"
+                --source-dir "${CMAKE_CURRENT_SOURCE_DIR}"
+                --precision "${manifest_precision}"
+                --field-mode "${IYPT16_FIELD_MODE}"
+                --lut-cache-mode "${IYPT16_LUT_CACHE_MODE}"
+        VERBATIM
+    )
+endforeach()
 
 if(BUILD_TESTING)
     function(add_native_test name)

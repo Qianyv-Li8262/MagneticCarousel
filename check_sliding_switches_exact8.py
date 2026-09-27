@@ -5,7 +5,8 @@
 
 Build first with::
 
-    cmake --preset local-cpu -B build/sliding-exact8 -DIYPT16_MAGNET_NUMBER=8 -DIYPT16_FIELD_MODE=exact -DBUILD_TESTING=OFF
+    # Set magnet_number = 8 in kernels/headers/hysteresis_config_field.hpp first.
+    cmake --preset local-cpu -B build/sliding-exact8 -DIYPT16_FIELD_MODE=exact -DBUILD_TESTING=OFF
     cmake --build build/sliding-exact8 --target hysteresis_fp64 -j 4
     python check_sliding_switches_exact8.py
 

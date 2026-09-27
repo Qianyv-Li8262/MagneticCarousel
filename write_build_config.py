@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
+"""Write a build-time manifest beside a 2D CPU extension."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def literal(source: str, name: str, kind: str) -> str:
+    matches = re.findall(
+        rf"^\s*CONFIG_CONST\s+{kind}\s+{name}\s*=\s*([^;]+);",
+        source, re.MULTILINE,
+    )
+    if len(matches) != 1:
+        raise ValueError(f"Expected one {name} in the C++ header; found {len(matches)}")
+    return matches[0].strip()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--source-dir", type=Path, required=True)
+    parser.add_argument("--precision", choices=("fp64", "fp32-kahan"), required=True)
+    parser.add_argument("--field-mode", choices=("exact", "lut"), required=True)
+    parser.add_argument("--lut-cache-mode", choices=(0, 1, 2), type=int, required=True)
+    args = parser.parse_args()
+
+    headers = args.source_dir / "kernels" / "headers"
+    field_header = headers / "hysteresis_config_field.hpp"
+    model_header = headers / "hysteresis_config.hpp"
+    field_source = field_header.read_text(encoding="utf-8")
+    model_source = model_header.read_text(encoding="utf-8")
+    magnet_number = int(literal(field_source, "magnet_number", "int"))
+    if magnet_number < 2 or magnet_number % 2:
+        raise ValueError("magnet_number must be an even integer >= 2")
+    field_keys = ("magnet_number", "kFieldFourierModeCount", "kSplineNodes")
+    model_keys = ("Mu_r", "Alpha_JA", "C_JA", "K", "Beta", "Eta", "Mu",
+                  "kStepRefinementRecursionDepth", "kAttitudeNormalizeMode",
+                  "kDebugChkEight", "kDebugChkTen", "kFinerStepCheck")
+    field_values = {key: literal(field_source, key, "int") for key in field_keys}
+    model_values = {
+        key: literal(model_source, key, "int" if key == "kStepRefinementRecursionDepth"
+                     else "bool" if key in ("kDebugChkEight", "kDebugChkTen", "kFinerStepCheck")
+                     else "AttitudeNormalizeMode" if key == "kAttitudeNormalizeMode"
+                     else "real_t")
+        for key in model_keys
+    }
+    for macro, label in (("IYPT16_FIELD_HEIGHT", "height"),
+                         ("IYPT16_LUT_LOWER_BOUND_RATIO", "lut_lower_bound_ratio"),
+                         ("IYPT16_LUT_UPPER_BOUND_RATIO", "lut_upper_bound_ratio")):
+        match = re.search(rf"^#define {macro}\s+([^\s]+)", field_source, re.MULTILINE)
+        if match is None:
+            raise ValueError(f"{macro} is missing from the field header")
+        field_values[label] = match.group(1)
+    data = {
+        "schema_version": 1,
+        "binary": args.binary.name,
+        "binary_sha256": sha256(args.binary),
+        "precision": args.precision,
+        "field_mode": args.field_mode,
+        "lut_cache_mode": args.lut_cache_mode,
+        "magnet_number": magnet_number,
+        "field_parameters": field_values,
+        "model_parameters": model_values,
+        "source_sha256": {
+            str(path.relative_to(args.source_dir)).replace("\\", "/"): sha256(path)
+            for path in (field_header, model_header)
+        },
+    }
+    output = args.binary.parent / "build_config.json"
+    output.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Wrote {output}")
+
+
+if __name__ == "__main__":
+    main()
