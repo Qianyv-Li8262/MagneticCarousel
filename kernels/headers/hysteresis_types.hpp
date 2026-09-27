@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Qianyv-Li8262
+
 #pragma once
 // MARK: Errors
 #if defined(USE_FP64) && defined(USE_DD)

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Scan the initial ``(v0, S0)`` plane using long-time phase locking.
 
 Run from this directory in an environment containing CuPy with::

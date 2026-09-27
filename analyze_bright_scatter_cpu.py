@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Compare CPU FP32/FP64 phase-rate evolution for one bright phase-map cell."""
 
 from pathlib import Path

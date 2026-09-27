@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 from pathlib import Path
 from decimal import Decimal, getcontext
 import ast

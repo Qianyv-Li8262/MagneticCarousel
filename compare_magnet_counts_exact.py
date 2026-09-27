@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Build exact-field 2D models for N=8..4096 and compare with the 1D trajectory.
 
 Run with the Python configured in CMakeUserPresets.json::

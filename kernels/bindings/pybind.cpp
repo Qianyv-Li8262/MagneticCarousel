@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Qianyv-Li8262
+
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 

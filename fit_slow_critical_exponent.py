@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Fit and diagnose the critical slowing in the seven slow_*.log files."""
 
 from __future__ import annotations

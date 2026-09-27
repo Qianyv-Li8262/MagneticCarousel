@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Exercise 2D contact-mode switches with the FP64 exact eight-magnet field.
 
 Build first with::

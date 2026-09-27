@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Animate one CPU trajectory of the two-dimensional hysteresis model.
 
 From src2d, build with ``cmake --preset local-cpu`` and
@@ -28,7 +31,7 @@ FAST_MAX_PLOT_POINTS = 2000
 
 # Radius and angular-speed multipliers at the same selected point as the 1D animation.
 SR = 1
-SOMEGA = 0.748
+SOMEGA = 1.0
 
 # These are the 8-magnet references. The field period rate is N/2 per
 # revolution, so the three acceleration coefficients scale as (N/8)**2.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Scan the 2D hysteresis model over an ``(sr, somega)`` grid on CUDA.
 
 Edit the constants below, then run this file directly from the ``src2d``

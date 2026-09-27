@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Run the long-time ``(sr, somega)`` phase sweep on CUDA.
 
 The default run focuses on the locking boundary and saves both the raw

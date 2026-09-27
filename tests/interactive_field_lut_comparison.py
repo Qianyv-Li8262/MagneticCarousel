@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Interactive comparison of the exact dipole field and the Fourier-spline LUT model.
 
 This is a standalone visualization tool.  It does not read the production LUT

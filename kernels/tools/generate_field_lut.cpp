@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Qianyv-Li8262
+
 #include "hysteresis_config_field.hpp"
 
 #include <boost/math/special_functions/hypergeometric_pFq.hpp>

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Scan initial velocity near the locked/unlocked basin boundary.
 
 The C++ solver wraps its stored phase modulo 2*pi.  This script therefore

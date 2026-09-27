@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Repeat one exact-field magnet trajectory with a smaller integration step.
 
 The sampling grid stays at 0.2 in 1D time, so results can be compared row by
