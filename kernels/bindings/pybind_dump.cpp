@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Qianyv-Li8262
+
 // The model header defines short parameter macros, so pybind11 must be parsed first.
 // clang-format off
 #include <pybind11/numpy.h>

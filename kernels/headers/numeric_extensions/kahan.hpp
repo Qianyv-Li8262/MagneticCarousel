@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Qianyv-Li8262
+
 #pragma once
 
 // Compensated floating-point accumulator.  The correction records the part of

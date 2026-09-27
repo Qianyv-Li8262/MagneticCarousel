@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """High-resolution one-dimensional initial-state basin scan on CUDA/NVRTC."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Run one deterministic CPU trajectory, dump a chosen time window, and plot it."""
 
 from __future__ import annotations

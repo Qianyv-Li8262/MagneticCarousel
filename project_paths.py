@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Stable project paths shared by build, simulation, and analysis scripts.
 
 Defaults are anchored to this repository instead of the process working

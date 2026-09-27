@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Run the C++ threaded boundary scan and plot its bisection brackets."""
 
 from __future__ import annotations

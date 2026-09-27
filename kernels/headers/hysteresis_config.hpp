@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Qianyv-Li8262
+
 #pragma once
 
 // Manually configured model parameters.
@@ -23,7 +26,7 @@
 #define XI_JA (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITERAL(1.0) + ALPHA_JA * (MU_R - REAL_LITERAL(1.0)))))
 
 // Magnetic field strength
-#define H_EXT REAL_LITERAL(0.11504)
+#define H_EXT REAL_LITERAL(0.10105801)
 
 // Mechanical parameters
 #define ETA REAL_LITERAL(0.4)

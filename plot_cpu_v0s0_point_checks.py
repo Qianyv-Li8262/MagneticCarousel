@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Plot CPU center-of-mass and phase velocities for two selected initial states."""
 
 from pathlib import Path

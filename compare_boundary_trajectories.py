@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Compare two long FP64 CPU trajectories above and below a horizontal boundary."""
 
 from __future__ import annotations

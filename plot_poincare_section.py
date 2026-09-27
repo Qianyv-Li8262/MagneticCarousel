@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Build a Poincare section directly from trajectory dump CSV files.
 
 The default section is the positive crossing

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Bracket the horizontal s_omega boundary at a given s_r by bisection.
 
 Classification matches the phase-diagram GPU scan: sample

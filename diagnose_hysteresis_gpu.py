@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Qianyv-Li8262
+
 """Diagnose the current model without changing production files.
 
 Examples (in the CuPy environment):
