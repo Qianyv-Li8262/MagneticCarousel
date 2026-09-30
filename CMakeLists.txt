@@ -26,8 +26,19 @@ set_property(CACHE IYPT16_FIELD_MODE PROPERTY STRINGS exact lut)
 set(IYPT16_LUT_CACHE_MODE "0" CACHE STRING "LUT cache: 0=off, 1=nodes, 2=spline coefficients")
 set_property(CACHE IYPT16_LUT_CACHE_MODE PROPERTY STRINGS 0 1 2)
 set(IYPT16_FIELD_LUT_THREADS "24" CACHE STRING "CPU threads used to generate the field LUT")
+option(IYPT16_ENABLE_CUDA "Build native GPU scan cubins" ON)
 if(NOT IYPT16_FIELD_MODE STREQUAL "exact" AND NOT IYPT16_FIELD_MODE STREQUAL "lut")
     message(FATAL_ERROR "IYPT16_FIELD_MODE must be exact or lut")
+endif()
+
+if(IYPT16_ENABLE_CUDA)
+    if(CMAKE_VERSION VERSION_LESS 3.27)
+        message(FATAL_ERROR "IYPT16_ENABLE_CUDA requires CMake 3.27 or newer for CUDA_CUBIN_COMPILATION")
+    endif()
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures for GPU scan cubins")
+    endif()
+    enable_language(CUDA)
 endif()
 if(NOT IYPT16_LUT_CACHE_MODE MATCHES "^[012]$")
     message(FATAL_ERROR "IYPT16_LUT_CACHE_MODE must be 0, 1, or 2")
@@ -69,6 +80,77 @@ if(IYPT16_FIELD_MODE STREQUAL "lut" OR BUILD_TESTING)
         VERBATIM
     )
     add_custom_target(generate_field_lut_files DEPENDS "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}")
+endif()
+
+if(IYPT16_ENABLE_CUDA)
+    set(CUDA_SCAN_DIR "${CMAKE_BINARY_DIR}/cuda-scans")
+    if(IYPT16_FIELD_MODE STREQUAL "lut")
+        set(cuda_field_mode 1)
+        set(cuda_cache_mode "${IYPT16_LUT_CACHE_MODE}")
+    else()
+        set(cuda_field_mode 0)
+        set(cuda_cache_mode 0)
+    endif()
+
+    foreach(scan IN ITEMS sr_somega initial)
+        foreach(precision IN ITEMS fp32_kahan fp64)
+            set(scan_target "cuda_scan_${scan}_${precision}")
+            set(object_target "${scan_target}_objects")
+            set(cubin_path "${CUDA_SCAN_DIR}/${scan_target}.cubin")
+            set(manifest_path "${CUDA_SCAN_DIR}/${scan_target}.json")
+            add_library(${object_target} OBJECT "${KERNEL_DIR}/scan_${scan}.cu")
+            set_target_properties(${object_target} PROPERTIES
+                CUDA_CUBIN_COMPILATION ON
+                CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+                CUDA_STANDARD 17
+                CUDA_STANDARD_REQUIRED ON
+                EXCLUDE_FROM_ALL TRUE
+            )
+            target_include_directories(${object_target} PRIVATE
+                "${KERNEL_DIR}" "${KERNEL_DIR}/headers")
+            target_compile_definitions(${object_target} PRIVATE
+                FIELD_EVAL_MODE=${cuda_field_mode}
+                LUT_CACHE_MODE=${cuda_cache_mode})
+            if(precision STREQUAL "fp64")
+                target_compile_definitions(${object_target} PRIVATE USE_FP64)
+            else()
+                target_compile_definitions(${object_target} PRIVATE USE_KAHAN)
+            endif()
+            if(scan STREQUAL "sr_somega")
+                target_compile_options(${object_target} PRIVATE -lineinfo)
+            endif()
+
+            set(stage_dependencies
+                "$<TARGET_OBJECTS:${object_target}>"
+                "${CMAKE_CURRENT_SOURCE_DIR}/write_cuda_build_config.py")
+            set(stage_args)
+            if(IYPT16_FIELD_MODE STREQUAL "lut")
+                list(APPEND stage_dependencies generate_field_lut_files "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}")
+                if(precision STREQUAL "fp64")
+                    list(APPEND stage_args --lut "${FIELD_LUT_FP64}")
+                else()
+                    list(APPEND stage_args --lut "${FIELD_LUT_FP32}")
+                endif()
+            endif()
+            add_custom_command(
+                OUTPUT "${cubin_path}" "${manifest_path}"
+                COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/write_cuda_build_config.py"
+                    --binary "$<TARGET_OBJECTS:${object_target}>"
+                    --output "${cubin_path}"
+                    --source-dir "${CMAKE_CURRENT_SOURCE_DIR}"
+                    --scan "${scan}"
+                    --precision "${precision}"
+                    --field-mode "${IYPT16_FIELD_MODE}"
+                    --lut-cache-mode "${cuda_cache_mode}"
+                    --architectures "${CMAKE_CUDA_ARCHITECTURES}"
+                    --cuda-version "${CMAKE_CUDA_COMPILER_VERSION}"
+                    ${stage_args}
+                DEPENDS ${object_target} ${stage_dependencies}
+                VERBATIM
+            )
+            add_custom_target(${scan_target} ALL DEPENDS "${cubin_path}" "${manifest_path}")
+        endforeach()
+    endforeach()
 endif()
 
 pybind11_add_module(hysteresis_fp64 MODULE NO_EXTRAS

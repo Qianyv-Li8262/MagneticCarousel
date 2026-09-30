@@ -8,7 +8,6 @@ S0 is the initial tangential contact slip in the 1D-normalized units.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -17,14 +16,8 @@ import time
 import numpy as np
 
 import scan_sr_somega_2d_gpu as reference
+from cuda_build import load_cuda_artifact
 from project_paths import BUILD_DIR, RUNS_DIR, SCRATCH_DIR, extension_dir, image_output_path
-
-ROOT = Path(__file__).resolve().parent
-KERNEL = ROOT / "kernels"
-HEADER = KERNEL / "headers"
-GPU_SOURCE = KERNEL / "scan_initial.cu"
-COMMON = KERNEL / "scan_initial_common.hpp"
-
 
 def settings(args):
     if not (1 <= args.k <= 46340):
@@ -52,17 +45,11 @@ def settings(args):
 def run_gpu(args, v0, s0, steps, window, stride):
     cp = reference._get_cupy()
     dtype = np.dtype(v0.dtype)
-    lut = reference._load_lut(cp, dtype) if args.field_mode == "lut" else np.uintp(0)
-    dependencies = [GPU_SOURCE, COMMON, *sorted(HEADER.rglob("*.hpp"))]
-    digest = hashlib.sha256()
-    for path in dependencies:
-        digest.update(path.read_bytes())
-    options = ("--std=c++17", f"--include-path={KERNEL}", f"--include-path={HEADER}",
-               f"-DFIELD_EVAL_MODE={int(args.field_mode == 'lut')}",
-               f"-DLUT_CACHE_MODE={args.lut_cache_mode}",
-               f"-DIYPT16_SOURCE_SIGNATURE_{digest.hexdigest()[:16]}=1",
-               "-DUSE_FP64" if args.fp64 else "-DUSE_KAHAN")
-    module = cp.RawModule(code=GPU_SOURCE.read_text(encoding="utf-8"), options=options, backend="nvrtc")
+    cubin, manifest = load_cuda_artifact(
+        "initial", "fp64" if args.fp64 else "fp32_kahan", args.field_mode, args.lut_cache_mode,
+    )
+    lut = reference._load_lut(cp, dtype, manifest) if args.field_mode == "lut" else np.uintp(0)
+    module = cp.RawModule(path=str(cubin))
     kernel = module.get_function("scan_initial_cuda")
     k = args.k
     states_gpu = cp.zeros((k * k, len(reference.STATE_NAMES)), dtype=dtype)
