@@ -11,6 +11,7 @@
 #include <limits>
 #include <sstream>
 #include <iomanip>
+#include <array>
 
 namespace {
 
@@ -61,6 +62,23 @@ const LUTNode *trajectory_lut()
 }
 
 } // namespace
+
+// Mechanical power per unit mass, in the solver's dimensionless 2D units.
+// M in eval_rhs is angular acceleration: physical torque / mass = Eta*alpha^2*M.
+std::array<real_t, 3> magnetic_mechanical_power(const State &state, const SolverParams &params)
+{
+    validate_params(params);
+    FieldCache cache{};
+    const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
+    const auto field = eval_mag_field_and_force(params, state.pos, q_world,
+                                               state.down_disk_angle, &cache, trajectory_lut());
+    constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) /
+                        (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+    const Vec3 angular_acceleration = -params.gamma_m * E * cross(q_world, field.h);
+    const real_t translation = field.Force.x * state.speed.x + field.Force.y * state.speed.y;
+    const real_t rotation = Eta * params.alpha * params.alpha * (angular_acceleration * state.omega);
+    return {translation, rotation, translation + rotation};
+}
 
 // Each call advances one trajectory chunk. Contact mode and direction are
 // carried into the next chunk; the field cache remains local to this call.
@@ -117,3 +135,7 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
     }
     return state;
 }
+
+// The model header defines non-inline evolution functions. Keep the scan in
+// this translation unit so the extension has exactly one copy of them.
+#include "scan_initial_cpu.cpp"

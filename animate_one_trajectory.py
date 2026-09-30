@@ -33,7 +33,7 @@ FAST_MAX_PLOT_POINTS = 2000
 
 # Radius and angular-speed multipliers at the same selected point as the 1D animation.
 SR = 1
-SOMEGA = 1.0
+SOMEGA = 2.0
 
 # These are the 8-magnet references. The field period rate is N/2 per
 # revolution, so the three acceleration coefficients scale as (N/8)**2.
@@ -75,7 +75,8 @@ def read_build_config(*, kahan: bool) -> dict:
 
 
 def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
-                     frames: int | None, pre: float, fast: bool, show_magnets: bool) -> None:
+                     frames: int | None, pre: float, fast: bool, show_magnets: bool,
+                     show_work=False, sr=SR, somega=SOMEGA, v0=0.0, s0=0.0, phi0=0.0) -> None:
     def row(label: str, value: object) -> None:
         print(f"  {label:<28} {value}")
 
@@ -87,7 +88,7 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
 
     count = config["magnet_number"]
     effective_dt = timestep_for_magnets(count) if dt is None else dt
-    parameters = scaled_model_parameters(count)
+    parameters = scaled_model_parameters(count, sr=sr, somega=somega)
     print("\n=== 2D CPU animation | effective configuration ===")
     section("Build")
     cache_info = (str(config["lut_cache_mode"]) if config["field_mode"] == "lut" else "inactive (exact field)")
@@ -101,7 +102,9 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
     for label, value in config["model_parameters"].items():
         row(label, display_literal(value))
     section("Trajectory")
-    row("s_r / s_omega", f"{SR:g} / {SOMEGA:g}")
+    row("s_r / s_omega", f"{sr:g} / {somega:g}")
+    row("Initial v0 / S0 / phi0", f"{v0:.12g} / {s0:.12g} / {phi0:.12g}")
+    row("Magnetic mechanical power", show_work)
     for label, value in zip(("alpha", "delta", "gamma_g", "gamma", "gamma_m"), parameters):
         row(label, f"{value:.9g}")
     row("dt", f"{effective_dt:.12g}")
@@ -180,9 +183,16 @@ def load_hysteresis(*, kahan=False):
     return module
 
 
-def make_initial_state(module):
+def make_initial_state(module, *, alpha=None, v0=0.0, s0=0.0, phi0=0.0):
     state = np.zeros(module.state_size, dtype=module.real_dtype)
-    state[1] = module.magnet_number / 2  # magnet radius in dimensionless units
+    radius = module.magnet_number / 2
+    radial_direction = np.array([np.cos(phi0), np.sin(phi0)])
+    state[1:3] = radius * radial_direction
+    state[3:5] = radius * v0 * np.array([-radial_direction[1], radial_direction[0]])
+    if alpha is not None:
+        state[9:11] = radius * (s0 - v0) / alpha * radial_direction
+    elif v0 != 0 or s0 != 0:
+        raise ValueError("alpha is required for a nonzero initial velocity or slip")
     state[5] = 1  # identity attitude quaternion, (w, x, y, z)
     return state
 
@@ -206,7 +216,9 @@ def minmax_downsample(times, values, max_points):
 
 
 def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False, pre=0.0,
-            kahan=False, expected_config=None):
+            kahan=False, expected_config=None, show_work=False,
+            sr=SR, somega=SOMEGA, v0=0.0, s0=0.0, phi0=0.0,
+            path_max_points=FAST_MAX_PLOT_POINTS):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -224,8 +236,12 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         raise ValueError("dt and steps_per_frame must be positive")
     if not np.isfinite(pre) or pre < 0:
         raise ValueError("pre must be finite and non-negative")
-    params = module.SolverParams(*scaled_model_parameters(magnet_count))
-    state = make_initial_state(module)
+    if path_max_points < 0:
+        raise ValueError("path_max_points must be non-negative (0 keeps every point)")
+    if not all(np.isfinite(value) for value in (v0, s0, phi0)):
+        raise ValueError("initial values must be finite")
+    params = module.SolverParams(*scaled_model_parameters(magnet_count, sr=sr, somega=somega))
+    state = make_initial_state(module, alpha=params.alpha, v0=v0, s0=s0, phi0=phi0)
     sliding = None
     sliding_dir = None
     pre_step_count = pre / dt
@@ -242,13 +258,14 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     magnet_radius = magnet_count / 2
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count if show_magnets else None
 
-    fig = plt.figure(figsize=(14, 9), **({} if fast else {"layout": "constrained"}))
-    grid = fig.add_gridspec(4, 2, width_ratios=(1.3, 1.0))
+    fig = plt.figure(figsize=(14, 11 if show_work else 9), **({} if fast else {"layout": "constrained"}))
+    grid = fig.add_gridspec(5 if show_work else 4, 2, width_ratios=(1.3, 1.0))
     scene = fig.add_subplot(grid[:, 0])
     radial_axis = fig.add_subplot(grid[0, 1])
     angular_axis = fig.add_subplot(grid[1, 1], sharex=radial_axis)
     displacement_axis = fig.add_subplot(grid[2, 1], sharex=radial_axis)
     velocity_axis = fig.add_subplot(grid[3, 1], sharex=radial_axis)
+    work_axis = fig.add_subplot(grid[4, 1], sharex=radial_axis) if show_work else None
 
     extent = magnet_radius + 1.0
     scene.set(xlim=(-extent, extent), ylim=(-extent, extent), xlabel="x", ylabel="y")
@@ -264,7 +281,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
                         fontsize=9, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
     scene.set_title(f"Top view · {magnet_count} rotating magnets · {module.field_mode} field")
 
-    times = [0.0]
+    times = [time]
     radial = [float(np.hypot(state[1], state[2]))]
     polar = [float(np.arctan2(state[2], state[1]))]
     initial_angle = polar[0]
@@ -287,31 +304,52 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     velocity_axis.set(xlabel="time (2D units)", ylabel="velocity (2D units)")
     velocity_axis.legend(loc="upper right", fontsize=8)
     velocity_axis.axhline(0, color="0.5", linewidth=0.7)
+    power_values = []
+    power_lines = []
+    if show_work:
+        power_values = [[float(value)] for value in module.magnetic_power(state, params)]
+        for label, color, values in zip(("F_mag dot v", "torque_mag dot omega", "total magnetic power"),
+                                        ("tab:blue", "tab:purple", "black"), power_values):
+            (line,) = work_axis.plot(times, values, color=color, label=label, linewidth=1.0)
+            power_lines.append(line)
+        work_axis.set(xlabel="time (2D units)", ylabel="magnetic power / mass\n(2D units)")
+        work_axis.axhline(0, color="0.5", linewidth=0.7)
+        work_axis.legend(loc="upper right", fontsize=8)
+        work_axis.grid(alpha=0.25)
     for axis in (radial_axis, angular_axis, displacement_axis, velocity_axis):
         axis.grid(alpha=0.25)
-    fig.suptitle(f"Single 2D trajectory · sr={SR:g}, sω={SOMEGA:g}")
+    fig.suptitle(f"Single 2D trajectory · sr={sr:g}, sω={somega:g}")
 
     def render(*, update_graphs=True, rescale=True):
         if magnets is not None:
             angle = base_angles + float(state[0])
             magnets.set_offsets(np.column_stack((magnet_radius * np.cos(angle), magnet_radius * np.sin(angle))))
         ball.set_data([xs[-1]], [ys[-1]])
-        if fast and len(xs) > FAST_MAX_PLOT_POINTS:
-            indices = np.linspace(0, len(xs) - 1, FAST_MAX_PLOT_POINTS, dtype=np.int64)
+        if fast and path_max_points and len(xs) > path_max_points:
+            # Preserve the initial excursion at its original sampling density.
+            early_count = min(1000, path_max_points // 2)
+            indices = np.r_[np.arange(early_count),
+                            np.linspace(early_count, len(xs) - 1,
+                                        path_max_points - early_count, dtype=np.int64)]
             path_line.set_data(np.asarray(xs)[indices], np.asarray(ys)[indices])
         else:
             path_line.set_data(xs, ys)
         if update_graphs:
-            for line, values in ((radial_line, radial), (polar_line, polar),
-                                 (displacement_line, equivalent_x), (speed_line, speeds),
-                                 (tangential_line, tangential_speeds)):
+            graph_series = [(radial_line, radial), (polar_line, polar),
+                            (displacement_line, equivalent_x), (speed_line, speeds),
+                            (tangential_line, tangential_speeds)]
+            graph_series.extend(zip(power_lines, power_values))
+            for line, values in graph_series:
                 display_times, display_values = (minmax_downsample(times, values, FAST_MAX_PLOT_POINTS)
                                                  if fast else (times, values))
                 line.set_data(display_times, display_values)
         if rescale:
             radial_axis.set_xlim(0, max(1.0, time * 1.05))
-            for axis, values in ((radial_axis, radial), (angular_axis, polar),
-                                 (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds)):
+            limits = [(radial_axis, radial), (angular_axis, polar),
+                      (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds)]
+            if show_work:
+                limits.append((work_axis, [value for series in power_values for value in series]))
+            for axis, values in limits:
                 lower, upper = min(values), max(values)
                 padding = max(0.05, 0.1 * (upper - lower))
                 axis.set_ylim(lower - padding, upper + padding)
@@ -325,7 +363,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
             f"{'sliding' if sliding else 'rolling'}"
         )
         artists = (ball, path_line, radial_line, polar_line, displacement_line,
-                   speed_line, tangential_line, status)
+                   speed_line, tangential_line, *power_lines, status)
         return (magnets, *artists) if magnets is not None else artists
 
     def update(_frame):
@@ -350,6 +388,9 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
                 float((state[1] * state[4] - state[2] * state[3]) / radial[-1])
                 if radial[-1] > 0.0 else float("nan")
             )
+            if show_work:
+                for values, value in zip(power_values, module.magnetic_power(state, params)):
+                    values.append(float(value))
         return render(update_graphs=not fast or _frame % FAST_GRAPH_UPDATE_EVERY == 0,
                       rescale=not fast or _frame % FAST_RESCALE_EVERY == 0)
 
@@ -375,9 +416,23 @@ def main():
     parser.add_argument("--frames", type=int, help="stop after this many display frames")
     parser.add_argument("--hide-magnets", action="store_true", help="omit magnet markers from the animation")
     parser.add_argument("--fast", action="store_true", help="batch solver steps and reduce plotting overhead")
+    parser.add_argument("--show-work", action="store_true", help="plot magnetic mechanical power F dot v + torque dot omega (per mass, 2D units)")
+    parser.add_argument("--path-max-points", type=int, default=FAST_MAX_PLOT_POINTS,
+                        help="maximum fast-mode trajectory points; 0 keeps all points; initial points are preserved")
+    parser.add_argument("--sr", type=float, default=SR)
+    parser.add_argument("--somega", type=float, default=SOMEGA)
+    parser.add_argument("--v0", type=float, default=0.0, help="initial signed tangential speed in 1D units")
+    parser.add_argument("--s0", type=float, default=0.0, help="initial signed tangential slip in 1D units; omega0=(s0-v0)/alpha")
+    parser.add_argument("--phi0", type=float, default=0.0, help="initial orbital angle in radians; disk angle starts at zero")
     parser.add_argument("--dry-run", action="store_true", help="print and validate the build and runtime configuration without starting the animation")
     parser.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
     args = parser.parse_args()
+    if args.path_max_points < 0:
+        parser.error("--path-max-points must be non-negative")
+    if not all(np.isfinite(value) for value in (args.sr, args.somega, args.v0, args.s0, args.phi0)):
+        parser.error("parameters and initial values must be finite")
+    if args.sr <= 0 or args.somega <= 0:
+        parser.error("--sr and --somega must be positive")
     if args.frames is not None and args.frames <= 0:
         parser.error("--frames must be positive")
     if not np.isfinite(args.pre) or args.pre < 0:
@@ -389,7 +444,8 @@ def main():
     config = read_build_config(kahan=args.kahan)
     print_run_config(config, dt=args.dt, steps_per_frame=args.steps_per_frame,
                      frames=args.frames, pre=args.pre, fast=args.fast,
-                     show_magnets=not args.hide_magnets)
+                     show_magnets=not args.hide_magnets, show_work=args.show_work,
+                     sr=args.sr, somega=args.somega, v0=args.v0, s0=args.s0, phi0=args.phi0)
     if args.dry_run:
         return
     if not args.yes:
@@ -410,6 +466,9 @@ def main():
         pre=args.pre,
         kahan=args.kahan,
         expected_config=config,
+        show_work=args.show_work, sr=args.sr, somega=args.somega,
+        v0=args.v0, s0=args.s0, phi0=args.phi0,
+        path_max_points=args.path_max_points,
     )
     plt.show()
 

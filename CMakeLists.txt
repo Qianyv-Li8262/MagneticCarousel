@@ -17,6 +17,10 @@ find_package(Boost CONFIG REQUIRED COMPONENTS multiprecision)
 include(CTest)
 
 set(KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
+# scan_initial_cpu.cpp is included by 2dmodel-hysteresis.cpp because the model
+# header defines non-inline evolution functions. List it as a source for build
+# tracking while keeping a single translation unit for those definitions.
+set_source_files_properties("${KERNEL_DIR}/scan_initial_cpu.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
 set(IYPT16_FIELD_MODE "exact" CACHE STRING "Magnetic field evaluation: exact or lut")
 set_property(CACHE IYPT16_FIELD_MODE PROPERTY STRINGS exact lut)
 set(IYPT16_LUT_CACHE_MODE "0" CACHE STRING "LUT cache: 0=off, 1=nodes, 2=spline coefficients")
@@ -69,6 +73,7 @@ endif()
 
 pybind11_add_module(hysteresis_fp64 MODULE NO_EXTRAS
     "${KERNEL_DIR}/2dmodel-hysteresis.cpp"
+    "${KERNEL_DIR}/scan_initial_cpu.cpp"
     "${KERNEL_DIR}/bindings/pybind.cpp"
 )
 target_compile_features(hysteresis_fp64 PRIVATE cxx_std_17)
@@ -95,6 +100,7 @@ set_target_properties(hysteresis_fp64 PROPERTIES
 # lets the Python loader choose the requested precision explicitly.
 pybind11_add_module(hysteresis_fp32_kahan MODULE NO_EXTRAS
     "${KERNEL_DIR}/2dmodel-hysteresis.cpp"
+    "${KERNEL_DIR}/scan_initial_cpu.cpp"
     "${KERNEL_DIR}/bindings/pybind.cpp"
 )
 target_compile_features(hysteresis_fp32_kahan PRIVATE cxx_std_17)

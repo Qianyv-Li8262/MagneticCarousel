@@ -6,9 +6,12 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <array>
 
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
+#include "scan_initial_cpu.hpp"
 
 namespace py = pybind11;
 
@@ -18,6 +21,7 @@ namespace py = pybind11;
 
 State evolve_trajectory(const State &initial, real_t dt, int steps, const SolverParams &params,
                         bool &sliding, Vec2 &sliding_dir, bool initialize, std::int64_t start_step);
+std::array<real_t, 3> magnetic_mechanical_power(const State &state, const SolverParams &params);
 
 // [disk angle, pos x/y, speed x/y, quaternion w/x/y/z,
 //  omega x/y/z, hysteresis q x/y/z]. Time is tracked by Python.
@@ -85,9 +89,44 @@ py::tuple evolve_numpy(const py::array_t<real_t, py::array::c_style | py::array:
     return py::make_tuple(state_to_numpy(state), sliding, std::move(direction_out));
 }
 
+py::tuple scan_initial_numpy(const py::array_t<real_t, py::array::c_style> &v0,
+                             const py::array_t<real_t, py::array::c_style> &s0,
+                             real_t dt, int steps, int window_steps, int sample_stride,
+                             real_t sr, real_t somega, const SolverParams &reference,
+                             int num_threads)
+{
+    if (v0.ndim() != 1 || s0.ndim() != 1 || v0.size() != s0.size() ||
+        v0.size() < 1 || v0.size() > 46340)
+        throw py::value_error("v0 and s0 must be contiguous 1D arrays of equal length (1..46340)");
+    if (num_threads < 0 || steps < 1 || window_steps < 2 || window_steps > steps ||
+        sample_stride < 1 || !real_isfinite(dt) || dt <= REAL_LITERAL(0.0) ||
+        !real_isfinite(sr) || sr <= REAL_LITERAL(0.0) ||
+        !real_isfinite(somega) || somega <= REAL_LITERAL(0.0))
+        throw py::value_error("invalid scan time, scale, or thread setting");
+    const py::ssize_t k = v0.size();
+    py::array_t<std::int32_t> status({k, k});
+    py::array_t<real_t> metrics({k, k, py::ssize_t(20)});
+    py::array_t<real_t> states({k, k, state_size});
+    auto *status_ptr = status.mutable_data();
+    auto *metrics_ptr = metrics.mutable_data();
+    auto *states_ptr = states.mutable_data();
+    const std::size_t cells = static_cast<std::size_t>(k) * static_cast<std::size_t>(k);
+    for (std::size_t i = 0; i < cells; ++i) status_ptr[i] = -2;
+    for (std::size_t i = 0; i < cells * 20; ++i)
+        metrics_ptr[i] = std::numeric_limits<real_t>::quiet_NaN();
+    for (std::size_t i = 0; i < cells * 15; ++i) states_ptr[i] = REAL_LITERAL(0.0);
+    {
+        py::gil_scoped_release release;
+        scan_initial_grid_cpu(v0.data(), s0.data(), static_cast<std::size_t>(k),
+                              dt, steps, window_steps, sample_stride, sr, somega,
+                              reference, num_threads, status_ptr, metrics_ptr, states_ptr);
+    }
+    return py::make_tuple(std::move(status), std::move(metrics), std::move(states));
+}
+
 PYBIND11_MODULE(MODULE_NAME, m)
 {
-    m.doc() = "Single CPU trajectory for the two-dimensional hysteresis model";
+    m.doc() = "CPU trajectories and initial-state scan for the two-dimensional hysteresis model";
     m.attr("real_dtype") = py::dtype::of<real_t>();
     m.attr("state_size") = state_size;
     m.attr("magnet_number") = magnet_number;
@@ -106,4 +145,18 @@ PYBIND11_MODULE(MODULE_NAME, m)
           py::arg("sliding_dir") = py::none(), py::arg("start_step") = 0,
           "Advance one trajectory chunk and return (state, sliding, sliding_dir). "
           "Pass the returned mode and direction into the next chunk.");
+    m.def("magnetic_power", [](const py::array_t<real_t, py::array::c_style | py::array::forcecast> &input,
+                               const SolverParams &params) {
+        const auto values = magnetic_mechanical_power(state_from_numpy(input), params);
+        return py::make_tuple(values[0], values[1], values[2]);
+    }, py::arg("state"), py::arg("params"),
+       "Return magnetic (translational, rotational, total) mechanical power per unit mass in dimensionless 2D units.");
+    m.def("scan_initial_grid", &scan_initial_numpy,
+          py::arg("v0").noconvert(), py::arg("s0").noconvert(),
+          py::arg("dt"), py::arg("steps"), py::arg("window_steps"), py::arg("sample_stride"),
+          py::arg("sr"), py::arg("somega"), py::arg("reference_params"),
+          py::arg("num_threads") = 0,
+          "Scan an initial (v0,S0) grid with C++ worker threads; return status, metrics, states. "
+          "v0 and s0 must be contiguous arrays with the module's real_dtype. "
+          "num_threads=0 uses hardware concurrency.");
 }
