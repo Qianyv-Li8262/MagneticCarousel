@@ -30,12 +30,36 @@ def literal(source: str, name: str, kind: str) -> str:
     return matches[0].strip()
 
 
+def field_parameters(source: str) -> dict:
+    values = {key: literal(source, key, "int")
+              for key in ("magnet_number", "kFieldFourierModeCount", "kSplineNodes")}
+    for macro, label in (("IYPT16_FIELD_HEIGHT", "height"),
+                         ("IYPT16_LUT_LOWER_BOUND_RATIO", "lut_lower_bound_ratio"),
+                         ("IYPT16_LUT_UPPER_BOUND_RATIO", "lut_upper_bound_ratio")):
+        match = re.search(rf"^#define {macro}\s+([^\s]+)", source, re.MULTILINE)
+        if match is None:
+            raise ValueError(f"{macro} is missing from the field header")
+        values[label] = match.group(1)
+    return values
+
+
+def write_manifest(path: Path, data: dict) -> None:
+    contents = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    if not path.is_file() or path.read_text(encoding="utf-8") != contents:
+        path.write_text(contents, encoding="utf-8")
+        print(f"Wrote {path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--source-dir", type=Path, required=True)
     parser.add_argument("--precision", choices=("fp64", "fp32-kahan"), required=True)
     parser.add_argument("--field-mode", choices=("exact", "lut"), required=True)
+    parser.add_argument("--magnet-model", choices=("point", "cylinder"), default="point")
+    parser.add_argument("--magnet-radius")
+    parser.add_argument("--magnet-thickness")
+    parser.add_argument("--lut", type=Path)
     parser.add_argument("--lut-cache-mode", choices=(0, 1, 2), type=int, required=True)
     args = parser.parse_args()
 
@@ -47,11 +71,10 @@ def main() -> None:
     magnet_number = int(literal(field_source, "magnet_number", "int"))
     if magnet_number < 2 or magnet_number % 2:
         raise ValueError("magnet_number must be an even integer >= 2")
-    field_keys = ("magnet_number", "kFieldFourierModeCount", "kSplineNodes")
     model_keys = ("Mu_r", "Alpha_JA", "C_JA", "K", "Beta", "Eta", "Mu",
                   "kStepRefinementRecursionDepth", "kAttitudeNormalizeMode",
                   "kDebugChkEight", "kDebugChkTen", "kFinerStepCheck")
-    field_values = {key: literal(field_source, key, "int") for key in field_keys}
+    field_values = field_parameters(field_source)
     model_values = {
         key: literal(model_source, key, "int" if key == "kStepRefinementRecursionDepth"
                      else "bool" if key in ("kDebugChkEight", "kDebugChkTen", "kFinerStepCheck")
@@ -59,19 +82,15 @@ def main() -> None:
                      else "real_t")
         for key in model_keys
     }
-    for macro, label in (("IYPT16_FIELD_HEIGHT", "height"),
-                         ("IYPT16_LUT_LOWER_BOUND_RATIO", "lut_lower_bound_ratio"),
-                         ("IYPT16_LUT_UPPER_BOUND_RATIO", "lut_upper_bound_ratio")):
-        match = re.search(rf"^#define {macro}\s+([^\s]+)", field_source, re.MULTILINE)
-        if match is None:
-            raise ValueError(f"{macro} is missing from the field header")
-        field_values[label] = match.group(1)
     data = {
         "schema_version": 1,
         "binary": args.binary.name,
         "binary_sha256": sha256(args.binary),
         "precision": args.precision,
         "field_mode": args.field_mode,
+        "magnet_model": args.magnet_model,
+        "magnet_geometry": ({"radius": args.magnet_radius, "thickness": args.magnet_thickness}
+                            if args.magnet_model == "cylinder" else None),
         "lut_cache_mode": args.lut_cache_mode,
         "magnet_number": magnet_number,
         "field_parameters": field_values,
@@ -81,9 +100,13 @@ def main() -> None:
             for path in (field_header, model_header)
         },
     }
+    if args.field_mode == "lut":
+        if args.lut is None or not args.lut.is_file():
+            raise FileNotFoundError("LUT mode requires the selected generated table")
+        data["lut"] = str(args.lut.resolve())
+        data["lut_sha256"] = sha256(args.lut)
     output = args.binary.parent / "build_config.json"
-    output.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Wrote {output}")
+    write_manifest(output, data)
 
 
 if __name__ == "__main__":

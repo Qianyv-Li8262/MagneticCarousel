@@ -23,6 +23,39 @@ set(KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
 set_source_files_properties("${KERNEL_DIR}/scan_initial_cpu.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
 set(IYPT16_FIELD_MODE "exact" CACHE STRING "Magnetic field evaluation: exact or lut")
 set_property(CACHE IYPT16_FIELD_MODE PROPERTY STRINGS exact lut)
+set(IYPT16_MAGNET_MODEL "point" CACHE STRING "Magnet source geometry: point or cylinder")
+set_property(CACHE IYPT16_MAGNET_MODEL PROPERTY STRINGS point cylinder)
+set(IYPT16_MAGNET_RADIUS "" CACHE STRING "Finite magnet radius, normalized by k")
+set(IYPT16_MAGNET_THICKNESS "" CACHE STRING "Finite magnet thickness, normalized by k")
+if(NOT IYPT16_MAGNET_MODEL MATCHES "^(point|cylinder)$")
+    message(FATAL_ERROR "IYPT16_MAGNET_MODEL must be point or cylinder")
+endif()
+if(IYPT16_MAGNET_MODEL STREQUAL "cylinder")
+    if(IYPT16_MAGNET_RADIUS STREQUAL "" OR IYPT16_MAGNET_THICKNESS STREQUAL "")
+        message(FATAL_ERROR "cylinder requires IYPT16_MAGNET_RADIUS and IYPT16_MAGNET_THICKNESS (k-normalized lengths)")
+    endif()
+    if(NOT IYPT16_FIELD_MODE STREQUAL "lut")
+        message(STATUS "Finite cylinders require LUT: overriding IYPT16_FIELD_MODE=${IYPT16_FIELD_MODE} to lut")
+        set(IYPT16_FIELD_MODE lut CACHE STRING "Magnetic field evaluation: exact or lut" FORCE)
+    endif()
+endif()
+# Test-only cylinder dimensions when the selected production model is point.
+set(cylinder_radius "${IYPT16_MAGNET_RADIUS}")
+set(cylinder_thickness "${IYPT16_MAGNET_THICKNESS}")
+if(cylinder_radius STREQUAL "")
+    set(cylinder_radius 0.5)
+endif()
+if(cylinder_thickness STREQUAL "")
+    set(cylinder_thickness 0.5)
+endif()
+foreach(dimension IN ITEMS cylinder_radius cylinder_thickness)
+    if(NOT "${${dimension}}" MATCHES "^[+]?[0-9]*[.]?[0-9]+([eE][-+]?[0-9]+)?$")
+        message(FATAL_ERROR "${dimension} must be a positive numeric literal")
+    endif()
+    if(${dimension} LESS_EQUAL 0)
+        message(FATAL_ERROR "${dimension} must be positive")
+    endif()
+endforeach()
 set(IYPT16_LUT_CACHE_MODE "0" CACHE STRING "LUT cache: 0=off, 1=nodes, 2=spline coefficients")
 set_property(CACHE IYPT16_LUT_CACHE_MODE PROPERTY STRINGS 0 1 2)
 set(IYPT16_FIELD_LUT_THREADS "24" CACHE STRING "CPU threads used to generate the field LUT")
@@ -50,36 +83,68 @@ endif()
 add_executable(generate_field_lut
     "${KERNEL_DIR}/tools/generate_field_lut.cpp"
 )
-target_compile_features(generate_field_lut PRIVATE cxx_std_17)
-target_include_directories(generate_field_lut PRIVATE "${KERNEL_DIR}/headers")
-target_link_libraries(generate_field_lut PRIVATE Boost::multiprecision)
-if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    # Clang's Windows driver finds its bundled libomp, although FindOpenMP
-    # currently fails to identify the import library in this toolchain.
-    target_compile_options(generate_field_lut PRIVATE -fopenmp)
-    target_link_options(generate_field_lut PRIVATE -fopenmp)
-else()
-    find_package(OpenMP REQUIRED COMPONENTS CXX)
-    target_link_libraries(generate_field_lut PRIVATE OpenMP::OpenMP_CXX)
+function(configure_lut_generator target)
+    target_compile_features(${target} PRIVATE cxx_std_17)
+    target_include_directories(${target} PRIVATE "${KERNEL_DIR}/headers")
+    target_link_libraries(${target} PRIVATE Boost::multiprecision)
+    if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        # Clang's Windows driver finds its bundled libomp, although FindOpenMP
+        # currently fails to identify the import library in this toolchain.
+        target_compile_options(${target} PRIVATE -fopenmp)
+        target_link_options(${target} PRIVATE -fopenmp)
+    else()
+        find_package(OpenMP REQUIRED COMPONENTS CXX)
+        target_link_libraries(${target} PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+endfunction()
+configure_lut_generator(generate_field_lut)
+if(IYPT16_MAGNET_MODEL STREQUAL "cylinder" OR BUILD_TESTING)
+    add_executable(generate_cylinder_field_lut "${KERNEL_DIR}/tools/generate_cylinder_field_lut.cpp")
+    configure_lut_generator(generate_cylinder_field_lut)
+    target_compile_definitions(generate_cylinder_field_lut PRIVATE
+        IYPT16_CYLINDER_RADIUS=${cylinder_radius}
+        IYPT16_CYLINDER_THICKNESS=${cylinder_thickness})
 endif()
 
 if(IYPT16_FIELD_MODE STREQUAL "lut" OR BUILD_TESTING)
     set(FIELD_LUT_DIR "${CMAKE_BINARY_DIR}/field-lut")
     set(FIELD_LUT_FP32 "${FIELD_LUT_DIR}/field_lut_fp32.bin")
     set(FIELD_LUT_FP64 "${FIELD_LUT_DIR}/field_lut_fp64.bin")
-    add_custom_command(
-        OUTPUT "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${FIELD_LUT_DIR}"
-        COMMAND "${CMAKE_COMMAND}" -E env
+    foreach(model IN ITEMS point cylinder)
+        if(NOT BUILD_TESTING AND NOT IYPT16_MAGNET_MODEL STREQUAL model)
+            continue()
+        endif()
+        if(model STREQUAL "point")
+            set(generator_target generate_field_lut)
+        else()
+            set(generator_target generate_cylinder_field_lut)
+        endif()
+        set(FIELD_LUT_${model}_FP32 "${FIELD_LUT_DIR}/field_lut_${model}_fp32.bin")
+        set(FIELD_LUT_${model}_FP64 "${FIELD_LUT_DIR}/field_lut_${model}_fp64.bin")
+        add_custom_command(
+            OUTPUT "${FIELD_LUT_${model}_FP32}" "${FIELD_LUT_${model}_FP64}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${FIELD_LUT_DIR}"
+            COMMAND "${CMAKE_COMMAND}" -E env
                 "OMP_NUM_THREADS=${IYPT16_FIELD_LUT_THREADS}"
                 "OMP_DYNAMIC=FALSE" "OMP_PLACES=cores" "OMP_PROC_BIND=spread"
-                "$<TARGET_FILE:generate_field_lut>" "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
-        DEPENDS generate_field_lut
-                "${KERNEL_DIR}/tools/generate_field_lut.cpp"
+                "$<TARGET_FILE:${generator_target}>" "${FIELD_LUT_${model}_FP32}" "${FIELD_LUT_${model}_FP64}"
+            DEPENDS ${generator_target}
+                "${KERNEL_DIR}/tools/field_lut_common.hpp"
                 "${KERNEL_DIR}/headers/hysteresis_config_field.hpp"
-        VERBATIM
-    )
+            VERBATIM)
+        add_custom_target(generate_field_lut_${model}_files
+            DEPENDS "${FIELD_LUT_${model}_FP32}" "${FIELD_LUT_${model}_FP64}")
+    endforeach()
+    # Keep established runtime paths; only the selected model's data is staged.
+    add_custom_command(OUTPUT "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${FIELD_LUT_${IYPT16_MAGNET_MODEL}_FP32}" "${FIELD_LUT_FP32}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${FIELD_LUT_${IYPT16_MAGNET_MODEL}_FP64}" "${FIELD_LUT_FP64}"
+        DEPENDS "${FIELD_LUT_${IYPT16_MAGNET_MODEL}_FP32}" "${FIELD_LUT_${IYPT16_MAGNET_MODEL}_FP64}"
+        VERBATIM)
     add_custom_target(generate_field_lut_files DEPENDS "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}")
+
 endif()
 
 if(IYPT16_ENABLE_CUDA)
@@ -122,7 +187,8 @@ if(IYPT16_ENABLE_CUDA)
 
             set(stage_dependencies
                 "$<TARGET_OBJECTS:${object_target}>"
-                "${CMAKE_CURRENT_SOURCE_DIR}/write_cuda_build_config.py")
+                "${CMAKE_CURRENT_SOURCE_DIR}/write_cuda_build_config.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py")
             set(stage_args)
             if(IYPT16_FIELD_MODE STREQUAL "lut")
                 list(APPEND stage_dependencies generate_field_lut_files "${FIELD_LUT_FP32}" "${FIELD_LUT_FP64}")
@@ -133,19 +199,29 @@ if(IYPT16_ENABLE_CUDA)
                 endif()
             endif()
             add_custom_command(
-                OUTPUT "${cubin_path}" "${manifest_path}"
+                OUTPUT "${cubin_path}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${CUDA_SCAN_DIR}"
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_OBJECTS:${object_target}>" "${cubin_path}"
+                DEPENDS ${object_target} "$<TARGET_OBJECTS:${object_target}>"
+                VERBATIM)
+            add_custom_command(
+                OUTPUT "${manifest_path}"
                 COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/write_cuda_build_config.py"
-                    --binary "$<TARGET_OBJECTS:${object_target}>"
+                    --binary "${cubin_path}"
                     --output "${cubin_path}"
                     --source-dir "${CMAKE_CURRENT_SOURCE_DIR}"
                     --scan "${scan}"
                     --precision "${precision}"
                     --field-mode "${IYPT16_FIELD_MODE}"
+                    --magnet-model "${IYPT16_MAGNET_MODEL}"
+                    --magnet-radius "${cylinder_radius}"
+                    --magnet-thickness "${cylinder_thickness}"
                     --lut-cache-mode "${cuda_cache_mode}"
                     --architectures "${CMAKE_CUDA_ARCHITECTURES}"
                     --cuda-version "${CMAKE_CUDA_COMPILER_VERSION}"
                     ${stage_args}
-                DEPENDS ${object_target} ${stage_dependencies}
+                DEPENDS "${cubin_path}" ${stage_dependencies}
                 VERBATIM
             )
             add_custom_target(${scan_target} ALL DEPENDS "${cubin_path}" "${manifest_path}")
@@ -204,26 +280,58 @@ set_target_properties(hysteresis_fp32_kahan PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp32-kahan"
 )
 
-# Record the actual extension built in each precision directory. POST_BUILD
-# keeps the manifest tied to the binary rather than to CMake configure time.
+# Manifests are independent build outputs: editing metadata writers or replacing
+# a LUT refreshes JSON without relinking the extension. Binary/header dependencies
+# ensure computation changes are built before recording their metadata.
+add_custom_target(build_metadata)
 foreach(target IN ITEMS hysteresis_fp64 hysteresis_fp32_kahan)
-    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py")
     if(target STREQUAL "hysteresis_fp64")
         set(manifest_precision "fp64")
+        set(cpu_manifest_lut "${FIELD_LUT_FP64}")
+        set(manifest_directory "${CMAKE_BINARY_DIR}/extensions/fp64")
     else()
         set(manifest_precision "fp32-kahan")
+        set(cpu_manifest_lut "${FIELD_LUT_FP32}")
+        set(manifest_directory "${CMAKE_BINARY_DIR}/extensions/fp32-kahan")
     endif()
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py"
+    set(cpu_manifest_args)
+    set(cpu_manifest_dependencies)
+    if(IYPT16_FIELD_MODE STREQUAL "lut")
+        list(APPEND cpu_manifest_args --lut "${cpu_manifest_lut}")
+        list(APPEND cpu_manifest_dependencies "${cpu_manifest_lut}")
+    endif()
+    set(cpu_manifest "${manifest_directory}/build_config.json")
+    set(cpu_manifest_command "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py"
                 --binary "$<TARGET_FILE:${target}>"
                 --source-dir "${CMAKE_CURRENT_SOURCE_DIR}"
                 --precision "${manifest_precision}"
                 --field-mode "${IYPT16_FIELD_MODE}"
+                --magnet-model "${IYPT16_MAGNET_MODEL}"
+                --magnet-radius "${cylinder_radius}"
+                --magnet-thickness "${cylinder_thickness}"
                 --lut-cache-mode "${IYPT16_LUT_CACHE_MODE}"
-        VERBATIM
-    )
+                ${cpu_manifest_args})
+    # Preserve direct extension-target builds: a new binary also gets a manifest.
+    # The independent output below refreshes metadata when no link is needed.
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${cpu_manifest_command} VERBATIM)
+    add_custom_command(OUTPUT "${cpu_manifest}"
+        COMMAND ${cpu_manifest_command}
+        DEPENDS ${target} "$<TARGET_FILE:${target}>" ${cpu_manifest_dependencies}
+                "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py"
+                "${KERNEL_DIR}/headers/hysteresis_config_field.hpp"
+                "${KERNEL_DIR}/headers/hysteresis_config.hpp"
+        VERBATIM)
+    add_custom_target(${target}_manifest ALL DEPENDS "${cpu_manifest}")
+    add_dependencies(build_metadata ${target}_manifest)
 endforeach()
+if(IYPT16_ENABLE_CUDA)
+    foreach(scan IN ITEMS sr_somega initial)
+        foreach(precision IN ITEMS fp32_kahan fp64)
+            add_dependencies(build_metadata cuda_scan_${scan}_${precision})
+        endforeach()
+    endforeach()
+endif()
 
 if(BUILD_TESTING)
     function(add_native_test name)
@@ -244,15 +352,32 @@ if(BUILD_TESTING)
     add_native_test(test_lut_interpolation)
     add_native_test(test_fourier_field_reconstruction)
     target_compile_definitions(test_fourier_field_reconstruction PRIVATE FIELD_EVAL_MODE=1)
-    add_native_test(test_field_lut_vs_exact)
-    target_compile_definitions(test_field_lut_vs_exact PRIVATE USE_FP64 FIELD_EVAL_MODE=1
-        IYPT16_TEST_LUT_PATH="${FIELD_LUT_FP64}")
-    if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        target_compile_options(test_field_lut_vs_exact PRIVATE /ULUT_CACHE_MODE /DLUT_CACHE_MODE=2)
-    else()
-        target_compile_options(test_field_lut_vs_exact PRIVATE -ULUT_CACHE_MODE -DLUT_CACHE_MODE=2)
-    endif()
-    add_dependencies(test_field_lut_vs_exact generate_field_lut_files)
+    foreach(model IN ITEMS point cylinder)
+        if(model STREQUAL IYPT16_MAGNET_MODEL)
+            set(field_test test_field_lut_vs_exact)
+        else()
+            set(field_test test_field_lut_vs_${model})
+        endif()
+        add_executable(${field_test} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_field_lut_vs_exact.cpp")
+        target_compile_features(${field_test} PRIVATE cxx_std_17)
+        target_include_directories(${field_test} PRIVATE "${KERNEL_DIR}/headers" "${KERNEL_DIR}/tools")
+        target_link_libraries(${field_test} PRIVATE Boost::multiprecision)
+        add_test(NAME test_field_lut_vs_${model} COMMAND ${field_test})
+        target_compile_definitions(${field_test} PRIVATE USE_FP64 FIELD_EVAL_MODE=1
+            IYPT16_TEST_LUT_PATH="${FIELD_LUT_${model}_FP64}")
+        if(model STREQUAL "cylinder")
+            target_compile_definitions(${field_test} PRIVATE IYPT16_MAGNET_MODEL=1
+                IYPT16_CYLINDER_RADIUS=${cylinder_radius} IYPT16_CYLINDER_THICKNESS=${cylinder_thickness})
+        else()
+            target_compile_definitions(${field_test} PRIVATE IYPT16_MAGNET_MODEL=0)
+        endif()
+        if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(${field_test} PRIVATE /UNDEBUG /ULUT_CACHE_MODE /DLUT_CACHE_MODE=2)
+        else()
+            target_compile_options(${field_test} PRIVATE -UNDEBUG -ULUT_CACHE_MODE -DLUT_CACHE_MODE=2)
+        endif()
+        add_dependencies(${field_test} generate_field_lut_${model}_files)
+    endforeach()
     add_native_test(test_fwd_lut_domain)
     target_compile_definitions(test_fwd_lut_domain PRIVATE FIELD_EVAL_MODE=1)
     add_native_test(test_rolling_step)

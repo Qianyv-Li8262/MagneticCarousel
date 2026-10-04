@@ -12,10 +12,20 @@
 #include <iostream>
 #include <vector>
 
+#ifndef IYPT16_MAGNET_MODEL
+#define IYPT16_MAGNET_MODEL 0
+#endif
+#if IYPT16_MAGNET_MODEL == 1
+#include "finite_cylinder_reference.hpp"
+#endif
+
 namespace
 {
 FieldResult exact_field(const Vec2 pos, const real_t disk_angle)
 {
+#if IYPT16_MAGNET_MODEL == 1
+    return cylinder_reference::field(pos, disk_angle);
+#else
     Vec3 h{0, 0, 0};
     TracelessSymTensor grad{{0, 0, 0, 0, 0}};
     const real_t radius = static_cast<real_t>(magnet_number) / REAL_LITERAL(2.0);
@@ -44,6 +54,7 @@ FieldResult exact_field(const Vec2 pos, const real_t disk_angle)
     for (real_t &component : grad.component)
         component *= Beta;
     return {h, grad};
+#endif
 }
 
 std::array<real_t, 8> components(const FieldResult &field)
@@ -81,6 +92,26 @@ int main()
     const real_t rho_min = kLUTLowerBoundRatio * radius;
     const real_t drho = (kLUTUpperBoundRatio - kLUTLowerBoundRatio) * radius /
                          static_cast<real_t>(kSplineNodes - 1);
+#if IYPT16_MAGNET_MODEL == 1
+    // Check reference quadrature convergence at different radii and angles.
+    for (real_t r : {rho_min, radius, kLUTUpperBoundRatio*radius}) {
+        for (real_t phi : {REAL_LITERAL(0.0), magnet_phi0/REAL_LITERAL(2.0), REAL_LITERAL(0.37)}) {
+            const Vec2 pos{r*std::cos(phi),r*std::sin(phi)};
+            const auto coarse=components(cylinder_reference::field(pos, REAL_LITERAL(0.0)));
+            const auto fine=components(cylinder_reference::field(pos, REAL_LITERAL(0.0), true));
+            for (std::size_t i=0;i<coarse.size();++i) {
+                if (std::abs(coarse[i]-fine[i]) > 1e-10*(1+std::abs(fine[i]))) {
+                    std::cerr << "Cylinder surface-integral reference did not converge\n";
+                    return EXIT_FAILURE;
+                }
+            }
+        }
+    }
+    std::cout << "Reference: uniformly magnetized finite cylinder, radius="
+              << IYPT16_CYLINDER_RADIUS << ", thickness=" << IYPT16_CYLINDER_THICKNESS << '\n';
+#else
+    std::cout << "Reference: point dipole array\n";
+#endif
     std::array<real_t, 8> peak_reference{};
     std::array<real_t, 8> peak_error{};
     std::array<real_t, 8> worst_rho{};

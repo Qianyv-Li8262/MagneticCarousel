@@ -30,14 +30,14 @@ SR_LOWER = 0.1
 SR_UPPER = 6.0
 SOMEGA_LOWER = 0.1
 SOMEGA_UPPER = 5.0
-K = 128
+K = 256
 DT_AT_EIGHT = 1.0e-3
 TOTAL_TIME_AT_EIGHT = 1500.0
 OBSERVATION_WINDOW_AT_EIGHT = 500.0
 SAMPLE_TIME_AT_EIGHT = 0.05
 LOCK_THRESHOLD = 0.05
 SPEED_ONE_THRESHOLD = 0.05
-RADIUS_TOLERANCE_AT_EIGHT = 0.1
+RADIUS_TOLERANCE_AT_EIGHT = 0.8
 # The following baseline times are for eight magnets. One-dimensional phase
 # time is then 4 times the 2D time:
 # TOTAL_TIME=2500 corresponds to a 1D horizon of 10000.
@@ -91,8 +91,8 @@ TOTAL_TIME = TOTAL_TIME_AT_EIGHT * TIME_SCALE
 OBSERVATION_WINDOW = OBSERVATION_WINDOW_AT_EIGHT * TIME_SCALE
 SAMPLE_TIME = SAMPLE_TIME_AT_EIGHT * TIME_SCALE
 RADIUS_TOLERANCE = RADIUS_TOLERANCE_AT_EIGHT / TIME_SCALE
-SAVE_PATH = SCRATCH_DIR / "phase-behavior" / f"sr_somega_2d-{MAGNET_NUMBER}.png"
-SAVE_DATA_PATH = RUNS_DIR / "phase-behavior" / f"sr_somega_2d-{MAGNET_NUMBER}.npz"
+SAVE_PATH = SCRATCH_DIR / "phase-behavior" / f"sr_somega_2d-{MAGNET_NUMBER}-CYL.png"
+SAVE_DATA_PATH = RUNS_DIR / "phase-behavior" / f"sr_somega_2d-{MAGNET_NUMBER}-CYL.npz"
 LUT_PATH = BUILD_DIR / "field-lut" / ("field_lut_fp64.bin" if USE_FP64 else "field_lut_fp32.bin")
 STATE_NAMES = (
     "down_disk_angle", "pos_x", "pos_y", "speed_x", "speed_y",
@@ -138,13 +138,15 @@ def _load_lut(cp, dtype: np.dtype, manifest: dict):
 
 
 def _get_cuda_module(cp):
-    global _CUDA_MODULE
+    global _CUDA_MODULE, FIELD_EVAL_MODE
     if _CUDA_MODULE is not None:
         return _CUDA_MODULE
     cubin, manifest = load_cuda_artifact(
         "sr_somega", "fp64" if USE_FP64 else "fp32_kahan",
         "lut" if FIELD_EVAL_MODE else "exact", LUT_CACHE_MODE,
     )
+    if manifest.get("magnet_model") == "cylinder":
+        FIELD_EVAL_MODE = 1
     _CUDA_MODULE = cp.RawModule(path=str(cubin)), manifest
     return _CUDA_MODULE
 
@@ -341,6 +343,15 @@ def steps_to_time() -> float:
 
 
 def print_run_config(*, profile: bool) -> None:
+    global FIELD_EVAL_MODE
+    from build_metadata import print_build_metadata
+    cubin, manifest = load_cuda_artifact(
+        "sr_somega", "fp64" if USE_FP64 else "fp32_kahan",
+        "lut" if FIELD_EVAL_MODE else "exact", LUT_CACHE_MODE,
+    )
+    if int(manifest["field_parameters"]["magnet_number"]) != MAGNET_NUMBER:
+        raise RuntimeError("GPU magnet count differs from this scan; rebuild the CMake target")
+    FIELD_EVAL_MODE = 1 if manifest["field_mode"] == "lut" else 0
     def row(label: str, value: object) -> None:
         print(f"  {label:<20} {value}")
 
@@ -351,6 +362,7 @@ def print_run_config(*, profile: bool) -> None:
     window_steps = min(steps, round(OBSERVATION_WINDOW / DT))
     sample_stride = max(1, round(SAMPLE_TIME / DT))
     print("\n=== 2D CUDA scan | effective configuration ===")
+    print_build_metadata(manifest)
     section("Model and grid")
     row("Magnets / radius", f"{MAGNET_NUMBER} / {MAGNET_RADIUS:g}")
     row("Grid", f"{K} x {K}")
@@ -374,6 +386,7 @@ def print_run_config(*, profile: bool) -> None:
                          ("gamma_m", REFERENCE_GAMMA_M)):
         row(label, f"{value:.9g}")
     section("Files")
+    row("CUDA build", cubin)
     row("Magnet source", CONFIG_HEADER)
     if FIELD_EVAL_MODE == 1:
         row("LUT", LUT_PATH)

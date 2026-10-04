@@ -18,6 +18,8 @@ def load_cuda_artifact(scan: str, precision: str, field_mode: str, cache_mode: i
     if not manifest_path.is_file():
         raise FileNotFoundError(f"GPU build missing: {manifest_path}; build CMake target {name}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("magnet_model") == "cylinder":
+        field_mode = "lut"
     expected = {"schema_version": 1, "scan": scan, "precision": precision,
                 "field_mode": field_mode, "lut_cache_mode": cache_mode if field_mode == "lut" else 0}
     if any(manifest.get(key) != value for key, value in expected.items()):

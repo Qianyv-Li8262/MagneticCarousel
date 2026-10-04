@@ -59,11 +59,13 @@ CONFIG_CONST real_t height =
     IYPT16_REAL_LITERAL(IYPT16_FIELD_HEIGHT); // normalized by k = 2 * pi / lambda, not height_phys / lambda
 CONFIG_CONST int magnet_number = 8;
 CONFIG_CONST real_t magnet_phi0 = real_two_pi() / magnet_number;
-CONFIG_CONST int kFieldFourierModeCount = 7;
+CONFIG_CONST int kFieldFourierModeCount = 5;
 // Keep this manual. The LUT spans [0.5R, 1.5R] with R = magnet_number / 2.
-// To preserve the 8-magnet (128-node) radial spacing when changing N,
-// choose approximately 1 + round(127 * N / 8) nodes (e.g. N=16 -> 255).
-CONFIG_CONST int kSplineNodes = 200;
+// Five modes x 204 nodes x four FP64 scalars = 32640 bytes (< 32 KiB).
+// Recheck both field comparisons when changing geometry, modes, or nodes.
+CONFIG_CONST int kSplineNodes = 204;
+static_assert(kFieldFourierModeCount * kSplineNodes * 4 * sizeof(double) <= 32 * 1024,
+              "FP64 field LUT exceeds the 32 KiB shared-memory budget");
 CONFIG_CONST real_t kLUTLowerBoundRatio =
     IYPT16_REAL_LITERAL(IYPT16_LUT_LOWER_BOUND_RATIO); // LUT domain: distance in units of the magnet radius.
 CONFIG_CONST real_t kLUTUpperBoundRatio =

@@ -11,7 +11,8 @@ from time import perf_counter
 import numpy as np
 
 from project_paths import extension_dir
-from animate_one_trajectory import scaled_model_parameters, timestep_for_magnets
+from animate_one_trajectory import read_build_config, scaled_model_parameters, timestep_for_magnets
+from build_metadata import print_build_metadata
 
 
 # Edit these values, then run: python src2d/benchmark.py
@@ -40,6 +41,7 @@ def main():
         raise ValueError("X must be a positive int32 step count")
 
     # Search only the selected build; never silently load another installed module.
+    print_build_metadata(read_build_config(kahan=False))
     directory = extension_dir("fp64")
     spec = importlib.machinery.PathFinder.find_spec("hysteresis", [str(directory)])
     if spec is None or spec.loader is None:

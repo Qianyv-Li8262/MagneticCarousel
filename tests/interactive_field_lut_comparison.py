@@ -12,7 +12,7 @@ Fourier mode count can be changed interactively.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -168,7 +168,7 @@ def _exact_components(x: np.ndarray, y: np.ndarray, settings: Settings) -> dict[
     return {name: value.reshape(shape) for name, value in values.items()}
 
 
-def _lut_components(x: np.ndarray, y: np.ndarray, settings: Settings) -> dict[str, np.ndarray]:
+def _lut_components(x: np.ndarray, y: np.ndarray, settings: Settings, *, splines=None) -> dict[str, np.ndarray]:
     radius = settings.magnets / 2.0
     rho = np.hypot(x, y)
     phi = np.arctan2(y, x)
@@ -185,7 +185,9 @@ def _lut_components(x: np.ndarray, y: np.ndarray, settings: Settings) -> dict[st
     G_pp = np.zeros_like(radial)
     G_pz = np.zeros_like(radial)
 
-    for harmonic, A_spline, Z_spline in _build_splines(settings):
+    if splines is None:
+        splines = _build_splines(settings)
+    for harmonic, A_spline, Z_spline in splines:
         cosine = np.cos(harmonic * angle)
         sine = np.sin(harmonic * angle)
         A = A_spline(radial)
@@ -235,52 +237,58 @@ def _comparison(settings: Settings):
 
 
 class InteractiveComparison:
-    def __init__(self, settings: Settings, save_dir: Path | None = None):
+    def __init__(self, settings: Settings, save_dir: Path | None = None,
+                 comparison=_comparison, title="Point dipoles"):
         self.settings = settings
         self.save_dir = save_dir
+        self.comparison = comparison
+        self.title = title
         self.component_figures: dict[str, ComponentFigure] = {}
-        self.control_figure = plt.figure("Field LUT controls", figsize=(7.2, 2.7))
-        self.control_figure.subplots_adjust(left=0.16, right=0.96, bottom=0.18, top=0.92)
-        magnet_axis = self.control_figure.add_axes((0.16, 0.68, 0.72, 0.12))
-        mode_axis = self.control_figure.add_axes((0.16, 0.47, 0.72, 0.12))
-        update_axis = self.control_figure.add_axes((0.20, 0.14, 0.24, 0.16))
-        save_axis = self.control_figure.add_axes((0.56, 0.14, 0.24, 0.16))
+        self.control_figure = plt.figure(f"{title}: field LUT comparison", figsize=(18, 12))
+        self.control_figure.subplots_adjust(left=0.045, right=0.98, bottom=0.07, top=0.87,
+                                           wspace=0.5, hspace=0.55)
+        self.plot_axes = self.control_figure.subplots(4, 6)
+        magnet_axis = self.control_figure.add_axes((0.10, 0.925, 0.27, 0.018))
+        mode_axis = self.control_figure.add_axes((0.49, 0.925, 0.25, 0.018))
+        update_axis = self.control_figure.add_axes((0.79, 0.914, 0.08, 0.035))
+        save_axis = self.control_figure.add_axes((0.89, 0.914, 0.08, 0.035))
         self.magnet_slider = Slider(
-            magnet_axis, "Magnets", 2, 32, valinit=settings.magnets, valstep=2
+            magnet_axis, "Magnets", 2, max(32, settings.magnets), valinit=settings.magnets, valstep=2
         )
         self.mode_slider = Slider(
-            mode_axis, "Modes", 1, 16, valinit=settings.modes, valstep=1
+            mode_axis, "Modes", 1, max(16, settings.modes), valinit=settings.modes, valstep=1
         )
         self.update_button = Button(update_axis, "Update")
-        self.save_button = Button(save_axis, "Save PNGs")
-        self.status = self.control_figure.text(0.5, 0.04, "", ha="center", va="bottom")
+        self.save_button = Button(save_axis, "Save PNG")
+        self.status = self.control_figure.text(0.5, 0.015, "", ha="center", va="bottom")
         self.update_button.on_clicked(self.update)
         self.save_button.on_clicked(self.save)
         self.update(None)
 
     def _current_settings(self) -> Settings:
-        return Settings(
-            magnets=int(self.magnet_slider.val),
-            modes=int(self.mode_slider.val),
-            nodes=self.settings.nodes,
-            grid=self.settings.grid,
-            height=self.settings.height,
-            lower_ratio=self.settings.lower_ratio,
-            upper_ratio=self.settings.upper_ratio,
-        )
+        return replace(self.settings, magnets=int(self.magnet_slider.val),
+                       modes=int(self.mode_slider.val))
+
 
     def update(self, _event) -> None:
         settings = self._current_settings()
         self.status.set_text("Computing …")
         self.control_figure.canvas.draw_idle()
-        _, _, exact, lut, difference = _comparison(settings)
+        try:
+            _, _, exact, lut, difference = self.comparison(settings)
+        except (ValueError, RuntimeError) as error:
+            self.status.set_text(str(error))
+            self.control_figure.canvas.draw_idle()
+            if _event is None:
+                raise
+            return
         extent = (
             -settings.upper_ratio,
             settings.upper_ratio,
             -settings.upper_ratio,
             settings.upper_ratio,
         )
-        for name, label in COMPONENTS:
+        for index, (name, label) in enumerate(COMPONENTS):
             exact_values = exact[name]
             lut_values = lut[name]
             error_values = difference[name]
@@ -289,11 +297,12 @@ class InteractiveComparison:
             shared_norm = TwoSlopeNorm(vmin=-shared_limit, vcenter=0.0, vmax=shared_limit)
             error_norm = TwoSlopeNorm(vmin=-error_limit, vcenter=0.0, vmax=error_limit)
             if name not in self.component_figures:
-                figure, axes_array = plt.subplots(1, 3, num=f"Exact vs LUT: {name}", figsize=(12.8, 4.1))
-                axes = tuple(axes_array)
+                figure = self.control_figure
+                row, group = divmod(index, 2)
+                axes = tuple(self.plot_axes[row, group*3:group*3+3])
                 arrays = (exact_values, lut_values, error_values)
                 norms = (shared_norm, shared_norm, error_norm)
-                titles = ("Exact", "Fourier spline", "LUT − Exact")
+                titles = (f"{label} Reference", f"{label} LUT", "LUT − Reference")
                 images = []
                 colorbars = []
                 for axis, values, norm, title in zip(axes, arrays, norms, titles):
@@ -305,13 +314,15 @@ class InteractiveComparison:
                         norm=norm,
                         interpolation="nearest",
                     )
-                    axis.set_title(title)
-                    axis.set_xlabel(r"$x/R$")
-                    axis.set_ylabel(r"$y/R$")
+                    axis.set_title(title, fontsize=9)
+                    axis.set_xlabel(r"$x/R$", fontsize=8)
+                    axis.set_ylabel(r"$y/R$", fontsize=8)
+                    axis.tick_params(labelsize=7)
                     axis.set_aspect("equal")
                     images.append(image)
-                    colorbars.append(figure.colorbar(image, ax=axis, shrink=0.82))
-                figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
+                    colorbar = figure.colorbar(image, ax=axis, shrink=0.82, pad=0.03)
+                    colorbar.ax.tick_params(labelsize=6)
+                    colorbars.append(colorbar)
                 self.component_figures[name] = ComponentFigure(
                     figure, axes, tuple(images), tuple(colorbars)
                 )
@@ -325,24 +336,29 @@ class InteractiveComparison:
                 image.set_extent(extent)
                 image.set_norm(norm)
                 colorbar.update_normal(image)
-            relative = error_limit / shared_limit
-            component.figure.suptitle(
-                f"{label}: n={settings.magnets}, modes={settings.modes}, "
-                f"max |Δ| / peak={relative:.3e}"
-            )
-            component.figure.canvas.draw_idle()
+            valid = np.isfinite(lut_values)
+            if not np.any(valid):
+                raise ValueError("No grid pixels lie inside the LUT domain; increase --grid")
+            reference_peak = max(np.max(np.abs(exact_values[valid])), 1e-15)
+            relative = error_limit / reference_peak
+            component.axes[2].set_title(f"max |Δ|/peak: {relative:.2e}", fontsize=9)
         self.settings = settings
+        geometry = (f", a={settings.magnet_radius:g}, L={settings.thickness:g}"
+                    if hasattr(settings, "magnet_radius") else "")
+        self.control_figure.suptitle(f"{self.title}: N={settings.magnets}, modes={settings.modes}, "
+                                   f"nodes={settings.nodes}, h={settings.height:g}{geometry}", y=0.99)
         self.status.set_text(
-            f"Updated: magnets={settings.magnets}, modes={settings.modes}, nodes={settings.nodes}"
+            "Reference and LUT share a colour scale; errors have their own scale. "
+            "Blank LUT pixels are outside the table domain."
         )
         self.control_figure.canvas.draw_idle()
 
     def save(self, _event) -> None:
         directory = self.save_dir or Path(__file__).resolve().parents[1] / "build" / "field-lut-comparison"
         directory.mkdir(parents=True, exist_ok=True)
-        for name, component in self.component_figures.items():
-            component.figure.savefig(directory / f"{name}.png", dpi=160)
-        self.status.set_text(f"Saved 8 figures to {directory}")
+        name = "cylinder_comparison.png" if hasattr(self.settings, "magnet_radius") else "point_comparison.png"
+        self.control_figure.savefig(directory / name, dpi=160)
+        self.status.set_text(f"Saved {directory / name}")
         self.control_figure.canvas.draw_idle()
 
 
@@ -356,7 +372,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lower-ratio", type=float, default=0.5)
     parser.add_argument("--upper-ratio", type=float, default=1.5)
     parser.add_argument("--save-dir", type=Path)
-    parser.add_argument("--no-show", action="store_true", help="compute once and exit (for smoke tests)")
+    parser.add_argument("--no-show", action="store_true", help="render once and exit without opening a window")
     return parser.parse_args()
 
 
@@ -366,7 +382,8 @@ def main() -> None:
         raise SystemExit("--magnets must be a positive even integer")
     if args.modes < 1 or args.nodes < 2 or args.grid < 16:
         raise SystemExit("modes >= 1, nodes >= 2, and grid >= 16 are required")
-    if not (0.0 < args.lower_ratio < args.upper_ratio) or args.height <= 0.0:
+    if (not np.all(np.isfinite([args.lower_ratio, args.upper_ratio, args.height]))
+            or not (0.0 < args.lower_ratio < args.upper_ratio) or args.height <= 0.0):
         raise SystemExit("invalid radial ratios or height")
     settings = Settings(
         magnets=args.magnets,
@@ -377,11 +394,13 @@ def main() -> None:
         lower_ratio=args.lower_ratio,
         upper_ratio=args.upper_ratio,
     )
+    comparison = InteractiveComparison(settings, args.save_dir)
+    if args.save_dir is not None:
+        comparison.save(None)
     if args.no_show:
-        _comparison(settings)
-        return
-    InteractiveComparison(settings, args.save_dir)
-    plt.show()
+        plt.close(comparison.control_figure)
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":

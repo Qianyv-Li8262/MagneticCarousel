@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 from pathlib import Path
 import time
 
@@ -17,6 +16,7 @@ import numpy as np
 
 import scan_sr_somega_2d_gpu as reference
 from cuda_build import load_cuda_artifact
+from build_metadata import print_build_metadata
 from project_paths import BUILD_DIR, RUNS_DIR, SCRATCH_DIR, extension_dir, image_output_path
 
 def settings(args):
@@ -43,11 +43,14 @@ def settings(args):
 
 
 def run_gpu(args, v0, s0, steps, window, stride):
-    cp = reference._get_cupy()
     dtype = np.dtype(v0.dtype)
     cubin, manifest = load_cuda_artifact(
         "initial", "fp64" if args.fp64 else "fp32_kahan", args.field_mode, args.lut_cache_mode,
     )
+    if manifest.get("magnet_model") == "cylinder":
+        args.field_mode = "lut"
+    print_build_metadata(manifest)
+    cp = reference._get_cupy()
     lut = reference._load_lut(cp, dtype, manifest) if args.field_mode == "lut" else np.uintp(0)
     module = cp.RawModule(path=str(cubin))
     kernel = module.get_function("scan_initial_cuda")
@@ -80,11 +83,20 @@ def run_cpu(args, v0, s0, steps, window, stride):
     manifest_path = directory / "build_config.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"CPU module is not built: {manifest_path}; build hysteresis_{kind.replace('-', '_')} with CMake")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    from animate_one_trajectory import read_build_config
+    manifest = read_build_config(kahan=not args.fp64)
+    if manifest.get("field_mode") == "lut" and "lut" in manifest:
+        from write_build_config import sha256
+        lut_path = Path(manifest["lut"])
+        if not lut_path.is_file() or sha256(lut_path) != manifest.get("lut_sha256"):
+            raise RuntimeError("CPU LUT differs from its build manifest; rebuild the CMake target")
+    if manifest.get("magnet_model") == "cylinder":
+        args.field_mode = "lut"
     if manifest.get("precision") != kind or manifest.get("field_mode") != args.field_mode:
         raise RuntimeError("CPU module precision or field mode differs from this scan; reconfigure/rebuild src2d")
     if args.field_mode == "lut" and manifest.get("lut_cache_mode") != args.lut_cache_mode:
         raise RuntimeError("CPU LUT cache mode differs from this scan; reconfigure/rebuild src2d")
+    print_build_metadata(manifest)
     binary = directory / manifest["binary"]
     if not binary.is_file():
         raise FileNotFoundError(f"CPU module is missing: {binary}")

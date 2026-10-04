@@ -21,6 +21,7 @@ import sys
 import numpy as np
 
 from project_paths import extension_dir
+from build_metadata import print_build_metadata
 
 
 DT_AT_EIGHT_MAGNETS = 1.0e-3
@@ -58,6 +59,10 @@ def read_build_config(*, kahan: bool) -> dict:
     if not path.is_file():
         raise RuntimeError(f"Build manifest missing: {path}. Rebuild the CPU extension with CMake.")
     config = json.loads(path.read_text(encoding="utf-8"))
+    if config.get("field_mode") == "lut" and "lut" in config:
+        lut = Path(config["lut"])
+        if not lut.is_file() or file_sha256(lut) != config.get("lut_sha256"):
+            raise RuntimeError("CPU LUT differs from its build manifest; rebuild the CMake target")
     if config.get("schema_version") != 1 or config.get("precision") != ("fp32-kahan" if kahan else "fp64"):
         raise RuntimeError(f"Invalid or mismatched build manifest: {path}")
     binary_name = config.get("binary")
@@ -90,6 +95,7 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
     effective_dt = timestep_for_magnets(count) if dt is None else dt
     parameters = scaled_model_parameters(count, sr=sr, somega=somega)
     print("\n=== 2D CPU animation | effective configuration ===")
+    print_build_metadata(config)
     section("Build")
     cache_info = (str(config["lut_cache_mode"]) if config["field_mode"] == "lut" else "inactive (exact field)")
     row("Precision / field", f"{config['precision']} / {config['field_mode']}")
