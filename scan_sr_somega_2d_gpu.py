@@ -58,11 +58,14 @@ SAVE_DATA_PATH: str | Path | None = None
 SAVE_DPI = 180
 # 8-magnet reference parameters from animate_one_trajectory.py. The CUDA
 # kernel applies (N/8)^2 to the three acceleration coefficients.
-REFERENCE_ALPHA = 0.33333333
-REFERENCE_DELTA = 1.7212357e-4
-REFERENCE_GAMMA_G = 2.64965696
-REFERENCE_GAMMA = 7830.34224
-REFERENCE_GAMMA_M = 176182.704
+# 12 mm ball, 100 rpm, 70 mm ring radius; rho_ball=7850 kg/m^3,
+# Ms=1.1e6 A/m, rho_air=1.225 kg/m^3, Cd=0.47, g=9.81 m/s^2.
+# Beta remains independently configured in hysteresis_config.hpp.
+REFERENCE_ALPHA = 0.342857142857143
+REFERENCE_DELTA = 8.02199442675159e-5
+REFERENCE_GAMMA_G = 5.11179845930400
+REFERENCE_GAMMA = 17302.6849037817
+REFERENCE_GAMMA_M = 367982.448040497
 # ========================================================================
 
 

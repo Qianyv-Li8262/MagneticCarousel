@@ -5,8 +5,8 @@
 
 From src2d, build with ``cmake --preset local-cpu`` and
 ``cmake --build --preset local-cpu-release``, then run with the daily Python.
-The defaults use the 1D reference coefficients converted to disk-angular time
-for the compiled magnet count; finite curvature still changes the field.
+The defaults use a 12 mm steel ball and 100 rpm disk-angular time as the
+8-magnet apparatus reference; finite curvature still changes the field.
 """
 
 from __future__ import annotations
@@ -32,17 +32,20 @@ FAST_GRAPH_UPDATE_EVERY = 5
 FAST_RESCALE_EVERY = 20
 FAST_MAX_PLOT_POINTS = 2000
 
-# Radius and angular-speed multipliers at the same selected point as the 1D animation.
-SR = 1
-SOMEGA = 2.0
+# Multipliers relative to the 12 mm ball and 100 rpm apparatus reference.
+SR = 1.0
+SOMEGA = 1.0
 
 # These are the 8-magnet references. The field period rate is N/2 per
 # revolution, so the three acceleration coefficients scale as (N/8)**2.
-ALPHA = 0.33333333
-DELTA = 1.7212357e-4
-GAMMA_G = 2.64965696
-GAMMA = 7830.34224
-GAMMA_M = 176182.704
+# Ring radius 70 mm; rho_ball=7850 kg/m^3, Ms=1.1e6 A/m,
+# rho_air=1.225 kg/m^3, Cd=0.47, g=9.81 m/s^2, Eta=0.4.
+# Beta remains independently configured in hysteresis_config.hpp.
+ALPHA = 0.342857142857143
+DELTA = 8.02199442675159e-5
+GAMMA_G = 5.11179845930400
+GAMMA = 17302.6849037817
+GAMMA_M = 367982.448040497
 
 
 def file_sha256(path: Path) -> str:
@@ -125,7 +128,7 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
 
 
 def scaled_model_parameters(magnet_count: int, *, sr=SR, somega=SOMEGA) -> tuple[float, float, float, float, float]:
-    """Keep the same local 1D reference when the compiled magnet count changes."""
+    """Scale the apparatus reference for the compiled magnet count."""
     if magnet_count < 2 or magnet_count % 2:
         raise ValueError("magnet count must be positive and even")
     if not np.isfinite(sr) or sr <= 0.0:

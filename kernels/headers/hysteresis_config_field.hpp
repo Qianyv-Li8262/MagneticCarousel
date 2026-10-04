@@ -9,7 +9,8 @@
 #define IYPT16_REAL_LITERAL_IMPL(value) REAL_LITERAL(value)
 #define IYPT16_REAL_LITERAL(value) IYPT16_REAL_LITERAL_IMPL(value)
 
-#define IYPT16_FIELD_HEIGHT 1.610066235
+// Centre plane to ball centre: (42.5 + 15/2) mm; k = 4 / 70 mm.
+#define IYPT16_FIELD_HEIGHT 1.71434
 #define IYPT16_LUT_LOWER_BOUND_RATIO 0.5
 #define IYPT16_LUT_UPPER_BOUND_RATIO 1.5
 // Manually configured model parameters.
