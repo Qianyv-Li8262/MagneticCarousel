@@ -283,6 +283,18 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
     return {h, Force, nabla_h};
 }
 
+// Use the same effective force in the RHS and all contact-mode decisions.
+// The field evaluator continues to return the unmodified magnetic force.
+DEVICE INLINE Vec3 apply_inclined_disk_force(const SolverParams &params, Vec3 force)
+{
+    if constexpr (kEnableInclinedDisk) {
+        const real_t downhill = kTiltAngleRad * (params.gamma_g - force.z);
+        force.x += downhill * real_sin(kTiltAxisAzimuthRad);
+        force.y -= downhill * real_cos(kTiltAxisAzimuthRad);
+    }
+    return force;
+}
+
 DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, const TracelessSymTensor &grad)
 {
     // The lower disk angular velocity is one in the dimensionless system.
@@ -308,7 +320,7 @@ DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &p
     const FieldForceResult field_force =
         eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
     const Vec3 &h = field_force.h;
-    const Vec3 &F = field_force.Force;
+    const Vec3 F = apply_inclined_disk_force(params, field_force.Force);
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
     if constexpr (ExportFM) {
@@ -475,12 +487,13 @@ DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const
         eval_mag_field_and_force(params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
     constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
     const Vec3 torque = -params.gamma_m * E * cross(q_world, field.h);
-    const real_t N = params.gamma_g - field.Force.z;
+    const Vec3 F = apply_inclined_disk_force(params, field.Force);
+    const real_t N = params.gamma_g - F.z;
     if (!real_isfinite(N))
         return AdvanceStepResult::kStepNaNOrInf;
     if (N < REAL_LITERAL(0.0))
         return AdvanceStepResult::kStepBallFly;
-    const Vec2 a = make_Vec2(field.Force.x, field.Force.y) - params.delta * length(state.speed) * state.speed +
+    const Vec2 a = make_Vec2(F.x, F.y) - params.delta * length(state.speed) * state.speed +
                    params.alpha * make_Vec2(-torque.y, torque.x);
     const real_t A = length(a);
     const real_t b = (REAL_LITERAL(1.0) + REAL_LITERAL(1.0) / Eta) * Mu * N;
@@ -579,7 +592,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 const FieldForceResult field_force = eval_mag_field_and_force(
                     params, state_at_tc.pos, q_world, state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
                 const Vec3 &h = field_force.h;
-                const Vec3 &F = field_force.Force;
+                const Vec3 F = apply_inclined_disk_force(params, field_force.Force);
                 constexpr real_t E_ =
                     (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
                 const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
@@ -642,7 +655,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     const FieldForceResult field_force_final = eval_mag_field_and_force(
                         params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
                     const Vec3 &h_final = field_force_final.h;
-                    const Vec3 &F_final = field_force_final.Force;
+                    const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force);
                     const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
                     const real_t N_final = params.gamma_g - F_final.z;
                     if (!real_isfinite(N_final) || !real_isfinite(F_final.x) || !real_isfinite(F_final.y) ||
@@ -857,7 +870,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const FieldForceResult field_force_final = eval_mag_field_and_force(
             params, trial_final.pos, q_final, trial_final.down_disk_angle, cache, LUTptr, nullptr);
         const Vec3 &h_final = field_force_final.h;
-        const Vec3 &F_final = field_force_final.Force;
+        const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force);
         constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
         const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
         const real_t N_final = params.gamma_g - F_final.z;
@@ -925,7 +938,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const FieldForceResult field_force_event = eval_mag_field_and_force(
             params, state_at_tr.pos, q_event, state_at_tr.down_disk_angle, cache, LUTptr, nullptr);
         const Vec3 &h_event = field_force_event.h;
-        const Vec3 &F_event = field_force_event.Force;
+        const Vec3 F_event = apply_inclined_disk_force(params, field_force_event.Force);
         const FieldResult event_field = {h_event, field_force_event.hGrad3d};
         const Vec3 M_event = -params.gamma_m * E_ * cross(q_event, h_event);
         const real_t N_event = params.gamma_g - F_event.z;
@@ -974,7 +987,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const FieldForceResult field_force_sliding_mid = eval_mag_field_and_force(
                 params, sliding_mid.pos, q_mid, sliding_mid.down_disk_angle, cache, LUTptr, nullptr);
             const Vec3 &h_sliding_mid = field_force_sliding_mid.h;
-            const Vec3 &F_sliding_mid = field_force_sliding_mid.Force;
+            const Vec3 F_sliding_mid = apply_inclined_disk_force(params, field_force_sliding_mid.Force);
             const FieldResult mid_field = {h_sliding_mid, field_force_sliding_mid.hGrad3d};
             const Vec3 M_sliding_mid = -params.gamma_m * E_ * cross(q_mid, h_sliding_mid);
             const real_t N_sliding_mid = params.gamma_g - F_sliding_mid.z;

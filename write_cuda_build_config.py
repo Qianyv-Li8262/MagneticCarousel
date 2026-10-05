@@ -7,7 +7,7 @@ import argparse
 from pathlib import Path
 import shutil
 
-from write_build_config import field_parameters, sha256, write_manifest
+from write_build_config import field_parameters, inclined_disk_parameters, sha256, write_manifest
 
 
 def source_files(root: Path, scan: str) -> list[Path]:
@@ -38,6 +38,7 @@ def main() -> None:
     root = args.source_dir.resolve()
     field_source = (root / "kernels/headers/hysteresis_config_field.hpp").read_text(encoding="utf-8")
     parameters = field_parameters(field_source)
+    model_source = (root / "kernels/headers/hysteresis_config.hpp").read_text(encoding="utf-8")
     if args.field_mode == "lut" and (args.lut is None or not args.lut.is_file()):
         raise FileNotFoundError("LUT mode requires the corresponding generated binary table")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -57,6 +58,7 @@ def main() -> None:
         "architectures": args.architectures,
         "cuda_version": args.cuda_version,
         "field_parameters": parameters,
+        "inclined_disk": inclined_disk_parameters(model_source),
         "magnet_number": int(parameters["magnet_number"]),
         "source_sha256": {
             path.relative_to(root).as_posix(): sha256(path)

@@ -43,6 +43,19 @@ def field_parameters(source: str) -> dict:
     return values
 
 
+def inclined_disk_parameters(source: str) -> dict:
+    enabled = literal(source, "kEnableInclinedDisk", "bool")
+    if enabled not in ("true", "false"):
+        raise ValueError("kEnableInclinedDisk must be true or false")
+    values = {"enabled": enabled == "true"}
+    if values["enabled"]:
+        for name, label in (("kTiltAxisAzimuthRad", "axis_azimuth_rad"),
+                            ("kTiltAngleRad", "angle_rad")):
+            value = literal(source, name, "real_t")
+            values[label] = float(value.removeprefix("REAL_LITERAL(").removesuffix(")"))
+    return values
+
+
 def write_manifest(path: Path, data: dict) -> None:
     contents = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if not path.is_file() or path.read_text(encoding="utf-8") != contents:
@@ -95,6 +108,7 @@ def main() -> None:
         "magnet_number": magnet_number,
         "field_parameters": field_values,
         "model_parameters": model_values,
+        "inclined_disk": inclined_disk_parameters(model_source),
         "source_sha256": {
             str(path.relative_to(args.source_dir)).replace("\\", "/"): sha256(path)
             for path in (field_header, model_header)
