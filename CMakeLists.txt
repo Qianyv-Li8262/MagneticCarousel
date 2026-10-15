@@ -197,6 +197,7 @@ pybind11_add_module(
     "${KERNEL_DIR}/1dmodel-hysteresis.cpp"
     "${KERNEL_DIR}/hysteresis_critical_slow_cpu.cpp"
     "${KERNEL_DIR}/hysteresis_phase_boundary_cpu.cpp"
+    "${KERNEL_DIR}/scan_initial_cpu.cpp"
 )
 
 add_dependencies(

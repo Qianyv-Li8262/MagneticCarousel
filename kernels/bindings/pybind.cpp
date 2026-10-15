@@ -15,6 +15,7 @@
 #endif
 #ifdef USE_FP64
 #include "hysteresis_phase_boundary_cpu.hpp"
+#include "scan_initial_cpu.hpp"
 #endif
 
 namespace py = pybind11;
@@ -61,6 +62,31 @@ py::tuple calc_slow_cpu_dd(const py::sequence &scan_values, const py::object &fi
 #endif
 
 #ifdef USE_FP64
+py::tuple scan_initial_grid_cpu_numpy(
+    const py::array_t<double, py::array::c_style | py::array::forcecast> &v0,
+    const py::array_t<double, py::array::c_style | py::array::forcecast> &s0,
+    double sr, double somega, double dt, std::int64_t steps,
+    std::int64_t window_steps, std::int64_t sample_stride,
+    solver_params reference, int num_threads)
+{
+    if (v0.ndim() != 1 || s0.ndim() != 1 || v0.size() == 0 || s0.size() == 0)
+        throw py::value_error("v0 and s0 must be nonempty one-dimensional arrays");
+    const auto nv = static_cast<py::ssize_t>(v0.size());
+    const auto ns = static_cast<py::ssize_t>(s0.size());
+    py::array_t<std::int32_t> status({ns, nv});
+    py::array_t<double> metrics({ns, nv, static_cast<py::ssize_t>(initial_scan_metric_count)});
+    const initial_scan_settings settings = {
+        sr, somega, dt, steps, window_steps, sample_stride, reference, num_threads,
+    };
+    {
+        py::gil_scoped_release release;
+        scan_initial_grid_cpu(v0.data(), static_cast<std::size_t>(nv),
+                              s0.data(), static_cast<std::size_t>(ns),
+                              settings, status.mutable_data(), metrics.mutable_data());
+    }
+    return py::make_tuple(std::move(status), std::move(metrics));
+}
+
 void calc_slow_cpu_numpy(py::array_t<std::int32_t, py::array::c_style> answer,
                          py::array_t<double, py::array::c_style> times,
                          py::array_t<double, py::array::c_style> scan_values,
@@ -252,6 +278,18 @@ PYBIND11_MODULE(MODULE_NAME, m)
         .value("SR", critical_slow_scan_mode::sr)
         .export_values();
 #ifdef USE_FP64
+    m.attr("scan_h_ext") = static_cast<double>(H_EXT);
+    m.attr("scan_field_z0") = FIELD_Z0;
+    m.attr("scan_field_fourier_mode_count") = FIELD_FOURIER_MODE_COUNT;
+    m.attr("scan_field_legacy_first_harmonic") = FIELD_LEGACY_FIRST_HARMONIC_COMPATIBILITY;
+    m.def("scan_initial_grid_cpu", &scan_initial_grid_cpu_numpy,
+          py::arg("v0"), py::arg("s0"), py::arg("sr"), py::arg("somega"),
+          py::arg("dt"), py::arg("steps"), py::arg("window_steps"),
+          py::arg("sample_stride"), py::arg("reference_params"),
+          py::arg("num_threads") = 0,
+          "Scan the 1D (v0, S0) grid with a fixed C++ worker pool and FP64 CPU integration. "
+          "Returns (int32 status, float64 metrics) in [S0, v0] order. "
+          "Each worker owns whole trajectories; the GIL is released while scanning.");
     m.def("calc_slow_cpu", &calc_slow_cpu_numpy,
           py::arg("answer_state").noconvert(), py::arg("transit_time").noconvert(),
           py::arg("scan_values").noconvert(), py::arg("fixed_scale"), py::arg("mode"),

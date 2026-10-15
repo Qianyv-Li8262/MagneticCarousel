@@ -17,11 +17,13 @@
 // therefore cannot be made exactly equivalent by changing H_EXT alone.
 #define FIELD_LEGACY_FIRST_HARMONIC_COMPATIBILITY 0
 
-// Fundamental magnetic constants
-#define MU_R REAL_LITERAL(2.2926667e3)
-#define ALPHA_JA REAL_LITERAL(3.2e-3)
-#define C REAL_LITERAL(0.38)
-#define K_HYSTER REAL_LITERAL(1.0909091e-3)
+// Fixed Q235 linearized Fig. 10 baseline, selected by the user on 2026-10-06.
+// See research/q235/FIXED_PARAMETERS.md; M_ref remains 1.1e6 A/m.
+// Keep these four material parameters fixed in subsequent exploration.
+#define MU_R REAL_LITERAL(605.8974337495617)
+#define ALPHA_JA REAL_LITERAL(0.0021323083849413885)
+#define C REAL_LITERAL(0.22415154978863677)
+#define K_HYSTER REAL_LITERAL(0.005375927782155882)
 
 #define XI_JA (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITERAL(1.0) + ALPHA_JA * (MU_R - REAL_LITERAL(1.0)))))
 
