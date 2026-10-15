@@ -384,6 +384,10 @@ if(BUILD_TESTING)
     add_native_test(test_rolling_step)
     add_native_test(test_inclined_disk)
     add_native_test(test_magnetic_force_direction)
+    # Existing analytic tests describe the zero-added-rolling-resistance limit.
+    target_compile_definitions(test_rolling_step PRIVATE IYPT16_DISABLE_GAUSSIAN_ROLLING)
+    target_compile_definitions(test_inclined_disk PRIVATE IYPT16_DISABLE_GAUSSIAN_ROLLING)
+    add_native_test(test_gaussian_rolling)
 
 
     foreach(precision IN ITEMS fp32 fp64)

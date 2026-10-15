@@ -8,7 +8,8 @@
 
 int main()
 {
-    SolverParams params = {REAL_LITERAL(1.0), REAL_LITERAL(0.0), REAL_LITERAL(1.0),
+    // Zero normal/gravitational load isolates uniform motion even with tilt enabled.
+    SolverParams params = {REAL_LITERAL(1.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0),
                            REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
     State state{};
     state.pos.x = REAL_LITERAL(4.0);
@@ -59,6 +60,7 @@ int main()
     assert(static_cast<real_t>(state.q.x) == static_cast<real_t>(uncached.q.x));
 
     // Excessive drag makes the supplied Rolling mode inconsistent at entry.
+    params.gamma_g = REAL_LITERAL(1.0);
     params.delta = REAL_LITERAL(1.0);
     const State before = state;
     const FieldResult field_before = field;
@@ -83,14 +85,18 @@ int main()
     assert(!contact_sliding && contact_direction.x == REAL_LITERAL(0.0) &&
            contact_direction.y == REAL_LITERAL(0.0));
 
-    // Rolling at unit speed under unit quadratic drag requires |f| = eta/(1+eta),
-    // exceeding mu*N = 0.02; it must launch in the negative x direction.
+    // Unit quadratic drag plus the configured downslope load exceeds mu*N=0.02.
+    // The launch direction follows their sum, including its transverse tilt component.
     contact.speed.x = REAL_LITERAL(1.0);
     contact.omega.y = REAL_LITERAL(1.0);
     assert(resolve_zero_slip_mode(contact, params, contact_sliding, contact_direction) ==
            AdvanceStepResult::kStepOk);
-    assert(contact_sliding && contact_direction.x == REAL_LITERAL(-1.0) &&
-           contact_direction.y == REAL_LITERAL(0.0));
+    const real_t tilt = kEnableInclinedDisk ? kTiltAngleRad * params.gamma_g : REAL_LITERAL(0.0);
+    const Vec2 drive = make_Vec2(tilt * real_sin(kTiltAxisAzimuthRad) - REAL_LITERAL(1.0),
+                                 -tilt * real_cos(kTiltAxisAzimuthRad));
+    const Vec2 expected_direction = drive / length(drive);
+    assert(contact_sliding);
+    assert(length(contact_direction - expected_direction) < REAL_LITERAL(1e-6));
 
     // The returned zero-slip launch state is valid input for the next complete step.
     bool contact_cache_valid = false;

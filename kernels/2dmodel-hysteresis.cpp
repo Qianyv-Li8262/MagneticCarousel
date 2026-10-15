@@ -15,11 +15,41 @@
 
 namespace {
 
+const LUTNode *trajectory_lut();
+
+const char *step_error_description(AdvanceStepResult result)
+{
+    switch (result) {
+    case AdvanceStepResult::kStepOk: return "kStepOk: step completed";
+    case AdvanceStepResult::kStepBallFly: return "kStepBallFly: normal contact load became negative; ball lost contact";
+    case AdvanceStepResult::kStepFinerRetry: return "kStepFinerRetry: contact transition requires a smaller time step";
+    case AdvanceStepResult::kStepNumericalUnstable: return "kStepNumericalUnstable: numerical consistency check failed";
+    case AdvanceStepResult::kStepNaNOrInf: return "kStepNaNOrInf: a computed state or force is not finite";
+    case AdvanceStepResult::kStepSolverSelfContradict: return "kStepSolverSelfContradict: contact-event solution is inconsistent";
+    case AdvanceStepResult::kStepLUTOutOfDomain: return "kStepLUTOutOfDomain: ball position or an integration trial position is outside the magnetic-field LUT radius range";
+    case AdvanceStepResult::kStepRefinementRecursionLimit: return "kStepRefinementRecursionLimit: time-step refinement reached its depth or floating-point limit";
+    case AdvanceStepResult::kRetrySlidingHalfTcZero: return "kRetrySlidingHalfTcZero: sliding contact-event half-time rounded to zero";
+    case AdvanceStepResult::kRetrySlidingContactCannotStick: return "kRetrySlidingContactCannotStick: sliding contact event cannot satisfy sticking";
+    case AdvanceStepResult::kRetrySlidingRollingMidRelease: return "kRetrySlidingRollingMidRelease: rolling midpoint loses contact consistency after sliding";
+    case AdvanceStepResult::kRetrySlidingRollingFinalRelease: return "kRetrySlidingRollingFinalRelease: rolling final state releases after sliding";
+    case AdvanceStepResult::kRetrySlidingMidZero: return "kRetrySlidingMidZero: sliding midpoint slip is zero";
+    case AdvanceStepResult::kRetrySlidingMidPredictsContact: return "kRetrySlidingMidPredictsContact: sliding midpoint predicts a contact transition";
+    case AdvanceStepResult::kRetrySlidingFinalZero: return "kRetrySlidingFinalZero: sliding final slip is zero";
+    case AdvanceStepResult::kRetryRollingThresholdRecross: return "kRetryRollingThresholdRecross: rolling state recrosses the friction threshold";
+    case AdvanceStepResult::kRetryRollingEventInvalid: return "kRetryRollingEventInvalid: rolling release event is invalid";
+    case AdvanceStepResult::kRetryRollingReleaseMidZero: return "kRetryRollingReleaseMidZero: midpoint slip after rolling release is zero";
+    case AdvanceStepResult::kRetryRollingReleaseMidContact: return "kRetryRollingReleaseMidContact: midpoint after rolling release predicts sticking";
+    case AdvanceStepResult::kRetryRollingReleaseFinalZero: return "kRetryRollingReleaseFinalZero: final slip after rolling release is zero";
+    }
+    return "unknown AdvanceStepResult";
+}
+
 void validate_params(const SolverParams &p)
 {
     if (!real_isfinite(p.alpha) || p.alpha <= REAL_LITERAL(0.0) ||
         !real_isfinite(p.delta) || p.delta < REAL_LITERAL(0.0) ||
-        !real_isfinite(p.gamma_g) || !real_isfinite(p.gamma) || !real_isfinite(p.gamma_m))
+        !real_isfinite(p.gamma_g) || !real_isfinite(p.gamma) || !real_isfinite(p.gamma_m) ||
+        !real_isfinite(p.reverse_push_acceleration) || p.reverse_push_acceleration < REAL_LITERAL(0.0))
         throw std::invalid_argument("evolve: invalid solver parameters");
 }
 
@@ -33,8 +63,13 @@ void initialize_mode(State &state, const SolverParams &params, bool &sliding, Ve
         throw std::invalid_argument("evolve: non-finite initial slip");
     sliding = magnitude > REAL_LITERAL(1.0e-10);
     sliding_dir = sliding ? slip / magnitude : make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
-    if (!sliding)
+    if (!sliding) {
         project_pure_rolling(state, params);
+        FieldCache cache{};
+        if (resolve_zero_slip_mode(state, params, sliding, sliding_dir, &cache, trajectory_lut()) !=
+            AdvanceStepResult::kStepOk)
+            throw std::invalid_argument("evolve: invalid initial contact state");
+    }
 }
 
 const LUTNode *trajectory_lut()
@@ -107,23 +142,36 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
                                                   field_cache_valid, &cache, lut, &field_cache,
                                                   &retry_diagnostics);
         if (result != AdvanceStepResult::kStepOk) {
+            // A failure need not have used refinement; its default retry state
+            // is all zeros and must not be presented as the actual ball state.
+            const bool has_retry_state = retry_diagnostics.last_depth >= 0;
+            const State &diagnostic_state = has_retry_state ? retry_diagnostics.last_state : state;
             std::ostringstream message;
             message << std::setprecision(17)
                     << "evolve: global step " << start_step + i << " (chunk step " << i << ")"
                     << " failed with status " << static_cast<int>(result)
+                    << " (" << step_error_description(result) << ")"
+                    << "; step_start_pos=(" << state.pos.x << "," << state.pos.y << ")"
+                    << "; step_start_radius=" << length(vec_cast<real_t>(state.pos));
+            if (result == AdvanceStepResult::kStepLUTOutOfDomain) {
+                constexpr real_t ring_radius = static_cast<real_t>(magnet_number) / REAL_LITERAL(2.0);
+                message << "; valid_lut_radius=[" << kLUTLowerBoundRatio * ring_radius
+                        << "," << kLUTUpperBoundRatio * ring_radius << "] (dimensionless)";
+            }
+            message << "; diagnostic_state_source=" << (has_retry_state ? "last_refinement_retry" : "step_start")
                     << "; last_retry_id=" << retry_diagnostics.last_reason + 1
                     << "; depth=" << retry_diagnostics.last_depth
                     << "; substep_dt=" << retry_diagnostics.last_dt
                     << "; retry_counts=";
             for (int r = 0; r < 12; ++r)
                 message << (r == 0 ? "" : ",") << r + 1 << ":" << retry_diagnostics.counts[r];
-            message << "; last_state_pos=(" << retry_diagnostics.last_state.pos.x << ","
-                    << retry_diagnostics.last_state.pos.y << ")"
-                    << "; last_state_speed=(" << retry_diagnostics.last_state.speed.x << ","
-                    << retry_diagnostics.last_state.speed.y << ")"
-                    << "; last_state_omega=(" << retry_diagnostics.last_state.omega.x << ","
-                    << retry_diagnostics.last_state.omega.y << ","
-                    << retry_diagnostics.last_state.omega.z << ")"
+            message << "; last_state_pos=(" << diagnostic_state.pos.x << ","
+                    << diagnostic_state.pos.y << ")"
+                    << "; last_state_speed=(" << diagnostic_state.speed.x << ","
+                    << diagnostic_state.speed.y << ")"
+                    << "; last_state_omega=(" << diagnostic_state.omega.x << ","
+                    << diagnostic_state.omega.y << ","
+                    << diagnostic_state.omega.z << ")"
                     << "; release=(g_start=" << retry_diagnostics.release_g_start
                     << ",g_mid=" << retry_diagnostics.release_g_mid
                     << ",g_final=" << retry_diagnostics.release_g_final
@@ -133,6 +181,40 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
             throw std::runtime_error(message.str());
         }
     }
+    return state;
+}
+
+// Hold the ball fixed while the magnets turn: evolve JA memory only.
+State magnetize_held_ball(const State &initial, real_t dt, int steps, const SolverParams &params)
+{
+    validate_params(params);
+    if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0) || steps < 0)
+        throw std::invalid_argument("magnetize: dt must be positive and steps non-negative");
+    if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
+        if (!state_in_lut_domain(initial))
+            throw std::invalid_argument("magnetize: position outside the field LUT");
+    }
+    State state = initial;
+    state.speed = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+    state.omega = make_Vec3(REAL_LITERAL(0.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+    const real_t start_angle = static_cast<real_t>(state.down_disk_angle);
+    const Vec2 zero = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
+    FieldCache cache{};
+    for (int i = 0; i < steps; ++i) {
+        state.down_disk_angle = start_angle + static_cast<real_t>(i) * dt;
+        State first{}, second{};
+        if (!eval_rhs<false>(state, first, params, false, zero, &cache, trajectory_lut()))
+            throw std::runtime_error("magnetize: ball lost contact");
+        State mid = state;
+        mid.q = state.q + first.q * (dt * REAL_LITERAL(0.5));
+        mid.down_disk_angle = start_angle + (static_cast<real_t>(i) + REAL_LITERAL(0.5)) * dt;
+        if (!eval_rhs<false>(mid, second, params, false, zero, &cache, trajectory_lut()))
+            throw std::runtime_error("magnetize: ball lost contact");
+        state.q = state.q + second.q * dt;
+        if (!real_isfinite(length(state.q)))
+            throw std::runtime_error("magnetize: non-finite JA state");
+    }
+    state.down_disk_angle = start_angle + static_cast<real_t>(steps) * dt;
     return state;
 }
 

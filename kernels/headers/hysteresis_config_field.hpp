@@ -9,8 +9,10 @@
 #define IYPT16_REAL_LITERAL_IMPL(value) REAL_LITERAL(value)
 #define IYPT16_REAL_LITERAL(value) IYPT16_REAL_LITERAL_IMPL(value)
 
-// Centre plane to ball centre: (42.5 + 15/2) mm; k = 4 / 70 mm.
-#define IYPT16_FIELD_HEIGHT 1.71434
+// Caliper geometry 2026-10-09: ball centre minus magnet centre plane
+// Both measured from lower plate TOP: ball centre = 42.62 - 3 + 12/2;
+// magnet centre = 15/2 - 1.5; separation = 39.62 mm; k = 4 / 70 mm.
+#define IYPT16_FIELD_HEIGHT 2.264
 #define IYPT16_LUT_LOWER_BOUND_RATIO 0.5
 #define IYPT16_LUT_UPPER_BOUND_RATIO 1.5
 // Manually configured model parameters.

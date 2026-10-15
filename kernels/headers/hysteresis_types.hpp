@@ -543,4 +543,6 @@ struct SolverParams {
     real_t gamma_g;
     real_t gamma;  // We should ensure that gamma = Eta * params.alpha * params.alpha * params.gamma_m!!!!!!!!!
     real_t gamma_m;
+    // Optional following reverse COM force, in solver acceleration units.
+    real_t reverse_push_acceleration = REAL_LITERAL(0.0);
 };

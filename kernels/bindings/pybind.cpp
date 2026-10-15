@@ -22,6 +22,7 @@ namespace py = pybind11;
 State evolve_trajectory(const State &initial, real_t dt, int steps, const SolverParams &params,
                         bool &sliding, Vec2 &sliding_dir, bool initialize, std::int64_t start_step);
 std::array<real_t, 3> magnetic_mechanical_power(const State &state, const SolverParams &params);
+State magnetize_held_ball(const State &initial, real_t dt, int steps, const SolverParams &params);
 
 // [disk angle, pos x/y, speed x/y, quaternion w/x/y/z,
 //  omega x/y/z, hysteresis q x/y/z]. Time is tracked by Python.
@@ -139,7 +140,9 @@ PYBIND11_MODULE(MODULE_NAME, m)
         .def_readwrite("delta", &SolverParams::delta)
         .def_readwrite("gamma_g", &SolverParams::gamma_g)
         .def_readwrite("gamma", &SolverParams::gamma)
-        .def_readwrite("gamma_m", &SolverParams::gamma_m);
+        .def_readwrite("gamma_m", &SolverParams::gamma_m)
+        .def_readwrite("reverse_push_acceleration", &SolverParams::reverse_push_acceleration,
+                       "Following reverse tangential COM acceleration; zero disables the external push.");
     m.def("evolve_trajectory", &evolve_numpy, py::arg("initial"), py::arg("dt"),
           py::arg("steps"), py::arg("params"), py::arg("sliding") = py::none(),
           py::arg("sliding_dir") = py::none(), py::arg("start_step") = 0,
@@ -151,6 +154,17 @@ PYBIND11_MODULE(MODULE_NAME, m)
         return py::make_tuple(values[0], values[1], values[2]);
     }, py::arg("state"), py::arg("params"),
        "Return magnetic (translational, rotational, total) mechanical power per unit mass in dimensionless 2D units.");
+    m.def("magnetize_held_ball", [](const py::array_t<real_t, py::array::c_style | py::array::forcecast> &input,
+                                  real_t dt, int steps, const SolverParams &params) {
+        const State initial = state_from_numpy(input);
+        State result;
+        {
+            py::gil_scoped_release release;
+            result = magnetize_held_ball(initial, dt, steps, params);
+        }
+        return state_to_numpy(result);
+    }, py::arg("initial"), py::arg("dt"), py::arg("steps"), py::arg("params"),
+       "Hold position and attitude fixed, zero velocities, and evolve only disk phase and JA memory.");
     m.def("scan_initial_grid", &scan_initial_numpy,
           py::arg("v0").noconvert(), py::arg("s0").noconvert(),
           py::arg("dt"), py::arg("steps"), py::arg("window_steps"), py::arg("sample_stride"),

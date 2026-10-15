@@ -285,12 +285,22 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
 
 // Use the same effective force in the RHS and all contact-mode decisions.
 // The field evaluator continues to return the unmodified magnetic force.
-DEVICE INLINE Vec3 apply_inclined_disk_force(const SolverParams &params, Vec3 force)
+DEVICE INLINE Vec3 apply_inclined_disk_force(const SolverParams &params, Vec3 force,
+                                           const Vec2 &position = Vec2{})
 {
     if constexpr (kEnableInclinedDisk) {
         const real_t downhill = kTiltAngleRad * (params.gamma_g - force.z);
         force.x += downhill * real_sin(kTiltAxisAzimuthRad);
         force.y -= downhill * real_cos(kTiltAxisAzimuthRad);
+    }
+    // A force through the ball centre follows the reverse tangent, without
+    // changing the normal load or applying a direct torque.
+    if (params.reverse_push_acceleration > REAL_LITERAL(0.0)) {
+        const real_t radius = length(position);
+        if (radius > REAL_LITERAL(0.0)) {
+            force.x += params.reverse_push_acceleration * position.y / radius;
+            force.y -= params.reverse_push_acceleration * position.x / radius;
+        }
     }
     return force;
 }
@@ -308,6 +318,33 @@ DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, co
 }
 
 
+// Return total angular acceleration (magnetic torque plus passive rolling torque).
+// Share it between the RHS and every rolling/sliding contact decision.
+DEVICE INLINE Vec3 add_gaussian_rolling_resistance(const SolverParams &params, const Vec3 &magnetic,
+                                                  const State &state, const Vec3 &force)
+{
+    if constexpr (!kEnableRollingResistance) {
+        return magnetic;
+    }
+#ifdef IYPT16_DISABLE_GAUSSIAN_ROLLING
+    return magnetic; // Test the original zero-added-resistance limit.
+#else
+    const Vec3 omega = vec_cast<real_t>(state.omega);
+    const real_t w2 = omega.x * omega.x + omega.y * omega.y;
+    const real_t rate2 = w2 / (kRollingTransitionOmega * kRollingTransitionOmega);
+#ifdef __CUDACC__
+    const real_t gaussian = exp(-rate2);
+#else
+    const real_t gaussian = static_cast<real_t>(std::exp(-static_cast<double>(rate2)));
+#endif
+    const real_t mu = kRollingMuHigh + (kRollingMuLow - kRollingMuHigh) * gaussian;
+    const real_t normal = params.gamma_g - force.z;
+    const real_t regularized_w = real_sqrt(w2 + kRollingOmegaEpsilon * kRollingOmegaEpsilon);
+    const real_t damping = mu * normal / (Eta * params.alpha * regularized_w) + kRollingLambda;
+    return magnetic - make_Vec3(damping * omega.x, damping * omega.y, REAL_LITERAL(0.0));
+#endif
+}
+
 // MARK: RHS eval
 template <bool ExportFM>
 DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, const bool &sliding,
@@ -320,9 +357,9 @@ DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &p
     const FieldForceResult field_force =
         eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
     const Vec3 &h = field_force.h;
-    const Vec3 F = apply_inclined_disk_force(params, field_force.Force);
+    const Vec3 F = apply_inclined_disk_force(params, field_force.Force, in.pos);
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-    const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
+    const Vec3 M = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_world, h), in, F);
     if constexpr (ExportFM) {
         *Fext = F;
         *Mext = M;
@@ -486,8 +523,8 @@ DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const
     const FieldForceResult field =
         eval_mag_field_and_force(params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
     constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-    const Vec3 torque = -params.gamma_m * E * cross(q_world, field.h);
-    const Vec3 F = apply_inclined_disk_force(params, field.Force);
+    const Vec3 F = apply_inclined_disk_force(params, field.Force, state.pos);
+    const Vec3 torque = add_gaussian_rolling_resistance(params, -params.gamma_m * E * cross(q_world, field.h), state, F);
     const real_t N = params.gamma_g - F.z;
     if (!real_isfinite(N))
         return AdvanceStepResult::kStepNaNOrInf;
@@ -592,10 +629,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 const FieldForceResult field_force = eval_mag_field_and_force(
                     params, state_at_tc.pos, q_world, state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
                 const Vec3 &h = field_force.h;
-                const Vec3 F = apply_inclined_disk_force(params, field_force.Force);
+                const Vec3 F = apply_inclined_disk_force(params, field_force.Force, state_at_tc.pos);
                 constexpr real_t E_ =
                     (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-                const Vec3 M = -params.gamma_m * E_ * cross(q_world, h);
+                const Vec3 M = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_world, h), state_at_tc, F);
                 const real_t N = params.gamma_g - F.z;
                 if (!real_isfinite(N) || !real_isfinite(F.x) || !real_isfinite(F.y) || !real_isfinite(M.x) ||
                     !real_isfinite(M.y))
@@ -655,8 +692,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     const FieldForceResult field_force_final = eval_mag_field_and_force(
                         params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
                     const Vec3 &h_final = field_force_final.h;
-                    const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force);
-                    const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
+                    const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force, final_state.pos);
+                    const Vec3 M_final = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_final, h_final), final_state, F_final);
                     const real_t N_final = params.gamma_g - F_final.z;
                     if (!real_isfinite(N_final) || !real_isfinite(F_final.x) || !real_isfinite(F_final.y) ||
                         !real_isfinite(M_final.x) || !real_isfinite(M_final.y))
@@ -870,9 +907,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const FieldForceResult field_force_final = eval_mag_field_and_force(
             params, trial_final.pos, q_final, trial_final.down_disk_angle, cache, LUTptr, nullptr);
         const Vec3 &h_final = field_force_final.h;
-        const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force);
+        const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force, trial_final.pos);
         constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-        const Vec3 M_final = -params.gamma_m * E_ * cross(q_final, h_final);
+        const Vec3 M_final = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_final, h_final), trial_final, F_final);
         const real_t N_final = params.gamma_g - F_final.z;
         if (!real_isfinite(N_final))
             return AdvanceStepResult::kStepNaNOrInf;
@@ -938,9 +975,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const FieldForceResult field_force_event = eval_mag_field_and_force(
             params, state_at_tr.pos, q_event, state_at_tr.down_disk_angle, cache, LUTptr, nullptr);
         const Vec3 &h_event = field_force_event.h;
-        const Vec3 F_event = apply_inclined_disk_force(params, field_force_event.Force);
+        const Vec3 F_event = apply_inclined_disk_force(params, field_force_event.Force, state_at_tr.pos);
         const FieldResult event_field = {h_event, field_force_event.hGrad3d};
-        const Vec3 M_event = -params.gamma_m * E_ * cross(q_event, h_event);
+        const Vec3 M_event = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_event, h_event), state_at_tr, F_event);
         const real_t N_event = params.gamma_g - F_event.z;
         if (!real_isfinite(N_event))
             return AdvanceStepResult::kStepNaNOrInf;
@@ -987,9 +1024,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             const FieldForceResult field_force_sliding_mid = eval_mag_field_and_force(
                 params, sliding_mid.pos, q_mid, sliding_mid.down_disk_angle, cache, LUTptr, nullptr);
             const Vec3 &h_sliding_mid = field_force_sliding_mid.h;
-            const Vec3 F_sliding_mid = apply_inclined_disk_force(params, field_force_sliding_mid.Force);
+            const Vec3 F_sliding_mid = apply_inclined_disk_force(params, field_force_sliding_mid.Force, sliding_mid.pos);
             const FieldResult mid_field = {h_sliding_mid, field_force_sliding_mid.hGrad3d};
-            const Vec3 M_sliding_mid = -params.gamma_m * E_ * cross(q_mid, h_sliding_mid);
+            const Vec3 M_sliding_mid = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_mid, h_sliding_mid), sliding_mid, F_sliding_mid);
             const real_t N_sliding_mid = params.gamma_g - F_sliding_mid.z;
             if (!real_isfinite(N_sliding_mid))
                 return AdvanceStepResult::kStepNaNOrInf;
