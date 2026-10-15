@@ -46,14 +46,14 @@ SR = 2.5
 SOMEGA = 2.25447
 
 # Initial-condition plane.  S0 = v0 + alpha * omega0.
-V0_LOWER = 4.0
-V0_UPPER = 4.5
-S0_LOWER = -7.0
-S0_UPPER = -6.5
+V0_LOWER = -1.0
+V0_UPPER = 1.0
+S0_LOWER = -14.0
+S0_UPPER = 14.0
 
-K = 256
+K = 64
 DT = 1.0e-3
-TOTAL_TIME = 50000.0
+TOTAL_TIME = 28000.0
 OBSERVATION_WINDOW = 4000.0
 SAMPLE_TIME = 0.2
 
