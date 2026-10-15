@@ -61,7 +61,8 @@ def plot_result(times,states,path,kick_at=None,title=None,capture_candidate=True
     return pos,angle,speed
 
 
-def animate_result(times,states,frame_stride,title='Partial candidate | visible rebound remains'):
+def animate_result(times,states,frame_stride,title='Partial candidate | visible rebound remains',
+                   ball_radius_mm=5.,force_interval=None):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -69,7 +70,7 @@ def animate_result(times,states,frame_stride,title='Partial candidate | visible 
     ax.set(xlim=(-105,105),ylim=(-105,105),xlabel='x (mm)',ylabel='y (mm)')
     theta=np.linspace(0,2*np.pi,500);ax.plot(70*np.cos(theta),70*np.sin(theta),color='#aaa',lw=.7)
     line,=ax.plot([],[],color='#3873ac',lw=.8)
-    ball=Circle((70,0),5,color='#3873ac');ax.add_patch(ball)
+    ball=Circle((70,0),ball_radius_mm,color='#3873ac');ax.add_patch(ball)
     magnets=[Circle((0,0),14,color='#cc4a4a' if j%2==0 else '#4387bc',alpha=.28) for j in range(8)]
     for magnet in magnets:ax.add_patch(magnet)
     heading=ax.set_title(title)
@@ -79,7 +80,9 @@ def animate_result(times,states,frame_stride,title='Partial candidate | visible 
         i=int(indices[frame]);ball.center=tuple(pos[i]);line.set_data(pos[:i+1,0],pos[:i+1,1])
         for j,magnet in enumerate(magnets):
             phase=states[i,0]+j*2*np.pi/8;magnet.center=(70*np.cos(phase),70*np.sin(phase))
-        heading.set_text(f'{title} | t={times[i]:.2f} s')
+        phase=('captured / no push' if times[i]<force_interval[0] else
+               'reverse air push ON' if times[i]<force_interval[1] else 'air push OFF') if force_interval else title
+        heading.set_text(f'{phase} | t={times[i]:.2f} s')
         return [ball,line,heading,*magnets]
     animation=FuncAnimation(fig,update,frames=len(indices),interval=30,blit=False,repeat=False)
     plt.show()

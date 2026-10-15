@@ -21,6 +21,8 @@ def print_build_metadata(config: dict, *, stream=None) -> None:
          if "height" in parameters else unknown),
     ]
     tilt = config.get("inclined_disk", {})
+    rolling = config.get("model_parameters", {}).get("kEnableRollingResistance")
+    rows.append(("Rolling resistance", "Enabled" if rolling == "true" else "Disabled" if rolling == "false" else unknown))
     enabled = tilt.get("enabled")
     rows.append(("Inclined disk", "Enabled" if enabled is True else "Disabled" if enabled is False else unknown))
     if enabled is True:

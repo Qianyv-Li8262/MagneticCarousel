@@ -85,12 +85,14 @@ def main() -> None:
     if magnet_number < 2 or magnet_number % 2:
         raise ValueError("magnet_number must be an even integer >= 2")
     model_keys = ("Mu_r", "Alpha_JA", "C_JA", "K", "Beta", "Eta", "Mu",
+                  "kRollingMuLow", "kRollingMuHigh", "kRollingTransitionOmega",
+                  "kRollingOmegaEpsilon", "kRollingLambda",
                   "kStepRefinementRecursionDepth", "kAttitudeNormalizeMode",
-                  "kDebugChkEight", "kDebugChkTen", "kFinerStepCheck")
+                  "kDebugChkEight", "kDebugChkTen", "kFinerStepCheck", "kEnableRollingResistance")
     field_values = field_parameters(field_source)
     model_values = {
         key: literal(model_source, key, "int" if key == "kStepRefinementRecursionDepth"
-                     else "bool" if key in ("kDebugChkEight", "kDebugChkTen", "kFinerStepCheck")
+                     else "bool" if key in ("kDebugChkEight", "kDebugChkTen", "kFinerStepCheck", "kEnableRollingResistance")
                      else "AttitudeNormalizeMode" if key == "kAttitudeNormalizeMode"
                      else "real_t")
         for key in model_keys
@@ -111,7 +113,9 @@ def main() -> None:
         "inclined_disk": inclined_disk_parameters(model_source),
         "source_sha256": {
             str(path.relative_to(args.source_dir)).replace("\\", "/"): sha256(path)
-            for path in (field_header, model_header)
+            for path in (field_header, model_header, headers / "2dmodel-hysteresis.hpp",
+                         headers / "hysteresis_types.hpp", args.source_dir / "kernels/2dmodel-hysteresis.cpp",
+                         args.source_dir / "kernels/bindings/pybind.cpp")
         },
     }
     if args.field_mode == "lut":

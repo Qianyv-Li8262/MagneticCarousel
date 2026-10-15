@@ -5,8 +5,11 @@
 
 From src2d, build with ``cmake --preset local-cpu`` and
 ``cmake --build --preset local-cpu-release``, then run with the daily Python.
-The defaults use a 12 mm steel ball and 100 rpm disk-angular time as the
-8-magnet apparatus reference; finite curvature still changes the field.
+The launcher defaults use a 12 mm steel ball and the video-measured 200 rpm.
+Hold the ball for two magnet-disk turns, then release at v0=-0.075, phase 0.58
+with the compiled tilt and rolling-resistance switches. Optional air blowing uses
+--blow-start TIME --blow-duration TIME [--blow-force MN] after release.
+Blowing times use the same 2D time units as the graph; force remains in mN.
 """
 
 from __future__ import annotations
@@ -24,9 +27,12 @@ from project_paths import extension_dir
 from build_metadata import print_build_metadata
 
 
-DT_AT_EIGHT_MAGNETS = 1.0e-3
-STEPS_PER_FRAME = 100
+DT_AT_EIGHT_MAGNETS = 5.0e-4
+STEPS_PER_FRAME = 700
 FPS = 30
+MAGNET_DIAMETER_MM = 28.0
+MAGNET_THICKNESS_MM = 15.0
+MAGNET_RING_RADIUS_MM = 70.0
 FAST_BATCH_SIZE = 5
 FAST_GRAPH_UPDATE_EVERY = 5
 FAST_RESCALE_EVERY = 20
@@ -35,6 +41,11 @@ FAST_MAX_PLOT_POINTS = 2000
 # Multipliers relative to the 12 mm ball and 100 rpm apparatus reference.
 SR = 1.0
 SOMEGA = 1.0
+ANIMATION_SOMEGA = 2.0
+ANIMATION_V0 = -0.05
+MAGNETIZE_TURNS = 2.0
+DISK_PHASE = 0.58
+DEFAULT_BLOW_FORCE_MN = 0.7
 
 # These are the 8-magnet references. The field period rate is N/2 per
 # revolution, so the three acceleration coefficients scale as (N/8)**2.
@@ -84,7 +95,9 @@ def read_build_config(*, kahan: bool) -> dict:
 
 def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
                      frames: int | None, pre: float, fast: bool, show_magnets: bool,
-                     show_work=False, sr=SR, somega=SOMEGA, v0=0.0, s0=0.0, phi0=0.0) -> None:
+                     show_work=False, sr=SR, somega=ANIMATION_SOMEGA, v0=ANIMATION_V0, s0=0.0, phi0=0.0,
+                     magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE, fps=FPS,
+                     blow_start=None, blow_duration=None, blow_force=DEFAULT_BLOW_FORCE_MN) -> None:
     def row(label: str, value: object) -> None:
         print(f"  {label:<28} {value}")
 
@@ -113,11 +126,16 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
     section("Trajectory")
     row("s_r / s_omega", f"{sr:g} / {somega:g}")
     row("Initial v0 / S0 / phi0", f"{v0:.12g} / {s0:.12g} / {phi0:.12g}")
+    row("Held magnetization turns", magnetize_turns)
+    row("Disk phase at release", disk_phase)
     row("Magnetic mechanical power", show_work)
+    row("Blow start / duration (2D)", "disabled" if blow_start is None else f"{blow_start:g} / {blow_duration:g}")
+    row("Blow force (mN)", blow_force)
     for label, value in zip(("alpha", "delta", "gamma_g", "gamma", "gamma_m"), parameters):
         row(label, f"{value:.9g}")
     row("dt", f"{effective_dt:.12g}")
     row("Steps per frame", steps_per_frame)
+    row("Target display FPS", fps)
     row("Pre-evolution", f"{pre:g}")
     row("Frames", frames if frames is not None else "unlimited")
     row("Fast / magnets", f"{fast} / {show_magnets}")
@@ -149,7 +167,7 @@ def scaled_model_parameters(magnet_count: int, *, sr=SR, somega=SOMEGA) -> tuple
 
 
 def timestep_for_magnets(magnet_count: int) -> float:
-    """Use the same phase-time step as dt=0.001 with eight magnets."""
+    """Use the same phase-time step as dt=0.0005 with eight magnets."""
     if magnet_count < 2 or magnet_count % 2:
         raise ValueError("magnet count must be positive and even")
     return DT_AT_EIGHT_MAGNETS * 8.0 / magnet_count
@@ -206,6 +224,27 @@ def make_initial_state(module, *, alpha=None, v0=0.0, s0=0.0, phi0=0.0):
     return state
 
 
+def prepare_initial_state(module, params, dt, *, v0=0.0, s0=0.0, phi0=0.0,
+                          magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE):
+    """Prepare JA memory at the requested position, then set release velocities."""
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be positive and finite")
+    if not np.isfinite(magnetize_turns) or magnetize_turns < 0 or not np.isfinite(disk_phase):
+        raise ValueError("magnetization turns must be non-negative and disk phase finite")
+    step_count = 2 * np.pi * magnetize_turns / dt
+    if not np.isfinite(step_count) or step_count > np.iinfo(np.int32).max:
+        raise ValueError("held magnetization exceeds the C++ step limit")
+    steps = int(round(step_count))
+    state = make_initial_state(module, alpha=params.alpha, v0=v0, s0=s0, phi0=phi0)
+    speed, spin = state[3:5].copy(), state[9:12].copy()
+    state[0] = disk_phase - steps * dt
+    if steps:
+        state = module.magnetize_held_ball(state, dt, steps, params)
+    state[0] = disk_phase
+    state[3:5], state[9:12] = speed, spin
+    return state
+
+
 def minmax_downsample(times, values, max_points):
     """Keep each time bucket's extrema when limiting plotted history."""
     count = len(times)
@@ -224,10 +263,74 @@ def minmax_downsample(times, values, max_points):
     return np.asarray(times)[indices], values_array[indices]
 
 
+def validate_blow(blow_start, blow_duration, blow_force):
+    if (blow_start is None) != (blow_duration is None):
+        raise ValueError("--blow-start and --blow-duration must be supplied together")
+    if not np.isfinite(blow_force) or blow_force < 0:
+        raise ValueError("--blow-force must be finite and non-negative (mN)")
+    if blow_start is not None:
+        if not np.isfinite(blow_start) or blow_start < 0:
+            raise ValueError("--blow-start must be finite and non-negative (2D time units)")
+        if not np.isfinite(blow_duration) or blow_duration <= 0:
+            raise ValueError("--blow-duration must be positive and finite (2D time units)")
+        if not np.isfinite(blow_start + blow_duration):
+            raise ValueError("blowing end time must be finite")
+
+
+class BlowSchedule:
+    """Split solver chunks at 2D-time force switches, including --pre."""
+
+    def __init__(self, module, params, dt, *, sr, somega, start=None, duration=None,
+                 force_mn=DEFAULT_BLOW_FORCE_MN):
+        validate_blow(start, duration, force_mn)
+        self.module, self.params, self.dt = module, params, dt
+        self.omega = (100 * 2 * np.pi / 60) * somega
+        self.start = start
+        self.end = None if start is None else start + duration
+        # F/m converted with length unit R_ring/(N/2) and disk angular time.
+        mass = 7850 * (4 * np.pi / 3) * (0.006 * sr) ** 3
+        length_unit_m = 0.070 / (module.magnet_number / 2)
+        self.acceleration = force_mn * 1e-3 / mass / length_unit_m / self.omega**2
+        self.elapsed = 0.0
+        self.steps = 0
+        if not hasattr(params, "reverse_push_acceleration"):
+            raise RuntimeError("Rebuild the CPU extension to expose reverse_push_acceleration")
+        params.reverse_push_acceleration = 0.0
+
+    def active(self, time):
+        return self.start is not None and self.start <= time < self.end
+
+    def evolve(self, state, steps, sliding=None, sliding_dir=None):
+        target = self.elapsed + steps * self.dt
+        boundaries = [value for value in (self.start, self.end)
+                      if value is not None and self.elapsed < value < target]
+        for stop in [*boundaries, target]:
+            self.params.reverse_push_acceleration = self.acceleration if self.active(self.elapsed) else 0.0
+            span = stop - self.elapsed
+            nearest = round(span / self.dt)
+            tolerance = 8 * np.finfo(float).eps * max(abs(stop), abs(self.elapsed), self.dt)
+            if abs(span - nearest * self.dt) <= tolerance:
+                count, remainder = nearest, 0.0
+            else:
+                count = int(np.floor(span / self.dt))
+                remainder = span - count * self.dt
+            for step_dt, step_count in ((self.dt, count), (remainder, int(remainder > 0))):
+                if step_count:
+                    state, sliding, sliding_dir = self.module.evolve_trajectory(
+                        state, step_dt, step_count, self.params, sliding, sliding_dir, self.steps)
+                    self.steps += step_count
+            self.elapsed = stop
+        self.params.reverse_push_acceleration = self.acceleration if self.active(target) else 0.0
+        return state, sliding, sliding_dir
+
+
 def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False, pre=0.0,
             kahan=False, expected_config=None, show_work=False,
-            sr=SR, somega=SOMEGA, v0=0.0, s0=0.0, phi0=0.0,
-            path_max_points=FAST_MAX_PLOT_POINTS):
+            sr=SR, somega=ANIMATION_SOMEGA, v0=ANIMATION_V0, s0=0.0, phi0=0.0,
+            magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE,
+            path_max_points=FAST_MAX_PLOT_POINTS, fps=FPS,
+            blow_start=None, blow_duration=None, blow_force=DEFAULT_BLOW_FORCE_MN,
+            sample_callback=None):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -243,6 +346,8 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         dt = timestep_for_magnets(magnet_count)
     if not np.isfinite(dt) or dt <= 0 or steps_per_frame <= 0:
         raise ValueError("dt and steps_per_frame must be positive")
+    if not np.isfinite(fps) or fps <= 0:
+        raise ValueError("fps must be positive and finite")
     if not np.isfinite(pre) or pre < 0:
         raise ValueError("pre must be finite and non-negative")
     if path_max_points < 0:
@@ -250,7 +355,10 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     if not all(np.isfinite(value) for value in (v0, s0, phi0)):
         raise ValueError("initial values must be finite")
     params = module.SolverParams(*scaled_model_parameters(magnet_count, sr=sr, somega=somega))
-    state = make_initial_state(module, alpha=params.alpha, v0=v0, s0=s0, phi0=phi0)
+    blowing = BlowSchedule(module, params, dt, sr=sr, somega=somega,
+                          start=blow_start, duration=blow_duration, force_mn=blow_force)
+    state = prepare_initial_state(module, params, dt, v0=v0, s0=s0, phi0=phi0,
+                                  magnetize_turns=magnetize_turns, disk_phase=disk_phase)
     sliding = None
     sliding_dir = None
     pre_step_count = pre / dt
@@ -259,12 +367,17 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     pre_steps = int(round(pre_step_count))
     if pre_steps:
         print(f"Pre-evolving in C++ for {pre_steps} steps (t={pre_steps * dt:g})...")
-        state, sliding, sliding_dir = module.evolve_trajectory(
-            state, dt, pre_steps, params, sliding, sliding_dir, 0
-        )
+        state, sliding, sliding_dir = blowing.evolve(state, pre_steps, sliding, sliding_dir)
     time = pre_steps * dt
-    completed_steps = pre_steps
+    if sample_callback is not None:
+        sample_callback(time, state.copy(), sliding)
     magnet_radius = magnet_count / 2
+    length_unit_mm = MAGNET_RING_RADIUS_MM / magnet_radius
+    magnet_body_radius = MAGNET_DIAMETER_MM / (2 * length_unit_mm)
+    geometry = (expected_config or read_build_config(kahan=kahan)).get("magnet_geometry")
+    if geometry is not None and (not np.isclose(float(geometry["radius"]), magnet_body_radius)
+            or not np.isclose(float(geometry["thickness"]), MAGNET_THICKNESS_MM / length_unit_mm)):
+        raise RuntimeError("Animation's fixed 28 mm x 15 mm magnets disagree with the compiled magnet geometry")
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count if show_magnets else None
 
     fig = plt.figure(figsize=(14, 11 if show_work else 9), **({} if fast else {"layout": "constrained"}))
@@ -280,15 +393,23 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     scene.set(xlim=(-extent, extent), ylim=(-extent, extent), xlabel="x", ylabel="y")
     scene.set_aspect("equal", adjustable="box")
     scene.grid(alpha=0.12)
-    disk = Circle((0, 0), magnet_radius + 0.35, facecolor="0.94", edgecolor="0.48", linewidth=1.5, zorder=0)
+    # This is the measured magnet-centre ring, not an assumed physical plate edge.
+    disk = Circle((0, 0), magnet_radius, facecolor="0.94", edgecolor="0.48", linewidth=1.5, linestyle="--", zorder=0)
     scene.add_patch(disk)
-    magnets = (scene.scatter([], [], s=140, c="0.48", edgecolors="0.28", linewidths=0.8, zorder=2)
-               if show_magnets else None)
+    magnets = []
+    if show_magnets:
+        for angle in base_angles + float(state[0]):
+            magnet = Circle((magnet_radius * np.cos(angle), magnet_radius * np.sin(angle)),
+                            magnet_body_radius, facecolor="0.48", edgecolor="0.28", linewidth=0.8, zorder=2)
+            scene.add_patch(magnet)
+            magnets.append(magnet)
     (path_line,) = scene.plot([], [], color="tab:blue", linewidth=1.6, alpha=0.85, zorder=3)
-    (ball,) = scene.plot([], [], "o", color="tab:orange", markeredgecolor="white", markersize=12, zorder=4)
+    ball = Circle((float(state[1]), float(state[2])), params.alpha,
+                  facecolor="tab:orange", edgecolor="white", zorder=4)
+    scene.add_patch(ball)
     status = scene.text(0.02, 0.98, "", transform=scene.transAxes, va="top", family="monospace",
                         fontsize=9, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
-    scene.set_title(f"Top view · {magnet_count} rotating magnets · {module.field_mode} field")
+    scene.set_title(f"Top view · {magnet_count} magnets: diameter 28 mm, thickness 15 mm\nDashed circle: magnet centres, radius 70 mm")
 
     times = [time]
     radial = [float(np.hypot(state[1], state[2]))]
@@ -330,10 +451,11 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     fig.suptitle(f"Single 2D trajectory · sr={sr:g}, sω={somega:g}")
 
     def render(*, update_graphs=True, rescale=True):
-        if magnets is not None:
+        if magnets:
             angle = base_angles + float(state[0])
-            magnets.set_offsets(np.column_stack((magnet_radius * np.cos(angle), magnet_radius * np.sin(angle))))
-        ball.set_data([xs[-1]], [ys[-1]])
+            for magnet, x, y in zip(magnets, magnet_radius * np.cos(angle), magnet_radius * np.sin(angle)):
+                magnet.center = (x, y)
+        ball.center = (xs[-1], ys[-1])
         if fast and path_max_points and len(xs) > path_max_points:
             # Preserve the initial excursion at its original sampling density.
             early_count = min(1000, path_max_points // 2)
@@ -370,19 +492,18 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
             f"|v| = {speeds[-1]:.6f}  v_tan = {tangential_speeds[-1]:.6f}\n"
             f"v_tan / {magnet_radius:g} (1D units) = {tangential_speeds[-1] / magnet_radius:.6f}\n"
             f"{'sliding' if sliding else 'rolling'}"
+            f"\nrelease time = {time / blowing.omega:.3f} s"
+            f"\nblow = {blow_force if blowing.active(blowing.elapsed) else 0:g} mN"
         )
         artists = (ball, path_line, radial_line, polar_line, displacement_line,
                    speed_line, tangential_line, *power_lines, status)
-        return (magnets, *artists) if magnets is not None else artists
+        return (*magnets, *artists)
 
     def update(_frame):
-        nonlocal state, sliding, sliding_dir, time, completed_steps, radius_sum
+        nonlocal state, sliding, sliding_dir, time, radius_sum
         for _ in range(FAST_BATCH_SIZE if fast else 1):
-            state, sliding, sliding_dir = module.evolve_trajectory(
-                state, dt, steps_per_frame, params, sliding, sliding_dir, completed_steps
-            )
-            completed_steps += steps_per_frame
-            time += dt * steps_per_frame
+            state, sliding, sliding_dir = blowing.evolve(state, steps_per_frame, sliding, sliding_dir)
+            time = blowing.elapsed
             xs.append(float(state[1]))
             ys.append(float(state[2]))
             times.append(time)
@@ -400,6 +521,8 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
             if show_work:
                 for values, value in zip(power_values, module.magnetic_power(state, params)):
                     values.append(float(value))
+            if sample_callback is not None:
+                sample_callback(time, state.copy(), sliding)
         return render(update_graphs=not fast or _frame % FAST_GRAPH_UPDATE_EVERY == 0,
                       rescale=not fast or _frame % FAST_RESCALE_EVERY == 0)
 
@@ -407,7 +530,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     if fast:
         fig.tight_layout()
     animation = FuncAnimation(
-        fig, update, init_func=render, frames=frames, interval=1000 / FPS,
+        fig, update, init_func=render, frames=frames, interval=1000 / fps,
         blit=False, cache_frame_data=False,
     )
     return fig, animation
@@ -416,8 +539,9 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dt", type=float, default=None,
-                        help="2D time step (default: 0.001 * 8 / compiled magnet count)")
+                        help="2D time step (default: 0.0005 * 8 / compiled magnet count)")
     parser.add_argument("--steps-per-frame", type=int, default=STEPS_PER_FRAME)
+    parser.add_argument("--fps", type=float, default=FPS, help="target display refresh rate (actual rate depends on rendering speed)")
     parser.add_argument("--pre", type=float, default=0.0,
                         help="pre-evolve once in C++ to this 2D time, then start the animation (default: 0)")
     parser.add_argument("--kahan", action="store_true",
@@ -429,13 +553,26 @@ def main():
     parser.add_argument("--path-max-points", type=int, default=FAST_MAX_PLOT_POINTS,
                         help="maximum fast-mode trajectory points; 0 keeps all points; initial points are preserved")
     parser.add_argument("--sr", type=float, default=SR)
-    parser.add_argument("--somega", type=float, default=SOMEGA)
-    parser.add_argument("--v0", type=float, default=0.0, help="initial signed tangential speed in 1D units")
+    parser.add_argument("--somega", type=float, default=ANIMATION_SOMEGA)
+    parser.add_argument("--v0", type=float, default=ANIMATION_V0, help="initial signed tangential speed in 1D units")
     parser.add_argument("--s0", type=float, default=0.0, help="initial signed tangential slip in 1D units; omega0=(s0-v0)/alpha")
-    parser.add_argument("--phi0", type=float, default=0.0, help="initial orbital angle in radians; disk angle starts at zero")
+    parser.add_argument("--phi0", type=float, default=0.0, help="initial orbital angle in radians")
+    parser.add_argument("--disk-phase", type=float, default=DISK_PHASE, help="magnet-disk angle at release, in radians")
+    parser.add_argument("--magnetize-turns", type=float, default=MAGNETIZE_TURNS,
+                        help="hold the ball fixed for this many magnet-disk turns before release (default: 2)")
+    parser.add_argument("--blow-start", type=float, default=None,
+                        help="start blowing at this 2D time after release (graph units); requires --blow-duration")
+    parser.add_argument("--blow-duration", type=float, default=None,
+                        help="blowing duration in 2D time units (graph units); requires --blow-start")
+    parser.add_argument("--blow-force", type=float, default=DEFAULT_BLOW_FORCE_MN,
+                        help="following reverse tangential force through the ball centre, in mN (default: 0.7)")
     parser.add_argument("--dry-run", action="store_true", help="print and validate the build and runtime configuration without starting the animation")
-    parser.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
+    parser.add_argument("--yes", action="store_true", help=argparse.SUPPRESS)  # Keep older commands working.
     args = parser.parse_args()
+    try:
+        validate_blow(args.blow_start, args.blow_duration, args.blow_force)
+    except ValueError as error:
+        parser.error(str(error))
     if args.path_max_points < 0:
         parser.error("--path-max-points must be non-negative")
     if not all(np.isfinite(value) for value in (args.sr, args.somega, args.v0, args.s0, args.phi0)):
@@ -448,23 +585,21 @@ def main():
         parser.error("--pre must be finite and non-negative")
     if args.steps_per_frame <= 0:
         parser.error("--steps-per-frame must be positive")
+    if not np.isfinite(args.fps) or args.fps <= 0:
+        parser.error("--fps must be positive and finite")
     if args.dt is not None and (not np.isfinite(args.dt) or args.dt <= 0):
         parser.error("--dt must be positive and finite")
+    if not np.isfinite(args.disk_phase) or not np.isfinite(args.magnetize_turns) or args.magnetize_turns < 0:
+        parser.error("--disk-phase must be finite and --magnetize-turns non-negative and finite")
     config = read_build_config(kahan=args.kahan)
     print_run_config(config, dt=args.dt, steps_per_frame=args.steps_per_frame,
                      frames=args.frames, pre=args.pre, fast=args.fast,
                      show_magnets=not args.hide_magnets, show_work=args.show_work,
-                     sr=args.sr, somega=args.somega, v0=args.v0, s0=args.s0, phi0=args.phi0)
+                     sr=args.sr, somega=args.somega, v0=args.v0, s0=args.s0, phi0=args.phi0,
+                     magnetize_turns=args.magnetize_turns, disk_phase=args.disk_phase, fps=args.fps,
+                     blow_start=args.blow_start, blow_duration=args.blow_duration, blow_force=args.blow_force)
     if args.dry_run:
         return
-    if not args.yes:
-        try:
-            answer = input("Run this CPU animation? Type yes to continue: ").strip()
-        except EOFError as exc:
-            raise SystemExit("No confirmation received; animation cancelled. Use --yes for non-interactive runs.") from exc
-        if answer != "yes":
-            print("Animation cancelled.")
-            return
     import matplotlib.pyplot as plt
 
     figure, animation = animate(
@@ -477,7 +612,9 @@ def main():
         expected_config=config,
         show_work=args.show_work, sr=args.sr, somega=args.somega,
         v0=args.v0, s0=args.s0, phi0=args.phi0,
-        path_max_points=args.path_max_points,
+        magnetize_turns=args.magnetize_turns, disk_phase=args.disk_phase,
+        path_max_points=args.path_max_points, fps=args.fps,
+        blow_start=args.blow_start, blow_duration=args.blow_duration, blow_force=args.blow_force,
     )
     plt.show()
 
