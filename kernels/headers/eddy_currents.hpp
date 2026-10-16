@@ -5,6 +5,7 @@
 #include "hysteresis_config.hpp"
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
+#include "../generated/eddy_current_coefficients.generated.hpp"
 
 #ifndef __CUDACC__
 #include <cstdio>

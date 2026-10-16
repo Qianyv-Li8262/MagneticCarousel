@@ -50,6 +50,7 @@ CONFIG_CONST real_t kRollingOmegaEpsilon = REAL_LITERAL(0.002);
 CONFIG_CONST real_t kRollingLambda = REAL_LITERAL(0.0);
 
 
+// AVX groups, four scalar memory modes per group (3 groups = 12 modes).
 CONFIG_CONST int kEddyCurrentModeCount = 3;
 
 // Fixed tilt axis measured from +x; positive tilt follows the right-hand rule.

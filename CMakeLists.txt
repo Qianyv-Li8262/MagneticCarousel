@@ -17,6 +17,28 @@ find_package(Boost CONFIG REQUIRED COMPONENTS multiprecision)
 include(CTest)
 
 set(KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
+set(EDDY_GENERATED_DIR "${KERNEL_DIR}/generated")
+set(EDDY_COEFFICIENT_HEADER "${EDDY_GENERATED_DIR}/eddy_current_coefficients.generated.hpp")
+set(EDDY_COEFFICIENT_REPORT "${CMAKE_CURRENT_BINARY_DIR}/generated/eddy_current_coefficients.report.json")
+set(EDDY_CODEGEN_STAMP "${CMAKE_CURRENT_BINARY_DIR}/generated/eddy_current_coefficients.stamp")
+add_executable(generate_eddy_coefficients_tool "${KERNEL_DIR}/tools/generate_eddy_coefficients.cpp")
+target_compile_features(generate_eddy_coefficients_tool PRIVATE cxx_std_17)
+target_compile_definitions(generate_eddy_coefficients_tool PRIVATE USE_FP64)
+target_include_directories(generate_eddy_coefficients_tool PRIVATE "${KERNEL_DIR}/headers")
+target_link_libraries(generate_eddy_coefficients_tool PRIVATE Boost::multiprecision)
+add_custom_command(
+    OUTPUT "${EDDY_CODEGEN_STAMP}"
+    BYPRODUCTS "${EDDY_COEFFICIENT_HEADER}" "${EDDY_COEFFICIENT_REPORT}"
+    COMMAND "$<TARGET_FILE:generate_eddy_coefficients_tool>" "${EDDY_COEFFICIENT_HEADER}" "${EDDY_COEFFICIENT_REPORT}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${EDDY_CODEGEN_STAMP}"
+    DEPENDS generate_eddy_coefficients_tool
+        "${KERNEL_DIR}/tools/eddy_codegen_math.hpp" "${KERNEL_DIR}/tools/eddy_codegen_config.hpp"
+        "${KERNEL_DIR}/headers/hysteresis_config.hpp" "${KERNEL_DIR}/headers/hysteresis_physics.hpp"
+        "${KERNEL_DIR}/headers/hysteresis_types.hpp"
+    COMMENT "Generating compressed eddy-current modes with Boost.Multiprecision"
+    VERBATIM)
+add_custom_target(generate_eddy_coefficients ALL
+    DEPENDS "${EDDY_CODEGEN_STAMP}" "${EDDY_COEFFICIENT_HEADER}" "${EDDY_COEFFICIENT_REPORT}")
 # scan_initial_cpu.cpp is included by 2dmodel-hysteresis.cpp because the model
 # header defines non-inline evolution functions. List it as a source for build
 # tracking while keeping a single translation unit for those definitions.
@@ -165,6 +187,7 @@ if(IYPT16_ENABLE_CUDA)
             set(cubin_path "${CUDA_SCAN_DIR}/${scan_target}.cubin")
             set(manifest_path "${CUDA_SCAN_DIR}/${scan_target}.json")
             add_library(${object_target} OBJECT "${KERNEL_DIR}/scan_${scan}.cu")
+            add_dependencies(${object_target} generate_eddy_coefficients)
             set_target_properties(${object_target} PROPERTIES
                 CUDA_CUBIN_COMPILATION ON
                 CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
@@ -173,7 +196,7 @@ if(IYPT16_ENABLE_CUDA)
                 EXCLUDE_FROM_ALL TRUE
             )
             target_include_directories(${object_target} PRIVATE
-                "${KERNEL_DIR}" "${KERNEL_DIR}/headers")
+                "${KERNEL_DIR}" "${KERNEL_DIR}/headers" "${EDDY_GENERATED_DIR}")
             target_compile_definitions(${object_target} PRIVATE
                 FIELD_EVAL_MODE=${cuda_field_mode}
                 LUT_CACHE_MODE=${cuda_cache_mode})
@@ -275,6 +298,10 @@ if(IYPT16_FIELD_MODE STREQUAL "lut")
     add_dependencies(hysteresis_fp32_kahan generate_field_lut_files)
 endif()
 target_include_directories(hysteresis_fp32_kahan PRIVATE "${KERNEL_DIR}/headers")
+foreach(target IN ITEMS hysteresis_fp64 hysteresis_fp32_kahan)
+    add_dependencies(${target} generate_eddy_coefficients)
+    target_include_directories(${target} PRIVATE "${EDDY_GENERATED_DIR}")
+endforeach()
 set_target_properties(hysteresis_fp32_kahan PROPERTIES
     OUTPUT_NAME hysteresis
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/extensions/fp32-kahan"
@@ -351,6 +378,18 @@ if(BUILD_TESTING)
 
     add_native_test(test_boost_multiprecision)
     target_link_libraries(test_boost_multiprecision PRIVATE Boost::multiprecision)
+    add_native_test(test_eddy_coefficients)
+    target_compile_definitions(test_eddy_coefficients PRIVATE USE_FP64)
+    target_include_directories(test_eddy_coefficients PRIVATE "${EDDY_GENERATED_DIR}")
+    add_dependencies(test_eddy_coefficients generate_eddy_coefficients)
+    if(IYPT16_ENABLE_CUDA)
+        add_library(test_eddy_coefficients_cuda OBJECT "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_eddy_coefficients_cuda.cu")
+        set_target_properties(test_eddy_coefficients_cuda PROPERTIES CUDA_CUBIN_COMPILATION ON
+            CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+        target_compile_definitions(test_eddy_coefficients_cuda PRIVATE USE_FP64)
+        target_include_directories(test_eddy_coefficients_cuda PRIVATE "${KERNEL_DIR}/headers" "${EDDY_GENERATED_DIR}")
+        add_dependencies(test_eddy_coefficients_cuda generate_eddy_coefficients)
+    endif()
     add_native_test(test_lut_interpolation)
     add_native_test(test_solver_params)
     add_executable(test_solver_params_fp64 "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_solver_params.cpp")
