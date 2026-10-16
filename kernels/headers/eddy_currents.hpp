@@ -86,3 +86,55 @@ DEVICE INLINE void advance_eddy_current(EddyCurrentModes &yx, EddyCurrentModes &
     advance_eddy_current_cuda(yx, yy, yz, dt, hb_dot, eddy_current_scale);
 #endif
 }
+
+#ifndef __CUDACC__
+INLINE double eddy_horizontal_sum(const __m256d value)
+{
+    const __m128d pairs = _mm_add_pd(_mm256_castpd256_pd128(value),
+                                    _mm256_extractf128_pd(value, 1));
+    return _mm_cvtsd_f64(_mm_add_sd(pairs, _mm_unpackhi_pd(pairs, pairs)));
+}
+
+INLINE Vec3 eval_eddy_current_moment_avx(const EddyCurrentModes &yx, const EddyCurrentModes &yy,
+                                        const EddyCurrentModes &yz)
+{
+    __m256d sx = _mm256_setzero_pd();
+    __m256d sy = _mm256_setzero_pd();
+    __m256d sz = _mm256_setzero_pd();
+    for (int group = 0; group < kEddyCurrentModeCount; ++group) {
+        const __m256d a = _mm256_load_pd(eddy_coefficients::aj + 4 * group);
+        sx = _mm256_add_pd(sx, _mm256_mul_pd(a, yx[group]));
+        sy = _mm256_add_pd(sy, _mm256_mul_pd(a, yy[group]));
+        sz = _mm256_add_pd(sz, _mm256_mul_pd(a, yz[group]));
+    }
+    return {static_cast<real_t>(eddy_horizontal_sum(sx)),
+            static_cast<real_t>(eddy_horizontal_sum(sy)),
+            static_cast<real_t>(eddy_horizontal_sum(sz))};
+}
+#else
+DEVICE INLINE Vec3 eval_eddy_current_moment_cuda(const real_t *yx, const real_t *yy, const real_t *yz)
+{
+    Vec3 delta_m{};
+    for (int j = 0; j < eddy_coefficients::mode_count; ++j) {
+        const real_t a = static_cast<real_t>(eddy_coefficients::aj[j]);
+        delta_m.x += a * yx[j];
+        delta_m.y += a * yy[j];
+        delta_m.z += a * yz[j];
+    }
+    return delta_m;
+}
+#endif
+
+// Body-frame dimensionless magnetization increment: delta_m = sum_j aj[j] * y[j].
+// The physical dipole moment is V * M_ref * delta_m; no volume factor is applied here.
+DEVICE INLINE Vec3 eval_eddy_current_moment(const EddyCurrentModes &yx, const EddyCurrentModes &yy,
+                                           const EddyCurrentModes &yz)
+{
+    static_assert(eddy_coefficients::mode_count == 4 * kEddyCurrentModeCount,
+                  "eddy coefficients are stale; rebuild generate_eddy_coefficients");
+#ifndef __CUDACC__
+    return eval_eddy_current_moment_avx(yx, yy, yz);
+#else
+    return eval_eddy_current_moment_cuda(yx, yy, yz);
+#endif
+}
