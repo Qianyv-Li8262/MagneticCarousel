@@ -17,7 +17,7 @@ DEVICE INLINE void update_mean_variance(real_t value, int count, real_t &mean, r
 
 DEVICE INLINE bool finite_state(const State<kEddyCurrentModeCount> &s)
 {
-    return real_isfinite(static_cast<real_t>(s.down_disk_angle)) &&
+    return eddy_current_state_finite(s) && real_isfinite(static_cast<real_t>(s.down_disk_angle)) &&
            real_isfinite(static_cast<real_t>(s.pos.x)) && real_isfinite(static_cast<real_t>(s.pos.y)) &&
            real_isfinite(static_cast<real_t>(s.speed.x)) && real_isfinite(static_cast<real_t>(s.speed.y)) &&
            real_isfinite(static_cast<real_t>(s.attitude.real)) &&
@@ -160,21 +160,7 @@ DEVICE INLINE int analyze(real_t v0, real_t s0, real_t dt, int steps, int window
             metrics[19] = mean_radius;
         }
     }
-    output_state[0] = static_cast<real_t>(ball.down_disk_angle);
-    output_state[1] = static_cast<real_t>(ball.pos.x);
-    output_state[2] = static_cast<real_t>(ball.pos.y);
-    output_state[3] = static_cast<real_t>(ball.speed.x);
-    output_state[4] = static_cast<real_t>(ball.speed.y);
-    output_state[5] = static_cast<real_t>(ball.attitude.real);
-    output_state[6] = static_cast<real_t>(ball.attitude.imagine.x);
-    output_state[7] = static_cast<real_t>(ball.attitude.imagine.y);
-    output_state[8] = static_cast<real_t>(ball.attitude.imagine.z);
-    output_state[9] = static_cast<real_t>(ball.omega.x);
-    output_state[10] = static_cast<real_t>(ball.omega.y);
-    output_state[11] = static_cast<real_t>(ball.omega.z);
-    output_state[12] = static_cast<real_t>(ball.q.x);
-    output_state[13] = static_cast<real_t>(ball.q.y);
-    output_state[14] = static_cast<real_t>(ball.q.z);
+    write_state_values<kEnableEddyCurrents>(ball, output_state);
     return status;
 }
 } // namespace initial_scan

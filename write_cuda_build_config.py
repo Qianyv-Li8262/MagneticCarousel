@@ -7,12 +7,13 @@ import argparse
 from pathlib import Path
 import shutil
 
-from write_build_config import field_parameters, inclined_disk_parameters, sha256, write_manifest
+from write_build_config import field_parameters, inclined_disk_parameters, eddy_current_parameters, sha256, write_manifest
 
 
 def source_files(root: Path, scan: str) -> list[Path]:
     kernel = root / "kernels"
     files = [kernel / f"scan_{scan}.cu", *sorted((kernel / "headers").rglob("*.hpp"))]
+    files.append(kernel / "generated/eddy_current_coefficients.generated.hpp")
     if scan == "initial":
         files.append(kernel / "scan_initial_common.hpp")
     return files
@@ -59,6 +60,7 @@ def main() -> None:
         "cuda_version": args.cuda_version,
         "field_parameters": parameters,
         "inclined_disk": inclined_disk_parameters(model_source),
+        "eddy_currents": eddy_current_parameters(model_source),
         "magnet_number": int(parameters["magnet_number"]),
         "source_sha256": {
             path.relative_to(root).as_posix(): sha256(path)

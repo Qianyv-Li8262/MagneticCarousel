@@ -370,6 +370,43 @@ if(IYPT16_ENABLE_CUDA)
 endif()
 
 if(BUILD_TESTING)
+    # Keep an enabled binding isolated from the production switch, so tests can
+    # verify that Python chunks preserve all 36 history values while production
+    # remains compiled with eddy currents disabled for regression comparisons.
+    pybind11_add_module(hysteresis_eddy_enabled_test MODULE NO_EXTRAS
+        "${KERNEL_DIR}/2dmodel-hysteresis.cpp" "${KERNEL_DIR}/bindings/pybind.cpp")
+    target_compile_features(hysteresis_eddy_enabled_test PRIVATE cxx_std_17)
+    target_compile_definitions(hysteresis_eddy_enabled_test PRIVATE USE_FP64
+        MODULE_NAME=hysteresis_eddy_enabled_test IYPT16_ENABLE_EDDY_CURRENTS=1)
+    target_include_directories(hysteresis_eddy_enabled_test PRIVATE "${KERNEL_DIR}/headers")
+    add_dependencies(hysteresis_eddy_enabled_test generate_eddy_coefficients)
+    if(IYPT16_FIELD_MODE STREQUAL "lut")
+        target_compile_definitions(hysteresis_eddy_enabled_test PRIVATE FIELD_EVAL_MODE=1
+            IYPT16_FP64_LUT_PATH="${FIELD_LUT_FP64}")
+        add_dependencies(hysteresis_eddy_enabled_test generate_field_lut_files)
+    endif()
+    set_target_properties(hysteresis_eddy_enabled_test PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native-tests"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native-tests")
+    add_test(NAME test_eddy_binding_chunks COMMAND "${Python_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_eddy_binding_chunks.py"
+        "$<TARGET_FILE:hysteresis_eddy_enabled_test>")
+    foreach(enabled IN ITEMS 0 1)
+        foreach(precision IN ITEMS fp64 fp32_kahan)
+            set(name test_eddy_integration_${enabled}_${precision})
+            add_executable(${name} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_eddy_integration.cpp")
+            target_compile_features(${name} PRIVATE cxx_std_17)
+            target_include_directories(${name} PRIVATE "${KERNEL_DIR}/headers")
+            target_compile_definitions(${name} PRIVATE IYPT16_ENABLE_EDDY_CURRENTS=${enabled})
+            if(precision STREQUAL "fp64")
+                target_compile_definitions(${name} PRIVATE USE_FP64)
+            else()
+                target_compile_definitions(${name} PRIVATE USE_KAHAN)
+            endif()
+            add_dependencies(${name} generate_eddy_coefficients)
+            add_test(NAME ${name} COMMAND ${name})
+        endforeach()
+    endforeach()
     function(add_native_test name)
         add_executable(${name} "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/${name}.cpp")
         target_compile_features(${name} PRIVATE cxx_std_17)

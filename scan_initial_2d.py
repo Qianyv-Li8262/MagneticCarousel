@@ -47,6 +47,7 @@ def run_gpu(args, v0, s0, steps, window, stride):
     cubin, manifest = load_cuda_artifact(
         "initial", "fp64" if args.fp64 else "fp32_kahan", args.field_mode, args.lut_cache_mode,
     )
+    reference.configure_state_names(manifest)
     if manifest.get("magnet_model") == "cylinder":
         args.field_mode = "lut"
     print_build_metadata(manifest)
@@ -82,6 +83,7 @@ def run_cpu(args, v0, s0, steps, window, stride):
         raise FileNotFoundError(f"CPU module is not built: {manifest_path}; build hysteresis_{kind.replace('-', '_')} with CMake")
     from animate_one_trajectory import read_build_config
     manifest = read_build_config(kahan=not args.fp64)
+    reference.configure_state_names(manifest)
     if manifest.get("field_mode") == "lut" and "lut" in manifest:
         from write_build_config import sha256
         lut_path = Path(manifest["lut"])

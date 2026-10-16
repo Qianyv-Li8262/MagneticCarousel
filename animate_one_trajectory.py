@@ -171,7 +171,8 @@ def load_hysteresis(*, kahan=False):
         raise RuntimeError(f"Could not load extension: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if module.state_size != 15:
+    expected_size = 15 + (3 * module.eddy_mode_count if module.eddy_currents_enabled else 0)
+    if module.state_size != expected_size:
         raise RuntimeError("The extension does not expose the two-dimensional state")
     expected_dtype = np.dtype(np.float32 if kahan else np.float64)
     if np.dtype(module.real_dtype) != expected_dtype:
@@ -195,7 +196,7 @@ def make_initial_state(module, *, alpha=None, v0=0.0, s0=0.0, phi0=0.0):
 
 def prepare_initial_state(module, params, dt, *, v0=0.0, s0=0.0, phi0=0.0,
                           magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE):
-    """Prepare JA memory at the requested position, then set release velocities."""
+    """Prepare magnetic memory at the requested position, then set release velocities."""
     if not np.isfinite(dt) or dt <= 0:
         raise ValueError("dt must be positive and finite")
     if not np.isfinite(magnetize_turns) or magnetize_turns < 0 or not np.isfinite(disk_phase):

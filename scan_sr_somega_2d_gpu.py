@@ -101,6 +101,14 @@ METRIC_NAMES = (
 )
 METRIC_INDEX = {name: index for index, name in enumerate(METRIC_NAMES)}
 _CUDA_MODULE = None
+BASE_STATE_NAMES = STATE_NAMES
+
+
+def configure_state_names(manifest):
+    global STATE_NAMES
+    eddy = manifest.get("eddy_currents", {})
+    modes = int(eddy.get("mode_count", 0)) if eddy.get("enabled", False) else 0
+    STATE_NAMES = BASE_STATE_NAMES + tuple(f"eddy_y{axis}_{j}" for axis in "xyz" for j in range(modes))
 
 
 def _get_cupy():
@@ -138,6 +146,7 @@ def _get_cuda_module(cp):
         "sr_somega", "fp64" if USE_FP64 else "fp32_kahan",
         "lut" if FIELD_EVAL_MODE else "exact", LUT_CACHE_MODE,
     )
+    configure_state_names(manifest)
     if manifest.get("magnet_model") == "cylinder":
         FIELD_EVAL_MODE = 1
     _CUDA_MODULE = cp.RawModule(path=str(cubin)), manifest

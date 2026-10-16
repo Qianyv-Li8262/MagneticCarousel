@@ -12,6 +12,7 @@
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
 #include "hysteresis_config.hpp"
+#include "state_io.hpp"
 #include "scan_initial_cpu.hpp"
 
 namespace py = pybind11;
@@ -27,40 +28,25 @@ State<kEddyCurrentModeCount> magnetize_held_ball(const State<kEddyCurrentModeCou
 
 // [disk angle, pos x/y, speed x/y, quaternion w/x/y/z,
 //  omega x/y/z, hysteresis q x/y/z]. Time is tracked by Python.
-constexpr py::ssize_t state_size = 15;
+constexpr py::ssize_t state_size = kSerializedStateSize;
 
 State<kEddyCurrentModeCount> state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &input)
 {
-    if (input.ndim() != 1 || input.shape(0) != state_size)
-        throw py::value_error("state must be a one-dimensional array of length 15");
+    if (input.ndim() != 1 || (input.shape(0) != state_size && input.shape(0) != 15))
+        throw py::value_error("state must have length " + std::to_string(state_size) + " (or legacy length 15)");
     const auto a = input.unchecked<1>();
-    for (py::ssize_t i = 0; i < state_size; ++i)
+    for (py::ssize_t i = 0; i < input.shape(0); ++i)
         if (!std::isfinite(static_cast<double>(a(i))))
             throw py::value_error("state must contain finite values");
-    return {a(0), {a(1), a(2)}, {a(3), a(4)},
-            {a(5), {a(6), a(7), a(8)}}, {a(9), a(10), a(11)},
-            {a(12), a(13), a(14)}};
+    if (input.shape(0) == 15)
+        return read_state_values<false>(input.data());
+    return read_state_values<kEnableEddyCurrents>(input.data());
 }
 
 py::array_t<real_t> state_to_numpy(const State<kEddyCurrentModeCount> &s)
 {
     py::array_t<real_t> result(state_size);
-    auto a = result.mutable_unchecked<1>();
-    a(0) = static_cast<real_t>(s.down_disk_angle);
-    a(1) = static_cast<real_t>(s.pos.x);
-    a(2) = static_cast<real_t>(s.pos.y);
-    a(3) = static_cast<real_t>(s.speed.x);
-    a(4) = static_cast<real_t>(s.speed.y);
-    a(5) = static_cast<real_t>(s.attitude.real);
-    a(6) = static_cast<real_t>(s.attitude.imagine.x);
-    a(7) = static_cast<real_t>(s.attitude.imagine.y);
-    a(8) = static_cast<real_t>(s.attitude.imagine.z);
-    a(9) = static_cast<real_t>(s.omega.x);
-    a(10) = static_cast<real_t>(s.omega.y);
-    a(11) = static_cast<real_t>(s.omega.z);
-    a(12) = static_cast<real_t>(s.q.x);
-    a(13) = static_cast<real_t>(s.q.y);
-    a(14) = static_cast<real_t>(s.q.z);
+    write_state_values<kEnableEddyCurrents>(s, result.mutable_data());
     return result;
 }
 
@@ -116,7 +102,7 @@ py::tuple scan_initial_numpy(const py::array_t<real_t, py::array::c_style> &v0,
     for (std::size_t i = 0; i < cells; ++i) status_ptr[i] = -2;
     for (std::size_t i = 0; i < cells * 20; ++i)
         metrics_ptr[i] = std::numeric_limits<real_t>::quiet_NaN();
-    for (std::size_t i = 0; i < cells * 15; ++i) states_ptr[i] = REAL_LITERAL(0.0);
+    for (std::size_t i = 0; i < cells * state_size; ++i) states_ptr[i] = REAL_LITERAL(0.0);
     {
         py::gil_scoped_release release;
         scan_initial_grid_cpu(v0.data(), s0.data(), static_cast<std::size_t>(k),
@@ -131,6 +117,8 @@ PYBIND11_MODULE(MODULE_NAME, m)
     m.doc() = "CPU trajectories and initial-state scan for the two-dimensional hysteresis model";
     m.attr("real_dtype") = py::dtype::of<real_t>();
     m.attr("state_size") = state_size;
+    m.attr("eddy_currents_enabled") = kEnableEddyCurrents;
+    m.attr("eddy_mode_count") = 4 * kEddyCurrentModeCount;
     m.attr("magnet_number") = magnet_number;
     m.attr("field_mode") = kFieldEvalMode == FieldEvalMode::kExact ? "exact" : "fourier-spline";
     py::class_<SolverParams>(m, "SolverParams")
@@ -205,7 +193,7 @@ PYBIND11_MODULE(MODULE_NAME, m)
         }
         return state_to_numpy(result);
     }, py::arg("initial"), py::arg("dt"), py::arg("steps"), py::arg("params"),
-       "Hold position and attitude fixed, zero velocities, and evolve only disk phase and JA memory.");
+       "Hold position and attitude fixed, zero velocities, and evolve disk phase, JA and optional eddy memory.");
     m.def("scan_initial_grid", &scan_initial_numpy,
           py::arg("v0").noconvert(), py::arg("s0").noconvert(),
           py::arg("dt"), py::arg("steps"), py::arg("window_steps"), py::arg("sample_stride"),

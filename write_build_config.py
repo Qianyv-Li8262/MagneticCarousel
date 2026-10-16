@@ -56,6 +56,17 @@ def inclined_disk_parameters(source: str) -> dict:
     return values
 
 
+def eddy_current_parameters(source: str) -> dict:
+    match = re.search(r"^#define IYPT16_ENABLE_EDDY_CURRENTS\s+(0|1|false|true)\s*$", source, re.MULTILINE)
+    if match is None:
+        raise ValueError("IYPT16_ENABLE_EDDY_CURRENTS must be 0 or 1 in the config header")
+    enabled = match.group(1) in ("1", "true")
+    modes = 4 * int(literal(source, "kEddyCurrentModeCount", "int"))
+    return {"enabled": enabled, "mode_count": modes, "state_size": 15 + (3 * modes if enabled else 0),
+            "avx_exp_mode": literal(source, "kAvxExpMode", "AvxExpMode"),
+            "avx_exp_order": int(literal(source, "kAvxExpExpansionOrder", "int"))}
+
+
 def write_manifest(path: Path, data: dict) -> None:
     contents = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if not path.is_file() or path.read_text(encoding="utf-8") != contents:
@@ -111,10 +122,14 @@ def main() -> None:
         "field_parameters": field_values,
         "model_parameters": model_values,
         "inclined_disk": inclined_disk_parameters(model_source),
+        "eddy_currents": eddy_current_parameters(model_source),
         "source_sha256": {
             str(path.relative_to(args.source_dir)).replace("\\", "/"): sha256(path)
             for path in (field_header, model_header, headers / "2dmodel-hysteresis.hpp",
                          headers / "hysteresis_types.hpp", headers / "hysteresis_physics.hpp",
+                         headers / "eddy_currents.hpp", headers / "state_io.hpp",
+                         headers / "numeric_extensions/avx2.hpp",
+                         args.source_dir / "kernels/generated/eddy_current_coefficients.generated.hpp",
                          args.source_dir / "kernels/scan_initial_cpu.cpp", args.source_dir / "kernels/2dmodel-hysteresis.cpp",
                          args.source_dir / "kernels/bindings/pybind.cpp")
         },

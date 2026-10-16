@@ -16,7 +16,7 @@ DEVICE INLINE void update_mean_variance(const real_t value, const int count, rea
 
 DEVICE INLINE bool finite_state(const State<kEddyCurrentModeCount> &s)
 {
-    return real_isfinite(static_cast<real_t>(s.down_disk_angle)) &&
+    return eddy_current_state_finite(s) && real_isfinite(static_cast<real_t>(s.down_disk_angle)) &&
            real_isfinite(static_cast<real_t>(s.pos.x)) && real_isfinite(static_cast<real_t>(s.pos.y)) &&
            real_isfinite(static_cast<real_t>(s.speed.x)) && real_isfinite(static_cast<real_t>(s.speed.y)) &&
            real_isfinite(static_cast<real_t>(s.attitude.real)) &&
@@ -104,8 +104,8 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
 
     const int output_index = somega_index * k + sr_index;
     output_status[output_index] = -1;
-    const int state_offset = output_index * 15;
-    for (int i = 0; i < 15; ++i)
+    const int state_offset = output_index * kSerializedStateSize;
+    for (int i = 0; i < kSerializedStateSize; ++i)
         output_state[state_offset + i] = REAL_LITERAL(0.0);
 
     if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0) || steps <= 0 ||
@@ -260,20 +260,6 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
         }
     }
 
-    output_state[state_offset + 0] = static_cast<real_t>(ball.down_disk_angle);
-    output_state[state_offset + 1] = static_cast<real_t>(ball.pos.x);
-    output_state[state_offset + 2] = static_cast<real_t>(ball.pos.y);
-    output_state[state_offset + 3] = static_cast<real_t>(ball.speed.x);
-    output_state[state_offset + 4] = static_cast<real_t>(ball.speed.y);
-    output_state[state_offset + 5] = static_cast<real_t>(ball.attitude.real);
-    output_state[state_offset + 6] = static_cast<real_t>(ball.attitude.imagine.x);
-    output_state[state_offset + 7] = static_cast<real_t>(ball.attitude.imagine.y);
-    output_state[state_offset + 8] = static_cast<real_t>(ball.attitude.imagine.z);
-    output_state[state_offset + 9] = static_cast<real_t>(ball.omega.x);
-    output_state[state_offset + 10] = static_cast<real_t>(ball.omega.y);
-    output_state[state_offset + 11] = static_cast<real_t>(ball.omega.z);
-    output_state[state_offset + 12] = static_cast<real_t>(ball.q.x);
-    output_state[state_offset + 13] = static_cast<real_t>(ball.q.y);
-    output_state[state_offset + 14] = static_cast<real_t>(ball.q.z);
+    write_state_values<kEnableEddyCurrents>(ball, output_state + state_offset);
     output_status[output_index] = status;
 }

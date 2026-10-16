@@ -30,5 +30,5 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_initial_cuda(
     const SolverParams params = make_solver_params(magnet_number, sr, somega, Eta);
     output_status[index] = initial_scan::analyze(v0_values[x], s0_values[y], dt,
         steps, window_steps, sample_stride, params, field_lut,
-        output_state + 15 * index, output_metrics + initial_scan::metric_count * index);
+        output_state + kSerializedStateSize * index, output_metrics + initial_scan::metric_count * index);
 }

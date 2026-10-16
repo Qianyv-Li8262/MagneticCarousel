@@ -5,6 +5,8 @@
 #include "hysteresis_config.hpp"
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
+#include "eddy_currents.hpp"
+#include "state_io.hpp"
 
 #ifndef __CUDACC__
 #include <cstdio>
@@ -21,6 +23,7 @@ struct FieldForceResult {
     Vec3 h;
     Vec3 Force;
     TracelessSymTensor hGrad3d;
+    Vec3 magnetic_angular_acceleration;
 };
 
 struct CubicCoeff {
@@ -280,7 +283,30 @@ DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &para
                            (nabla_h.component[1] * v.x + nabla_h.component[3] * v.y + nabla_h.component[4] * v.z),
                            (nabla_h.component[2] * v.x + nabla_h.component[4] * v.y +
                             (-nabla_h.component[0] - nabla_h.component[3]) * v.z));
-    return {h, Force, nabla_h};
+    return {h, Force, nabla_h, -params.gamma_m * E_ * cross(q, h)};
+}
+
+// Shared magnetic loads for dynamics, contact decisions and power diagnostics.
+// Field caches remain external-field-only; the state-dependent loads are fresh.
+DEVICE INLINE FieldForceResult eval_mag_field_and_force(const SolverParams &params,
+    const State<kEddyCurrentModeCount> &state, FieldCache *cache = nullptr,
+    const LUTNode *LUTptr = nullptr, const FieldResult *H_cache = nullptr)
+{
+    const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
+    auto result = eval_mag_field_and_force(params, state.pos, q_world, state.down_disk_angle,
+                                           cache, LUTptr, H_cache);
+    if constexpr (kEnableEddyCurrents) {
+        const Vec3 delta_m = eval_eddy_current_moment_world(state);
+        const real_t scale = params.gamma_m * params.alpha * params.alpha * Eta / REAL_LITERAL(3.0);
+        const auto &g = result.hGrad3d.component;
+        result.Force = result.Force + scale * make_Vec3(
+            g[0] * delta_m.x + g[1] * delta_m.y + g[2] * delta_m.z,
+            g[1] * delta_m.x + g[3] * delta_m.y + g[4] * delta_m.z,
+            g[2] * delta_m.x + g[4] * delta_m.y - (g[0] + g[3]) * delta_m.z);
+        result.magnetic_angular_acceleration = result.magnetic_angular_acceleration +
+            (params.gamma_m / REAL_LITERAL(3.0)) * cross(delta_m, result.h);
+    }
+    return result;
 }
 
 // Use the same effective force in the RHS and all contact-mode decisions.
@@ -353,14 +379,14 @@ DEVICE NOINLINE bool eval_rhs(const State<kEddyCurrentModeCount> &in, State<kEdd
                               const FieldResult *H_cache = nullptr, Vec3 *Fext = nullptr, Vec3 *Mext = nullptr)
 {
     // the caller should cope with selection by giving nullptr when magField cache is not valid
-    const Vec3 q_world = vec_cast<real_t>(rotate(in.attitude, in.q));
+    clear_eddy_current_modes(out);
 
     const FieldForceResult field_force =
-        eval_mag_field_and_force(params, in.pos, q_world, in.down_disk_angle, cache, LUTptr, H_cache);
+        eval_mag_field_and_force(params, in, cache, LUTptr, H_cache);
     const Vec3 &h = field_force.h;
     const Vec3 F = apply_inclined_disk_force(params, field_force.Force, in.pos);
     constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-    const Vec3 M = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_world, h), in, F);
+    const Vec3 M = add_gaussian_rolling_resistance(params, field_force.magnetic_angular_acceleration, in, F);
     if constexpr (ExportFM) {
         *Fext = F;
         *Mext = M;
@@ -521,12 +547,10 @@ DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State<kEddyCurrentM
         if (!state_in_lut_domain(state))
             return AdvanceStepResult::kStepLUTOutOfDomain;
     }
-    const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
     const FieldForceResult field =
-        eval_mag_field_and_force(params, state.pos, q_world, state.down_disk_angle, cache, LUTptr, nullptr);
-    constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
+        eval_mag_field_and_force(params, state, cache, LUTptr, nullptr);
     const Vec3 F = apply_inclined_disk_force(params, field.Force, state.pos);
-    const Vec3 torque = add_gaussian_rolling_resistance(params, -params.gamma_m * E * cross(q_world, field.h), state, F);
+    const Vec3 torque = add_gaussian_rolling_resistance(params, field.magnetic_angular_acceleration, state, F);
     const real_t N = params.gamma_g - F.z;
     if (!real_isfinite(N))
         return AdvanceStepResult::kStepNaNOrInf;
@@ -597,6 +621,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!real_isfinite(tc) || tc <= REAL_LITERAL(0.0) || tc > dt)
                     return AdvanceStepResult::kStepNumericalUnstable;
                 State<kEddyCurrentModeCount> state_at_halftc = in + tc * REAL_LITERAL(0.5) * Statedot_start;
+                advance_eddy_current_state(in, state_at_halftc, tc * REAL_LITERAL(0.5), hb_dot_start, params);
                 State<kEddyCurrentModeCount> dot_estimate;
                 Vec3 hb_dot_estimate;
                 Vec2 s_mid =
@@ -622,6 +647,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         return AdvanceStepResult::kStepBallFly;
                 }
                 State<kEddyCurrentModeCount> state_at_tc = in + tc * dot_estimate;
+                advance_eddy_current_state(in, state_at_tc, tc, hb_dot_estimate, params);
                 project_pure_rolling(state_at_tc, params);
                 if (!normalize_attitude(state_at_tc))
                     return AdvanceStepResult::kStepNumericalUnstable;
@@ -629,14 +655,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     if (!state_in_lut_domain(state_at_tc))
                         return AdvanceStepResult::kStepLUTOutOfDomain;
                 }
-                const Vec3 q_world = vec_cast<real_t>(rotate(state_at_tc.attitude, state_at_tc.q));
                 const FieldForceResult field_force = eval_mag_field_and_force(
-                    params, state_at_tc.pos, q_world, state_at_tc.down_disk_angle, cache, LUTptr, nullptr);
+                    params, state_at_tc, cache, LUTptr, nullptr);
                 const Vec3 &h = field_force.h;
                 const Vec3 F = apply_inclined_disk_force(params, field_force.Force, state_at_tc.pos);
-                constexpr real_t E_ =
-                    (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-                const Vec3 M = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_world, h), state_at_tc, F);
+                const Vec3 M = add_gaussian_rolling_resistance(params, field_force.magnetic_angular_acceleration, state_at_tc, F);
                 const real_t N = params.gamma_g - F.z;
                 if (!real_isfinite(N) || !real_isfinite(F.x) || !real_isfinite(F.y) || !real_isfinite(M.x) ||
                     !real_isfinite(M.y))
@@ -671,7 +694,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                              LUTptr, &final_field))
                             return AdvanceStepResult::kStepBallFly;
                     }
-                    const State<kEddyCurrentModeCount> rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
+                    State<kEddyCurrentModeCount> rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
+                    advance_eddy_current_state(state_at_tc, rolling_mid, remaining * REAL_LITERAL(0.5), hb_dot_rolling_start, params);
                     if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
                         if (!state_in_lut_domain(rolling_mid))
                             return AdvanceStepResult::kStepLUTOutOfDomain;
@@ -687,6 +711,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     }
 
                     final_state = state_at_tc + remaining * dot_rolling_mid;
+                    advance_eddy_current_state(state_at_tc, final_state, remaining, hb_dot_rolling_mid, params);
                     project_pure_rolling(final_state, params);
                     if (!normalize_attitude(final_state))
                         return AdvanceStepResult::kStepNumericalUnstable;
@@ -694,12 +719,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         if (!state_in_lut_domain(final_state))
                             return AdvanceStepResult::kStepLUTOutOfDomain;
                     }
-                    const Vec3 q_final = vec_cast<real_t>(rotate(final_state.attitude, final_state.q));
                     const FieldForceResult field_force_final = eval_mag_field_and_force(
-                        params, final_state.pos, q_final, final_state.down_disk_angle, cache, LUTptr, nullptr);
+                        params, final_state, cache, LUTptr, nullptr);
                     const Vec3 &h_final = field_force_final.h;
                     const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force, final_state.pos);
-                    const Vec3 M_final = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_final, h_final), final_state, F_final);
+                    const Vec3 M_final = add_gaussian_rolling_resistance(params, field_force_final.magnetic_angular_acceleration, final_state, F_final);
                     const real_t N_final = params.gamma_g - F_final.z;
                     if (!real_isfinite(N_final) || !real_isfinite(F_final.x) || !real_isfinite(F_final.y) ||
                         !real_isfinite(M_final.x) || !real_isfinite(M_final.y))
@@ -759,6 +783,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
             }
             State<kEddyCurrentModeCount> rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
+            advance_eddy_current_state(in, rk2midpoint, dt * REAL_LITERAL(0.5), hb_dot_start, params);
             Vec2 s_mid = vec_cast<real_t>(rk2midpoint.speed +
                                           params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x));
             const real_t s_mid_norm = length(s_mid);
@@ -816,6 +841,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
             }
             State<kEddyCurrentModeCount> final_state = in + dt * Statedot_mid;
+            advance_eddy_current_state(in, final_state, dt, hb_dot_mid, params);
             if (!normalize_attitude(final_state))
                 return AdvanceStepResult::kStepNumericalUnstable;
             Vec2 sf = vec_cast<real_t>(final_state.speed +
@@ -884,7 +910,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
         const bool krolling = false;
         const bool ksliding = true;
-        const State<kEddyCurrentModeCount> rk2midpoint = start + dt * REAL_LITERAL(0.5) * Statedot_start;
+        State<kEddyCurrentModeCount> rk2midpoint = start + dt * REAL_LITERAL(0.5) * Statedot_start;
+        advance_eddy_current_state(start, rk2midpoint, dt * REAL_LITERAL(0.5), hb_dot_start, params);
         if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
             if (!state_in_lut_domain(rk2midpoint))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
@@ -905,6 +932,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const real_t g_mid = A_mid - b_mid;
 
         State<kEddyCurrentModeCount> trial_final = start + dt * Statedot_mid;
+        advance_eddy_current_state(start, trial_final, dt, hb_dot_mid, params);
         project_pure_rolling(trial_final, params);
         if (!normalize_attitude(trial_final))
             return AdvanceStepResult::kStepNumericalUnstable;
@@ -912,13 +940,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!state_in_lut_domain(trial_final))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
         }
-        const Vec3 q_final = vec_cast<real_t>(rotate(trial_final.attitude, trial_final.q));
         const FieldForceResult field_force_final = eval_mag_field_and_force(
-            params, trial_final.pos, q_final, trial_final.down_disk_angle, cache, LUTptr, nullptr);
+            params, trial_final, cache, LUTptr, nullptr);
         const Vec3 &h_final = field_force_final.h;
         const Vec3 F_final = apply_inclined_disk_force(params, field_force_final.Force, trial_final.pos);
-        constexpr real_t E_ = (REAL_LITERAL(1.0) - C_JA) / (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-        const Vec3 M_final = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_final, h_final), trial_final, F_final);
+        const Vec3 M_final = add_gaussian_rolling_resistance(params, field_force_final.magnetic_angular_acceleration, trial_final, F_final);
         const real_t N_final = params.gamma_g - F_final.z;
         if (!real_isfinite(N_final))
             return AdvanceStepResult::kStepNaNOrInf;
@@ -961,7 +987,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 
         State<kEddyCurrentModeCount> state_at_tr = start;
         if (tr > REAL_LITERAL(0.0)) {
-            const State<kEddyCurrentModeCount> state_at_halftr = start + tr * REAL_LITERAL(0.5) * Statedot_start;
+            State<kEddyCurrentModeCount> state_at_halftr = start + tr * REAL_LITERAL(0.5) * Statedot_start;
+            advance_eddy_current_state(start, state_at_halftr, tr * REAL_LITERAL(0.5), hb_dot_start, params);
             if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
                 if (!state_in_lut_domain(state_at_halftr))
                     return AdvanceStepResult::kStepLUTOutOfDomain;
@@ -972,6 +999,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                  nullptr))
                 return AdvanceStepResult::kStepBallFly;
             state_at_tr = start + tr * dot_estimate;
+            advance_eddy_current_state(start, state_at_tr, tr, hb_dot_estimate, params);
             project_pure_rolling(state_at_tr, params);
             if (!normalize_attitude(state_at_tr))
                 return AdvanceStepResult::kStepNumericalUnstable;
@@ -981,13 +1009,12 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!state_in_lut_domain(state_at_tr))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
         }
-        const Vec3 q_event = vec_cast<real_t>(rotate(state_at_tr.attitude, state_at_tr.q));
         const FieldForceResult field_force_event = eval_mag_field_and_force(
-            params, state_at_tr.pos, q_event, state_at_tr.down_disk_angle, cache, LUTptr, nullptr);
+            params, state_at_tr, cache, LUTptr, nullptr);
         const Vec3 &h_event = field_force_event.h;
         const Vec3 F_event = apply_inclined_disk_force(params, field_force_event.Force, state_at_tr.pos);
         const FieldResult event_field = {h_event, field_force_event.hGrad3d};
-        const Vec3 M_event = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_event, h_event), state_at_tr, F_event);
+        const Vec3 M_event = add_gaussian_rolling_resistance(params, field_force_event.magnetic_angular_acceleration, state_at_tr, F_event);
         const real_t N_event = params.gamma_g - F_event.z;
         if (!real_isfinite(N_event))
             return AdvanceStepResult::kStepNaNOrInf;
@@ -1021,7 +1048,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             if (!eval_rhs<false>(state_at_tr, dot_sliding_start, hb_dot_sliding_start, params, ksliding, launch_dir, cache, LUTptr,
                                  &event_field))
                 return AdvanceStepResult::kStepBallFly;
-            const State<kEddyCurrentModeCount> sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
+            State<kEddyCurrentModeCount> sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
+            advance_eddy_current_state(state_at_tr, sliding_mid, remaining * REAL_LITERAL(0.5), hb_dot_sliding_start, params);
             // Release starts at zero slip: avoid cancellation between midpoint speed and spin.
             const Vec2 s_mid = (remaining * REAL_LITERAL(0.5) * (a_event - b_event * launch_dir));
             const real_t s_mid_norm = length(s_mid);
@@ -1031,13 +1059,12 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 if (!state_in_lut_domain(sliding_mid))
                     return AdvanceStepResult::kStepLUTOutOfDomain;
             }
-            const Vec3 q_mid = vec_cast<real_t>(rotate(sliding_mid.attitude, sliding_mid.q));
             const FieldForceResult field_force_sliding_mid = eval_mag_field_and_force(
-                params, sliding_mid.pos, q_mid, sliding_mid.down_disk_angle, cache, LUTptr, nullptr);
+                params, sliding_mid, cache, LUTptr, nullptr);
             const Vec3 &h_sliding_mid = field_force_sliding_mid.h;
             const Vec3 F_sliding_mid = apply_inclined_disk_force(params, field_force_sliding_mid.Force, sliding_mid.pos);
             const FieldResult mid_field = {h_sliding_mid, field_force_sliding_mid.hGrad3d};
-            const Vec3 M_sliding_mid = add_gaussian_rolling_resistance(params, -params.gamma_m * E_ * cross(q_mid, h_sliding_mid), sliding_mid, F_sliding_mid);
+            const Vec3 M_sliding_mid = add_gaussian_rolling_resistance(params, field_force_sliding_mid.magnetic_angular_acceleration, sliding_mid, F_sliding_mid);
             const real_t N_sliding_mid = params.gamma_g - F_sliding_mid.z;
             if (!real_isfinite(N_sliding_mid))
                 return AdvanceStepResult::kStepNaNOrInf;
@@ -1076,6 +1103,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                  &mid_field))
                 return AdvanceStepResult::kStepBallFly;
             final_state = state_at_tr + remaining * dot_sliding_mid;
+            advance_eddy_current_state(state_at_tr, final_state, remaining, hb_dot_sliding_mid, params);
             if (!normalize_attitude(final_state))
                 return AdvanceStepResult::kStepNumericalUnstable;
             const Vec2 sf = vec_cast<real_t>(final_state.speed +
@@ -1167,6 +1195,9 @@ DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &
         }
         if (result != AdvanceStepResult::kStepOk)
             return result;
+
+        if (!eddy_current_state_finite(work))
+            return AdvanceStepResult::kStepNaNOrInf;
 
         while (node > 1 && (node & 1u)) {
             node >>= 1;

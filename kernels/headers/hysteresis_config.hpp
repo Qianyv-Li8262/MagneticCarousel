@@ -53,6 +53,14 @@ CONFIG_CONST real_t kRollingLambda = REAL_LITERAL(0.0);
 // AVX groups, four scalar memory modes per group (3 groups = 12 modes).
 CONFIG_CONST int kEddyCurrentModeCount = 3;
 
+// Set to 1 and rebuild to include eddy-current dynamics and magnetic loads.
+// The default-off build retains the legacy 15-value external state format.
+#ifndef IYPT16_ENABLE_EDDY_CURRENTS
+#define IYPT16_ENABLE_EDDY_CURRENTS 0
+#endif
+CONFIG_CONST bool kEnableEddyCurrents = IYPT16_ENABLE_EDDY_CURRENTS != 0;
+inline constexpr int kSerializedStateSize = 15 + (IYPT16_ENABLE_EDDY_CURRENTS ? 12 * kEddyCurrentModeCount : 0);
+
 enum class AvxExpMode {
     kExact,
     kExpansion,

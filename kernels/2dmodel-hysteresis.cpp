@@ -105,12 +105,8 @@ std::array<real_t, 3> magnetic_mechanical_power(const State<kEddyCurrentModeCoun
 {
     validate_params(params);
     FieldCache cache{};
-    const Vec3 q_world = vec_cast<real_t>(rotate(state.attitude, state.q));
-    const auto field = eval_mag_field_and_force(params, state.pos, q_world,
-                                               state.down_disk_angle, &cache, trajectory_lut());
-    constexpr real_t E = (REAL_LITERAL(1.0) - C_JA) /
-                        (REAL_LITERAL(1.0) - Xi_JA) / (REAL_LITERAL(2.0) + Mu_r);
-    const Vec3 angular_acceleration = -params.gamma_m * E * cross(q_world, field.h);
+    const auto field = eval_mag_field_and_force(params, state, &cache, trajectory_lut());
+    const Vec3 angular_acceleration = field.magnetic_angular_acceleration;
     const real_t translation = field.Force.x * state.speed.x + field.Force.y * state.speed.y;
     const real_t rotation = Eta * params.alpha * params.alpha * (angular_acceleration * state.omega);
     return {translation, rotation, translation + rotation};
@@ -185,7 +181,7 @@ State<kEddyCurrentModeCount> evolve_trajectory(const State<kEddyCurrentModeCount
     return state;
 }
 
-// Hold the ball fixed while the magnets turn: evolve JA memory only.
+// Hold the ball fixed while the magnets turn: evolve JA and optional eddy memory.
 State<kEddyCurrentModeCount> magnetize_held_ball(const State<kEddyCurrentModeCount> &initial, real_t dt, int steps, const SolverParams &params)
 {
     validate_params(params);
@@ -209,12 +205,14 @@ State<kEddyCurrentModeCount> magnetize_held_ball(const State<kEddyCurrentModeCou
             throw std::runtime_error("magnetize: ball lost contact");
         State<kEddyCurrentModeCount> mid = state;
         mid.q = state.q + first.q * (dt * REAL_LITERAL(0.5));
+        advance_eddy_current_state(state, mid, dt * REAL_LITERAL(0.5), hb_dot_first, params);
         mid.down_disk_angle = start_angle + (static_cast<real_t>(i) + REAL_LITERAL(0.5)) * dt;
         if (!eval_rhs<false>(mid, second, hb_dot_second, params, false, zero, &cache, trajectory_lut()))
             throw std::runtime_error("magnetize: ball lost contact");
+        advance_eddy_current_state(state, state, dt, hb_dot_second, params);
         state.q = state.q + second.q * dt;
-        if (!real_isfinite(length(state.q)))
-            throw std::runtime_error("magnetize: non-finite JA state");
+        if (!real_isfinite(length(state.q)) || !eddy_current_state_finite(state))
+            throw std::runtime_error("magnetize: non-finite magnetic state");
     }
     state.down_disk_angle = start_angle + static_cast<real_t>(steps) * dt;
     return state;

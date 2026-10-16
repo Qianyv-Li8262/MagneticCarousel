@@ -138,3 +138,65 @@ DEVICE INLINE Vec3 eval_eddy_current_moment(const EddyCurrentModes &yx, const Ed
     return eval_eddy_current_moment_cuda(yx, yy, yz);
 #endif
 }
+
+// RHS arrays are deliberately zero: modes are advanced separately, never by RK.
+DEVICE INLINE void clear_eddy_current_modes(State<kEddyCurrentModeCount> &state)
+{
+#ifndef __CUDACC__
+    for (int group = 0; group < kEddyCurrentModeCount; ++group)
+        state.yx[group] = state.yy[group] = state.yz[group] = _mm256_setzero_pd();
+#else
+    for (int j = 0; j < 4 * kEddyCurrentModeCount; ++j)
+        state.yx[j] = state.yy[j] = state.yz[j] = REAL_LITERAL(0.0);
+#endif
+}
+
+DEVICE INLINE void advance_eddy_current_state(const State<kEddyCurrentModeCount> &start,
+    State<kEddyCurrentModeCount> &target, const real_t dt, const Vec3 &hb_dot, const SolverParams &params)
+{
+    if constexpr (kEnableEddyCurrents) {
+#ifndef __CUDACC__
+        for (int group = 0; group < kEddyCurrentModeCount; ++group) {
+            target.yx[group] = start.yx[group];
+            target.yy[group] = start.yy[group];
+            target.yz[group] = start.yz[group];
+        }
+#else
+        for (int j = 0; j < 4 * kEddyCurrentModeCount; ++j) {
+            target.yx[j] = start.yx[j];
+            target.yy[j] = start.yy[j];
+            target.yz[j] = start.yz[j];
+        }
+#endif
+        advance_eddy_current(target.yx, target.yy, target.yz, dt, hb_dot, params.eddy_current_scale);
+    }
+}
+
+DEVICE INLINE Vec3 eval_eddy_current_moment_world(const State<kEddyCurrentModeCount> &state)
+{
+    if constexpr (kEnableEddyCurrents) {
+        const StateVec3 body = eval_eddy_current_moment(state.yx, state.yy, state.yz);
+        return vec_cast<real_t>(rotate(state.attitude, body));
+    }
+    return {};
+}
+
+DEVICE INLINE bool eddy_current_state_finite(const State<kEddyCurrentModeCount> &state)
+{
+    if constexpr (kEnableEddyCurrents) {
+#ifndef __CUDACC__
+        const __m256d *axes[3] = {state.yx, state.yy, state.yz};
+        for (int axis = 0; axis < 3; ++axis) {
+            for (int group = 0; group < kEddyCurrentModeCount; ++group) {
+                alignas(32) double lane[4];
+                _mm256_store_pd(lane, axes[axis][group]);
+                for (double value : lane) if (!std::isfinite(value)) return false;
+            }
+        }
+#else
+        for (int j = 0; j < 4 * kEddyCurrentModeCount; ++j)
+            if (!real_isfinite(state.yx[j]) || !real_isfinite(state.yy[j]) || !real_isfinite(state.yz[j])) return false;
+#endif
+    }
+    return true;
+}

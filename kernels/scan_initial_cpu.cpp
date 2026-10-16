@@ -59,7 +59,7 @@ void scan_initial_grid_cpu(const real_t *v0_values, const real_t *s0_values, std
             const std::size_t x = index % k, y = index / k;
             status[index] = initial_scan::analyze(v0_values[x], s0_values[y], dt,
                 steps, window_steps, sample_stride, params, field_lut,
-                states + 15 * index, metrics + initial_scan::metric_count * index);
+                states + kSerializedStateSize * index, metrics + initial_scan::metric_count * index);
         }
     };
     std::vector<std::thread> pool;

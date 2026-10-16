@@ -24,6 +24,8 @@ def print_build_metadata(config: dict, *, stream=None) -> None:
     rolling = config.get("model_parameters", {}).get("kEnableRollingResistance")
     rows.append(("Rolling resistance", "Enabled" if rolling == "true" else "Disabled" if rolling == "false" else unknown))
     enabled = tilt.get("enabled")
+    eddy = config.get("eddy_currents", {}).get("enabled")
+    rows.append(("Eddy currents", "Enabled" if eddy is True else "Disabled" if eddy is False else unknown))
     rows.append(("Inclined disk", "Enabled" if enabled is True else "Disabled" if enabled is False else unknown))
     if enabled is True:
         # The downhill force points 90 degrees clockwise from the positive tilt axis.
