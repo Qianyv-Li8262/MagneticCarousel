@@ -33,13 +33,13 @@ int main(int argc, char **argv) {
     std::cout << std::setprecision(16);
     std::cout << "radius_mm,period_s,rpm,spin_z_rad_s,mean_inward_magnetic_mN,required_net_inward_mN,mean_rolling_generalized_inward_mN,required_rolling_generalized_mN,mean_tangential_accel_m_s2,mean_normal_load_mN,mean_total_magnetic_power_uW,first_half_inward_mN,second_half_inward_mN\n";
     for (double radius=rmin;radius<=rmax+dr*.1;radius+=dr) {
-        State state{};state.pos={radius*.001/length_unit,0};state.speed={0,u*state.pos.x};
+        State<kEddyCurrentModeCount> state{};state.pos={radius*.001/length_unit,0};state.speed={0,u*state.pos.x};
         state.attitude={1,{0,0,0}};
         state.omega={-u*state.pos.x/alpha,0,wz_si/omega};
         const Vec3 frame_spin=state.omega-make_Vec3(0.,0.,u);
         FieldCache cache{};
         auto derivative=[&](double t, Vec3 q) {
-            State trial=state,rhs{};trial.down_disk_angle=(1-u)*t;trial.q=q;
+            State<kEddyCurrentModeCount> trial=state,rhs{};trial.down_disk_angle=(1-u)*t;trial.q=q;
             const Vec2 direction{};
             if (!eval_rhs<false>(trial,rhs,params,false,direction,&cache,lut.data()))
                 throw std::runtime_error("Negative normal load on prescribed orbit");
@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
             const Vec3 k2=derivative(t+.5*dt,mid);
             q=q+dt*k2;
             if (i<steps/2)continue;
-            State sample=state,rhs{};sample.q=mid;sample.down_disk_angle=(1-u)*(t+.5*dt);
+            State<kEddyCurrentModeCount> sample=state,rhs{};sample.q=mid;sample.down_disk_angle=(1-u)*(t+.5*dt);
             const auto f=eval_mag_field_and_force(params,sample.pos,mid,sample.down_disk_angle,&cache,lut.data());
             const Vec3 torque=-params.gamma_m*E*cross(mid,f.h);
             eval_rhs<false>(sample,rhs,params,false,Vec2{},&cache,lut.data());

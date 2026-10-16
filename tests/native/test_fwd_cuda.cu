@@ -4,10 +4,10 @@
 #include "2dmodel-hysteresis.hpp"
 
 // Compile this kernel with nvcc to check the complete device-call path.
-GLOBAL void test_fwd_cuda(State *states, AdvanceStepResult *results, const SolverParams params,
+GLOBAL void test_fwd_cuda(State<kEddyCurrentModeCount> *states, AdvanceStepResult *results, const SolverParams params,
                           const real_t dt)
 {
-    State state = states[0];
+    State<kEddyCurrentModeCount> state = states[0];
     bool sliding = false;
     Vec2 direction{};
     bool field_valid = false;

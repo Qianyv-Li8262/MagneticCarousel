@@ -2,6 +2,9 @@
 // Copyright (c) 2026 Qianyv-Li8262
 
 #pragma once
+#ifndef __CUDACC__
+#include <immintrin.h>
+#endif
 // MARK: Errors
 #if defined(USE_FP64) && defined(USE_DD)
 #error "USE_FP64 and USE_DD are mutually exclusive"
@@ -503,7 +506,7 @@ template <typename T> DEVICE HOST INLINE Vec3_t<T> rotate(const Quaternion<T> &q
 
 
 // MARK: States
-
+template <int n>
 struct State {
     accumulator_t down_disk_angle;
     StateVec2 pos;
@@ -512,9 +515,19 @@ struct State {
     StateVec3 omega;
     // accumulator_t phase;
     StateVec3 q;
+    #ifndef __CUDACC__
+    __m256d yx[n];
+    __m256d yy[n];
+    __m256d yz[n];
+    #else
+    real_t yx[n*4];
+    real_t yy[n*4];
+    real_t yz[n*4];
+    #endif
 };
 
-DEVICE HOST INLINE State operator+(const State &a, const State &b)
+template <int n>
+DEVICE HOST INLINE State<n> operator+(const State<n> &a, const State<n> &b)
 {
     return {a.down_disk_angle + b.down_disk_angle,
             a.pos + b.pos,
@@ -525,14 +538,16 @@ DEVICE HOST INLINE State operator+(const State &a, const State &b)
             {a.q.x + b.q.x, a.q.y + b.q.y, a.q.z + b.q.z}};
 }
 
-DEVICE HOST INLINE State operator*(const real_t a, const State &b)
+template <int n>
+DEVICE HOST INLINE State<n> operator*(const real_t a, const State<n> &b)
 {
     const accumulator_t scale = static_cast<accumulator_t>(a);
     return {scale * b.down_disk_angle, scale * b.pos, scale * b.speed,
             scale * b.attitude, scale * b.omega, scale * b.q};
 }
 
-DEVICE HOST INLINE State operator*(const State &b, const real_t a)
+template <int n>
+DEVICE HOST INLINE State<n> operator*(const State<n> &b, const real_t a)
 {
     return a * b;
 }

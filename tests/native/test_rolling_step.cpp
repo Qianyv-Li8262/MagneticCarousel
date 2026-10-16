@@ -11,7 +11,7 @@ int main()
     // Zero normal/gravitational load isolates uniform motion even with tilt enabled.
     SolverParams params = {REAL_LITERAL(1.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0),
                            REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
-    State state{};
+    State<kEddyCurrentModeCount> state{};
     state.pos.x = REAL_LITERAL(4.0);
     state.speed.x = REAL_LITERAL(1.0);
     state.omega.y = REAL_LITERAL(1.0);
@@ -23,7 +23,7 @@ int main()
     const real_t dt = REAL_LITERAL(0.001);
 
     // The public full-step wrapper agrees with a directly accepted step.
-    State wrapped = state;
+    State<kEddyCurrentModeCount> wrapped = state;
     bool wrapped_sliding = sliding;
     Vec2 wrapped_dir = direction;
     bool wrapped_valid = valid;
@@ -47,7 +47,7 @@ int main()
         assert(field.hGrad3d.component[i] == expected.hGrad3d.component[i]);
 
     // Cross-step cache reuse gives the same accepted state as recomputation.
-    State uncached = state;
+    State<kEddyCurrentModeCount> uncached = state;
     bool uncached_mode = sliding;
     Vec2 uncached_dir = direction;
     bool uncached_valid = false;
@@ -62,7 +62,7 @@ int main()
     // Excessive drag makes the supplied Rolling mode inconsistent at entry.
     params.gamma_g = REAL_LITERAL(1.0);
     params.delta = REAL_LITERAL(1.0);
-    const State before = state;
+    const State<kEddyCurrentModeCount> before = state;
     const FieldResult field_before = field;
     assert(try_advance_1_step(dt, params, state, sliding, direction, valid, nullptr, nullptr, &field) ==
            AdvanceStepResult::kStepSolverSelfContradict);
@@ -75,7 +75,7 @@ int main()
     assert(state.pos.x == before.pos.x && field.h.x == field_before.h.x);
 
     // Zero slip alone does not decide sticking: static friction must support the load.
-    State contact{};
+    State<kEddyCurrentModeCount> contact{};
     contact.pos.x = REAL_LITERAL(4.0);
     contact.attitude.real = REAL_LITERAL(1.0);
     bool contact_sliding = true;

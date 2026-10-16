@@ -27,14 +27,14 @@ int main() {
     int active=0, inactive=0;
     for(int i=0;i<400;++i) {
         const double t=0.137*i;
-        State x{};
+        State<kEddyCurrentModeCount> x{};
         x.pos={4+0.35*std::sin(t),0.45*std::cos(1.3*t)};
         x.speed={0.13*std::sin(0.8*t),0.22*std::cos(t)};
         x.omega={-x.speed.y/alpha,x.speed.x/alpha,2*std::sin(1.7*t)};
         x.attitude={std::cos(t/2),{std::sin(t/2)/3,2*std::sin(t/2)/3,2*std::sin(t/2)/3}};
         x.down_disk_angle=0.31*t;
         x.q={0.35*std::sin(2*t),0.4*std::cos(1.1*t),0.3*std::sin(0.7*t+1)};
-        State dx{}; Vec3 F{},M{};
+        State<kEddyCurrentModeCount> dx{}; Vec3 F{},M{};
         assert(eval_rhs<true>(x,dx,p,false,Vec2{},nullptr,nullptr,nullptr,&F,&M));
         const Vec2 G={F.x-p.delta*length(x.speed)*x.speed.x,F.y-p.delta*length(x.speed)*x.speed.y};
         const Vec2 friction=dx.speed-G;
@@ -63,7 +63,7 @@ int main() {
         const double loss_roll=-Eta*alpha*alpha*((M-mag)*x.omega);
         energy=std::max(energy,residual(Tdot+Udot,source-diss-loss_air-loss_roll));
         // Contact-impulse projection must remove precisely this slip energy.
-        State z=x; z.speed.x+=0.017; z.speed.y-=0.023;
+        State<kEddyCurrentModeCount> z=x; z.speed.x+=0.017; z.speed.y-=0.023;
         const Vec2 slip=z.speed+alpha*make_Vec2(-z.omega.y,z.omega.x);
         const double before=(z.speed*z.speed+Eta*alpha*alpha*(z.omega*z.omega))/2;
         project_pure_rolling(z,p);
@@ -74,8 +74,8 @@ int main() {
     assert(mech<1e-10 && energy<1e-10 && passive_max<1e-10 && field_deriv<1e-9 && projection<1e-12);
     // Independent measured-definition check: torque mu*N*R -> a=mu*g/(1+Eta).
     p.gamma_m=0; p.gamma=0; p.delta=0;
-    State x{}; x.pos.x=4; x.speed.x=0.2; x.omega.y=x.speed.x/alpha; x.attitude.real=1;
-    State dx{};
+    State<kEddyCurrentModeCount> x{}; x.pos.x=4; x.speed.x=0.2; x.omega.y=x.speed.x/alpha; x.attitude.real=1;
+    State<kEddyCurrentModeCount> dx{};
     assert(eval_rhs<false>(x,dx,p,false,Vec2{}));
     const double reg=x.omega.y/std::sqrt(x.omega.y*x.omega.y+kRollingOmegaEpsilon*kRollingOmegaEpsilon);
     assert(residual(dx.speed.x,-kRollingMuLow*p.gamma_g/(1+Eta)*reg)<1e-12);
@@ -85,21 +85,21 @@ int main() {
     x={}; x.pos={4,0.1}; x.speed={0.02,-0.2};
     x.omega={-x.speed.y/alpha,x.speed.x/alpha,0.7};
     x.attitude.real=1; x.q={0.01,0.02,-0.03}; x.down_disk_angle=0.58;
-    auto rhs=[&](const State &s) { State d{}; assert(eval_rhs<false>(s,d,p,false,Vec2{})); return d; };
-    auto error=[](const State &u,const State &v) {
+    auto rhs=[&](const State<kEddyCurrentModeCount> &s) { State<kEddyCurrentModeCount> d{}; assert(eval_rhs<false>(s,d,p,false,Vec2{})); return d; };
+    auto error=[](const State<kEddyCurrentModeCount> &u,const State<kEddyCurrentModeCount> &v) {
         return length(u.pos-v.pos)+length(u.speed-v.speed)+length(u.q-v.q)+length(u.omega-v.omega)+
                std::abs(u.attitude.real-v.attitude.real)+length(u.attitude.imagine-v.attitude.imagine);
     };
     double previous=0;
     for(double dt : {0.004,0.002,0.001,0.0005}) {
-        State ref=x;
+        State<kEddyCurrentModeCount> ref=x;
         const double ds=dt/256;
         for(int j=0;j<256;++j) {
-            const State k1=rhs(ref),k2=rhs(ref+ds/2*k1),k3=rhs(ref+ds/2*k2),k4=rhs(ref+ds*k3);
+            const State<kEddyCurrentModeCount> k1=rhs(ref),k2=rhs(ref+ds/2*k1),k3=rhs(ref+ds/2*k2),k4=rhs(ref+ds*k3);
             ref=ref+ds/6*(k1+2*k2+2*k3+k4);
             assert(normalize_attitude(ref));
         }
-        State actual=x; bool sliding=false, valid=false; Vec2 dir{};
+        State<kEddyCurrentModeCount> actual=x; bool sliding=false, valid=false; Vec2 dir{};
         assert(fwd1step(dt,p,actual,sliding,dir,valid)==AdvanceStepResult::kStepOk);
         assert(!sliding);
         const double err=error(actual,ref);

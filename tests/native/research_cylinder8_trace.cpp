@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
     const double inv_sr=1./sr,inv_sw2=1./(sw*sw);
     const SolverParams p{.33333333*sr,1.7212357e-4*inv_sr,
         2.64965696*inv_sw2,7830.34224*inv_sw2,176182.704*inv_sr*inv_sr*inv_sw2};
-    State s{};s.pos.x=4.;s.attitude.real=1.;
+    State<kEddyCurrentModeCount> s{};s.pos.x=4.;s.attitude.real=1.;
     bool sliding=false,valid=false;Vec2 direction{};FieldCache cache{};FieldResult field{};
     std::ofstream output(argv[6]);output<<std::setprecision(17);
     output<<"time,radius,radial_v,v,phase,q_norm,slip,sliding,normal_force,magnetic_radial_force,status\n";

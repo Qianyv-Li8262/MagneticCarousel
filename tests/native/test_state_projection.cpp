@@ -15,9 +15,9 @@ static_assert(std::is_same_v<decltype(A{} * A{}), A>);
 static_assert(std::is_same_v<decltype(A{} / A{}), A>);
 static_assert(std::is_same_v<decltype((A{} + A{} * A{} * A{}) / A{}), A>);
 static_assert(std::is_same_v<decltype(A{} * StateVec2{} + StateVec2{}), StateVec2>);
-static_assert(std::is_same_v<decltype(real_t{} * State{} + State{}), State>);
+static_assert(std::is_same_v<decltype(real_t{} * State<kEddyCurrentModeCount>{} + State<kEddyCurrentModeCount>{}), State<kEddyCurrentModeCount>>);
 
-std::array<A *, 15> components(State &s)
+std::array<A *, 15> components(State<kEddyCurrentModeCount> &s)
 {
     return {&s.down_disk_angle, &s.pos.x, &s.pos.y, &s.speed.x, &s.speed.y,
             &s.attitude.real, &s.attitude.imagine.x, &s.attitude.imagine.y,
@@ -29,7 +29,7 @@ int main()
 {
     const real_t epsilon = std::numeric_limits<real_t>::epsilon();
     const real_t tiny = epsilon / REAL_LITERAL(8.0);
-    State out{}, in{};
+    State<kEddyCurrentModeCount> out{}, in{};
     for (A *v : components(out)) {
         *v = REAL_LITERAL(1.0);
         v->correction = -tiny; // Represents 1 + tiny; real_t alone loses tiny.
@@ -40,7 +40,7 @@ int main()
     }
     const real_t dt = REAL_LITERAL(2.0);
     // This is a State multiply-add expression, not a hardware fused FMA.
-    State ans = dt * out + in;
+    State<kEddyCurrentModeCount> ans = dt * out + in;
     const auto result = components(ans);
     for (std::size_t i = 0; i < result.size(); ++i) {
         if (result[i]->value != REAL_LITERAL(3.0) * tiny || result[i]->correction != REAL_LITERAL(0.0)) {
@@ -51,9 +51,9 @@ int main()
 
     SolverParams params{};
     params.alpha = REAL_LITERAL(1.0);
-    State baseline{};
+    State<kEddyCurrentModeCount> baseline{};
     baseline.speed.x = REAL_LITERAL(1.0);
-    State perturbed = baseline;
+    State<kEddyCurrentModeCount> perturbed = baseline;
     perturbed.speed.x.correction = -tiny;
     perturbed.omega.z = REAL_LITERAL(2.0);
     perturbed.omega.z.correction = -tiny;

@@ -14,7 +14,7 @@ DEVICE INLINE void update_mean_variance(const real_t value, const int count, rea
     m2 += delta * (value - mean);
 }
 
-DEVICE INLINE bool finite_state(const State &s)
+DEVICE INLINE bool finite_state(const State<kEddyCurrentModeCount> &s)
 {
     return real_isfinite(static_cast<real_t>(s.down_disk_angle)) &&
            real_isfinite(static_cast<real_t>(s.pos.x)) && real_isfinite(static_cast<real_t>(s.pos.y)) &&
@@ -38,7 +38,7 @@ DEVICE INLINE bool finite_state(const State &s)
 //     phase_rate = 1 - phi_dot - omega_r/m.
 // At radius r=m this reduces to the 1D 1-v-omega definition, with
 // v=v_tangent/m and omega=omega_r/m.
-DEVICE INLINE bool observables(const State &s, const SolverParams &params,
+DEVICE INLINE bool observables(const State<kEddyCurrentModeCount> &s, const SolverParams &params,
                                real_t &v, real_t &omega, real_t &phase_rate,
                                real_t &abs_slip, real_t &abs_q)
 {
@@ -153,7 +153,7 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
 
     // Match make_initial_state() in animate_one_trajectory.py: the sphere
     // starts at the magnet radius with identity attitude and otherwise rests.
-    State ball{};
+    State<kEddyCurrentModeCount> ball{};
     ball.pos.x = static_cast<accumulator_t>(magnet_number / 2);
     ball.attitude.real = static_cast<accumulator_t>(REAL_LITERAL(1.0));
     bool sliding = false;

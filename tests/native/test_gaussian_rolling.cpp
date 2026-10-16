@@ -9,7 +9,7 @@ int main()
                                  REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
     const Vec3 magnetic = make_Vec3(REAL_LITERAL(2.0), REAL_LITERAL(-1.0), REAL_LITERAL(3.0));
     const Vec3 force = make_Vec3(REAL_LITERAL(0.0), REAL_LITERAL(0.0), REAL_LITERAL(-2.0));
-    State state{};
+    State<kEddyCurrentModeCount> state{};
     state.pos.x = REAL_LITERAL(4.0);
     state.attitude.real = REAL_LITERAL(1.0);
 

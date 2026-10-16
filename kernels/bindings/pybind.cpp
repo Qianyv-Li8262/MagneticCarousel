@@ -11,6 +11,7 @@
 
 #include "hysteresis_config_field.hpp"
 #include "hysteresis_types.hpp"
+#include "hysteresis_config.hpp"
 #include "scan_initial_cpu.hpp"
 
 namespace py = pybind11;
@@ -19,16 +20,16 @@ namespace py = pybind11;
 #define MODULE_NAME hysteresis
 #endif
 
-State evolve_trajectory(const State &initial, real_t dt, int steps, const SolverParams &params,
+State<kEddyCurrentModeCount> evolve_trajectory(const State<kEddyCurrentModeCount> &initial, real_t dt, int steps, const SolverParams &params,
                         bool &sliding, Vec2 &sliding_dir, bool initialize, std::int64_t start_step);
-std::array<real_t, 3> magnetic_mechanical_power(const State &state, const SolverParams &params);
-State magnetize_held_ball(const State &initial, real_t dt, int steps, const SolverParams &params);
+std::array<real_t, 3> magnetic_mechanical_power(const State<kEddyCurrentModeCount> &state, const SolverParams &params);
+State<kEddyCurrentModeCount> magnetize_held_ball(const State<kEddyCurrentModeCount> &initial, real_t dt, int steps, const SolverParams &params);
 
 // [disk angle, pos x/y, speed x/y, quaternion w/x/y/z,
 //  omega x/y/z, hysteresis q x/y/z]. Time is tracked by Python.
 constexpr py::ssize_t state_size = 15;
 
-State state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &input)
+State<kEddyCurrentModeCount> state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array::forcecast> &input)
 {
     if (input.ndim() != 1 || input.shape(0) != state_size)
         throw py::value_error("state must be a one-dimensional array of length 15");
@@ -41,7 +42,7 @@ State state_from_numpy(const py::array_t<real_t, py::array::c_style | py::array:
             {a(12), a(13), a(14)}};
 }
 
-py::array_t<real_t> state_to_numpy(const State &s)
+py::array_t<real_t> state_to_numpy(const State<kEddyCurrentModeCount> &s)
 {
     py::array_t<real_t> result(state_size);
     auto a = result.mutable_unchecked<1>();
@@ -70,7 +71,7 @@ py::tuple evolve_numpy(const py::array_t<real_t, py::array::c_style | py::array:
     const bool initialize = mode.is_none() && direction.is_none();
     if (mode.is_none() != direction.is_none())
         throw py::value_error("sliding and sliding_dir must both be supplied or both be None");
-    State state = state_from_numpy(initial);
+    State<kEddyCurrentModeCount> state = state_from_numpy(initial);
     bool sliding = false;
     Vec2 sliding_dir{REAL_LITERAL(0.0), REAL_LITERAL(0.0)};
     if (!initialize) {
@@ -156,8 +157,8 @@ PYBIND11_MODULE(MODULE_NAME, m)
        "Return magnetic (translational, rotational, total) mechanical power per unit mass in dimensionless 2D units.");
     m.def("magnetize_held_ball", [](const py::array_t<real_t, py::array::c_style | py::array::forcecast> &input,
                                   real_t dt, int steps, const SolverParams &params) {
-        const State initial = state_from_numpy(input);
-        State result;
+        const State<kEddyCurrentModeCount> initial = state_from_numpy(input);
+        State<kEddyCurrentModeCount> result;
         {
             py::gil_scoped_release release;
             result = magnetize_held_ball(initial, dt, steps, params);

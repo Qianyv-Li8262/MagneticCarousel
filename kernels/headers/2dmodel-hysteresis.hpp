@@ -305,7 +305,7 @@ DEVICE INLINE Vec3 apply_inclined_disk_force(const SolverParams &params, Vec3 fo
     return force;
 }
 
-DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, const TracelessSymTensor &grad)
+DEVICE INLINE auto eval_body_field_derivative(const State<kEddyCurrentModeCount> &in, const Vec3 &h, const TracelessSymTensor &grad)
 {
     // The lower disk angular velocity is one in the dimensionless system.
     const auto relative_velocity = make_Vec2(in.speed.x + in.pos.y, in.speed.y - in.pos.x);
@@ -321,7 +321,7 @@ DEVICE INLINE auto eval_body_field_derivative(const State &in, const Vec3 &h, co
 // Return total angular acceleration (magnetic torque plus passive rolling torque).
 // Share it between the RHS and every rolling/sliding contact decision.
 DEVICE INLINE Vec3 add_gaussian_rolling_resistance(const SolverParams &params, const Vec3 &magnetic,
-                                                  const State &state, const Vec3 &force)
+                                                  const State<kEddyCurrentModeCount> &state, const Vec3 &force)
 {
     if constexpr (!kEnableRollingResistance) {
         return magnetic;
@@ -347,7 +347,7 @@ DEVICE INLINE Vec3 add_gaussian_rolling_resistance(const SolverParams &params, c
 
 // MARK: RHS eval
 template <bool ExportFM>
-DEVICE NOINLINE bool eval_rhs(const State &in, State &out, const SolverParams &params, const bool &sliding,
+DEVICE NOINLINE bool eval_rhs(const State<kEddyCurrentModeCount> &in, State<kEddyCurrentModeCount> &out, const SolverParams &params, const bool &sliding,
                               const Vec2 &sliding_dir, FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
                               const FieldResult *H_cache = nullptr, Vec3 *Fext = nullptr, Vec3 *Mext = nullptr)
 {
@@ -445,7 +445,7 @@ struct RetryDiagnostics {
     int last_reason = -1;
     int last_depth = -1;
     real_t last_dt = REAL_LITERAL(0.0);
-    State last_state{};
+    State<kEddyCurrentModeCount> last_state{};
     real_t release_g_start = REAL_LITERAL(0.0);
     real_t release_g_mid = REAL_LITERAL(0.0);
     real_t release_g_final = REAL_LITERAL(0.0);
@@ -458,7 +458,7 @@ struct RetryDiagnostics {
 
 // Remove roundoff drift from the sticking constraint while preserving the
 // contact impulse balance used at a sliding-to-sticking event.
-DEVICE INLINE void project_pure_rolling(State &in, const SolverParams &params)
+DEVICE INLINE void project_pure_rolling(State<kEddyCurrentModeCount> &in, const SolverParams &params)
 {
     const accumulator_t eta = static_cast<accumulator_t>(Eta);
     const accumulator_t alpha = static_cast<accumulator_t>(params.alpha);
@@ -478,7 +478,7 @@ DEVICE INLINE void project_pure_rolling(State &in, const SolverParams &params)
     in.omega = omegaf;
 }
 
-DEVICE INLINE bool normalize_attitude(State &in)
+DEVICE INLINE bool normalize_attitude(State<kEddyCurrentModeCount> &in)
 {
     const real_t squared_norm = static_cast<real_t>(norm_sq(in.attitude));
     if (!real_isfinite(squared_norm) || squared_norm <= REAL_LITERAL(0.0))
@@ -497,7 +497,7 @@ DEVICE INLINE bool normalize_attitude(State &in)
     return true;
 }
 
-DEVICE INLINE bool state_in_lut_domain(const State &state)
+DEVICE INLINE bool state_in_lut_domain(const State<kEddyCurrentModeCount> &state)
 {
     if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
         constexpr real_t radius = static_cast<real_t>(magnet_number) / REAL_LITERAL(2.0);
@@ -511,7 +511,7 @@ DEVICE INLINE bool state_in_lut_domain(const State &state)
 
 // A zero-slip endpoint can either stick or launch on the next step.
 // Shared by the ordinary sliding and post-release paths; never normalize zero slip.
-DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const SolverParams &params, bool &sliding,
+DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State<kEddyCurrentModeCount> &state, const SolverParams &params, bool &sliding,
                                                        Vec2 &direction, FieldCache *cache = nullptr,
                                                        const LUTNode *LUTptr = nullptr)
 {
@@ -542,7 +542,7 @@ DEVICE INLINE AdvanceStepResult resolve_zero_slip_mode(const State &state, const
 }
 
 // MARK: Try 1 step
-DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State &in,
+DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const SolverParams &params, State<kEddyCurrentModeCount> &in,
                                                      bool &sliding, Vec2 &sliding_dir, bool &isHCacheValid,
                                                      FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
                                                      FieldResult *H_cache = nullptr,
@@ -555,7 +555,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
     if (sliding) {
         Vec3 F_start;
         Vec3 M_start;
-        State Statedot_start;
+        State<kEddyCurrentModeCount> Statedot_start;
         if (isHCacheValid) {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                 if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
@@ -593,8 +593,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 real_t tc = Q / D_c;
                 if (!real_isfinite(tc) || tc <= REAL_LITERAL(0.0) || tc > dt)
                     return AdvanceStepResult::kStepNumericalUnstable;
-                State state_at_halftc = in + tc * REAL_LITERAL(0.5) * Statedot_start;
-                State dot_estimate;
+                State<kEddyCurrentModeCount> state_at_halftc = in + tc * REAL_LITERAL(0.5) * Statedot_start;
+                State<kEddyCurrentModeCount> dot_estimate;
                 Vec2 s_mid =
                     vec_cast<real_t>(state_at_halftc.speed +
                                      params.alpha * make_Vec2(-state_at_halftc.omega.y, state_at_halftc.omega.x));
@@ -617,7 +617,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                          nullptr))
                         return AdvanceStepResult::kStepBallFly;
                 }
-                State state_at_tc = in + tc * dot_estimate;
+                State<kEddyCurrentModeCount> state_at_tc = in + tc * dot_estimate;
                 project_pure_rolling(state_at_tc, params);
                 if (!normalize_attitude(state_at_tc))
                     return AdvanceStepResult::kStepNumericalUnstable;
@@ -649,13 +649,13 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     return AdvanceStepResult::kRetrySlidingContactCannotStick;
 
                 const real_t remaining = dt - tc;
-                State final_state = state_at_tc;
+                State<kEddyCurrentModeCount> final_state = state_at_tc;
                 FieldResult final_field = {h, field_force.hGrad3d};
                 if (remaining > REAL_LITERAL(0.0)) {
                     const bool ksliding = false;
                     const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
-                    State dot_rolling_start;
-                    State dot_rolling_mid;
+                    State<kEddyCurrentModeCount> dot_rolling_start;
+                    State<kEddyCurrentModeCount> dot_rolling_mid;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                         if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, ksliding, no_sliding_dir, nullptr,
                                              nullptr, &final_field))
@@ -665,7 +665,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                                              LUTptr, &final_field))
                             return AdvanceStepResult::kStepBallFly;
                     }
-                    const State rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
+                    const State<kEddyCurrentModeCount> rolling_mid = state_at_tc + remaining * REAL_LITERAL(0.5) * dot_rolling_start;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
                         if (!state_in_lut_domain(rolling_mid))
                             return AdvanceStepResult::kStepLUTOutOfDomain;
@@ -752,7 +752,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         return AdvanceStepResult::kStepFinerRetry;
                 }
             }
-            State rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
+            State<kEddyCurrentModeCount> rk2midpoint = dt * REAL_LITERAL(0.5) * Statedot_start + in;
             Vec2 s_mid = vec_cast<real_t>(rk2midpoint.speed +
                                           params.alpha * make_Vec2(-rk2midpoint.omega.y, rk2midpoint.omega.x));
             const real_t s_mid_norm = length(s_mid);
@@ -766,7 +766,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             }
             Vec3 F_mid;
             Vec3 M_mid;
-            State Statedot_mid;
+            State<kEddyCurrentModeCount> Statedot_mid;
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                 if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, nullptr, nullptr, nullptr,
                                     &F_mid, &M_mid))
@@ -808,7 +808,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     return AdvanceStepResult::kRetrySlidingMidPredictsContact;
                 }
             }
-            State final_state = in + dt * Statedot_mid;
+            State<kEddyCurrentModeCount> final_state = in + dt * Statedot_mid;
             if (!normalize_attitude(final_state))
                 return AdvanceStepResult::kStepNumericalUnstable;
             Vec2 sf = vec_cast<real_t>(final_state.speed +
@@ -837,11 +837,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             return AdvanceStepResult::kStepOk;
         }
     } else {
-        State start = in;
+        State<kEddyCurrentModeCount> start = in;
         project_pure_rolling(start, params);
         Vec3 F_start;
         Vec3 M_start;
-        State Statedot_start;
+        State<kEddyCurrentModeCount> Statedot_start;
         if (isHCacheValid) {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
                 if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
@@ -876,12 +876,12 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
         const bool krolling = false;
         const bool ksliding = true;
-        const State rk2midpoint = start + dt * REAL_LITERAL(0.5) * Statedot_start;
+        const State<kEddyCurrentModeCount> rk2midpoint = start + dt * REAL_LITERAL(0.5) * Statedot_start;
         if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
             if (!state_in_lut_domain(rk2midpoint))
                 return AdvanceStepResult::kStepLUTOutOfDomain;
         }
-        State Statedot_mid;
+        State<kEddyCurrentModeCount> Statedot_mid;
         Vec3 F_mid;
         Vec3 M_mid;
         if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, krolling, no_sliding_dir, cache, LUTptr, nullptr, &F_mid,
@@ -895,7 +895,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             return AdvanceStepResult::kStepNaNOrInf;
         const real_t g_mid = A_mid - b_mid;
 
-        State trial_final = start + dt * Statedot_mid;
+        State<kEddyCurrentModeCount> trial_final = start + dt * Statedot_mid;
         project_pure_rolling(trial_final, params);
         if (!normalize_attitude(trial_final))
             return AdvanceStepResult::kStepNumericalUnstable;
@@ -950,14 +950,14 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         if (tr < REAL_LITERAL(0.0) || tr > dt)
             return AdvanceStepResult::kStepNumericalUnstable;
 
-        State state_at_tr = start;
+        State<kEddyCurrentModeCount> state_at_tr = start;
         if (tr > REAL_LITERAL(0.0)) {
-            const State state_at_halftr = start + tr * REAL_LITERAL(0.5) * Statedot_start;
+            const State<kEddyCurrentModeCount> state_at_halftr = start + tr * REAL_LITERAL(0.5) * Statedot_start;
             if constexpr (kFieldEvalMode == FieldEvalMode::kFourierSpline) {
                 if (!state_in_lut_domain(state_at_halftr))
                     return AdvanceStepResult::kStepLUTOutOfDomain;
             }
-            State dot_estimate;
+            State<kEddyCurrentModeCount> dot_estimate;
             if (!eval_rhs<false>(state_at_halftr, dot_estimate, params, krolling, no_sliding_dir, cache, LUTptr,
                                  nullptr))
                 return AdvanceStepResult::kStepBallFly;
@@ -1002,15 +1002,15 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             return AdvanceStepResult::kRetryRollingEventInvalid;
         const Vec2 launch_dir = dir_sum / dir_sum_norm;
         const real_t remaining = dt - tr;
-        State final_state = state_at_tr;
+        State<kEddyCurrentModeCount> final_state = state_at_tr;
         Vec2 final_dir = launch_dir;
         bool final_sliding = true;
         if (remaining > REAL_LITERAL(0.0)) {
-            State dot_sliding_start;
+            State<kEddyCurrentModeCount> dot_sliding_start;
             if (!eval_rhs<false>(state_at_tr, dot_sliding_start, params, ksliding, launch_dir, cache, LUTptr,
                                  &event_field))
                 return AdvanceStepResult::kStepBallFly;
-            const State sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
+            const State<kEddyCurrentModeCount> sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
             // Release starts at zero slip: avoid cancellation between midpoint speed and spin.
             const Vec2 s_mid = (remaining * REAL_LITERAL(0.5) * (a_event - b_event * launch_dir));
             const real_t s_mid_norm = length(s_mid);
@@ -1058,7 +1058,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         return AdvanceStepResult::kRetryRollingReleaseMidContact;
                 }
             }
-            State dot_sliding_mid;
+            State<kEddyCurrentModeCount> dot_sliding_mid;
             const Vec2 mid_sliding_dir = a_sliding_mid / A_sliding_mid;
             if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, mid_sliding_dir, cache, LUTptr,
                                  &mid_field))
@@ -1103,7 +1103,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
 // MARK: fwd1step
 // Advance one complete interval. A rejected interval is split into its left
 // and right halves; the node number encodes the pending right halves.
-DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State &in, bool &sliding,
+DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &params, State<kEddyCurrentModeCount> &in, bool &sliding,
                                            Vec2 &sliding_dir, bool &isHCacheValid, FieldCache *cache = nullptr,
                                            const LUTNode *LUTptr = nullptr, FieldResult *H_cache = nullptr,
                                            RetryDiagnostics *diagnostics = nullptr)
@@ -1117,7 +1117,7 @@ DEVICE NOINLINE AdvanceStepResult fwd1step(const real_t dt, const SolverParams &
             return AdvanceStepResult::kStepLUTOutOfDomain;
     }
 
-    State work = in;
+    State<kEddyCurrentModeCount> work = in;
     bool work_sliding = sliding;
     Vec2 work_dir = sliding_dir;
     bool work_cache_valid = isHCacheValid && H_cache != nullptr;

@@ -23,7 +23,7 @@ int main(int argc,char **argv) {
         std::istringstream row(line); double t,sv[15],mode,blow;
         row>>t;for(auto &x:sv) row>>x;row>>mode>>blow;
         if(!row) return 4;
-        State s{sv[0],{sv[1],sv[2]},{sv[3],sv[4]},{sv[5],{sv[6],sv[7],sv[8]}},{sv[9],sv[10],sv[11]},{sv[12],sv[13],sv[14]}};
+        State<kEddyCurrentModeCount> s{sv[0],{sv[1],sv[2]},{sv[3],sv[4]},{sv[5],{sv[6],sv[7],sv[8]}},{sv[9],sv[10],sv[11]},{sv[12],sv[13],sv[14]}};
         FieldCache cache{};
         const auto f=eval_mag_field_and_force(p,s.pos,rotate(s.attitude,s.q),s.down_disk_angle,&cache,lut.data());
         const Vec3 Mmag=-p.gamma_m*E*cross(rotate(s.attitude,s.q),f.h);

@@ -5,7 +5,7 @@
 
 // NVRTC entry point for one trajectory. No host CUDA build is required.
 // Status 0 means success; positive values map to AdvanceStepResult + 1.
-extern "C" GLOBAL void evolve_trajectory_cuda(State *states, const SolverParams params,
+extern "C" GLOBAL void evolve_trajectory_cuda(State<kEddyCurrentModeCount> *states, const SolverParams params,
                                                 const real_t dt, const int steps,
                                                 bool *sliding_out, Vec2 *sliding_dir_out,
                                                 int *status_out)
@@ -19,7 +19,7 @@ extern "C" GLOBAL void evolve_trajectory_cuda(State *states, const SolverParams 
         return;
     }
 
-    State state = *states;
+    State<kEddyCurrentModeCount> state = *states;
     const Vec2 slip = vec_cast<real_t>(state.speed) +
                       params.alpha * make_Vec2(-static_cast<real_t>(state.omega.y),
                                                 static_cast<real_t>(state.omega.x));

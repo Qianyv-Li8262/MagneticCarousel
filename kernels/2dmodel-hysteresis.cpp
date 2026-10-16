@@ -53,7 +53,7 @@ void validate_params(const SolverParams &p)
         throw std::invalid_argument("evolve: invalid solver parameters");
 }
 
-void initialize_mode(State &state, const SolverParams &params, bool &sliding, Vec2 &sliding_dir)
+void initialize_mode(State<kEddyCurrentModeCount> &state, const SolverParams &params, bool &sliding, Vec2 &sliding_dir)
 {
     const Vec2 slip = vec_cast<real_t>(state.speed) +
                       params.alpha * make_Vec2(-static_cast<real_t>(state.omega.y),
@@ -100,7 +100,7 @@ const LUTNode *trajectory_lut()
 
 // Mechanical power per unit mass, in the solver's dimensionless 2D units.
 // M in eval_rhs is angular acceleration: physical torque / mass = Eta*alpha^2*M.
-std::array<real_t, 3> magnetic_mechanical_power(const State &state, const SolverParams &params)
+std::array<real_t, 3> magnetic_mechanical_power(const State<kEddyCurrentModeCount> &state, const SolverParams &params)
 {
     validate_params(params);
     FieldCache cache{};
@@ -117,7 +117,7 @@ std::array<real_t, 3> magnetic_mechanical_power(const State &state, const Solver
 
 // Each call advances one trajectory chunk. Contact mode and direction are
 // carried into the next chunk; the field cache remains local to this call.
-State evolve_trajectory(const State &initial, real_t dt, int steps, const SolverParams &params,
+State<kEddyCurrentModeCount> evolve_trajectory(const State<kEddyCurrentModeCount> &initial, real_t dt, int steps, const SolverParams &params,
                         bool &sliding, Vec2 &sliding_dir, bool initialize, std::int64_t start_step)
 {
     validate_params(params);
@@ -126,7 +126,7 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
     if (start_step < 0 || start_step > std::numeric_limits<std::int64_t>::max() - steps)
         throw std::invalid_argument("evolve: invalid start_step");
 
-    State state = initial;
+    State<kEddyCurrentModeCount> state = initial;
     if (initialize)
         initialize_mode(state, params, sliding, sliding_dir);
     else if (!real_isfinite(sliding_dir.x) || !real_isfinite(sliding_dir.y))
@@ -145,7 +145,7 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
             // A failure need not have used refinement; its default retry state
             // is all zeros and must not be presented as the actual ball state.
             const bool has_retry_state = retry_diagnostics.last_depth >= 0;
-            const State &diagnostic_state = has_retry_state ? retry_diagnostics.last_state : state;
+            const State<kEddyCurrentModeCount> &diagnostic_state = has_retry_state ? retry_diagnostics.last_state : state;
             std::ostringstream message;
             message << std::setprecision(17)
                     << "evolve: global step " << start_step + i << " (chunk step " << i << ")"
@@ -185,7 +185,7 @@ State evolve_trajectory(const State &initial, real_t dt, int steps, const Solver
 }
 
 // Hold the ball fixed while the magnets turn: evolve JA memory only.
-State magnetize_held_ball(const State &initial, real_t dt, int steps, const SolverParams &params)
+State<kEddyCurrentModeCount> magnetize_held_ball(const State<kEddyCurrentModeCount> &initial, real_t dt, int steps, const SolverParams &params)
 {
     validate_params(params);
     if (!real_isfinite(dt) || dt <= REAL_LITERAL(0.0) || steps < 0)
@@ -194,7 +194,7 @@ State magnetize_held_ball(const State &initial, real_t dt, int steps, const Solv
         if (!state_in_lut_domain(initial))
             throw std::invalid_argument("magnetize: position outside the field LUT");
     }
-    State state = initial;
+    State<kEddyCurrentModeCount> state = initial;
     state.speed = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
     state.omega = make_Vec3(REAL_LITERAL(0.0), REAL_LITERAL(0.0), REAL_LITERAL(0.0));
     const real_t start_angle = static_cast<real_t>(state.down_disk_angle);
@@ -202,10 +202,10 @@ State magnetize_held_ball(const State &initial, real_t dt, int steps, const Solv
     FieldCache cache{};
     for (int i = 0; i < steps; ++i) {
         state.down_disk_angle = start_angle + static_cast<real_t>(i) * dt;
-        State first{}, second{};
+        State<kEddyCurrentModeCount> first{}, second{};
         if (!eval_rhs<false>(state, first, params, false, zero, &cache, trajectory_lut()))
             throw std::runtime_error("magnetize: ball lost contact");
-        State mid = state;
+        State<kEddyCurrentModeCount> mid = state;
         mid.q = state.q + first.q * (dt * REAL_LITERAL(0.5));
         mid.down_disk_angle = start_angle + (static_cast<real_t>(i) + REAL_LITERAL(0.5)) * dt;
         if (!eval_rhs<false>(mid, second, params, false, zero, &cache, trajectory_lut()))

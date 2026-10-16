@@ -49,6 +49,9 @@ CONFIG_CONST real_t kRollingTransitionOmega = REAL_LITERAL(1.5);
 CONFIG_CONST real_t kRollingOmegaEpsilon = REAL_LITERAL(0.002);
 CONFIG_CONST real_t kRollingLambda = REAL_LITERAL(0.0);
 
+
+CONFIG_CONST int kEddyCurrentModeCount = 3;
+
 // Fixed tilt axis measured from +x; positive tilt follows the right-hand rule.
 // Small-angle model: add theta * (gamma_g - F_mag.z) along the downhill direction.
 // This assumes the normal magnetic attraction contributes to the downslope drive.

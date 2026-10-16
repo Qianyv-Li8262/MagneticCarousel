@@ -15,7 +15,7 @@ DEVICE INLINE void update_mean_variance(real_t value, int count, real_t &mean, r
     m2 += delta * (value - mean);
 }
 
-DEVICE INLINE bool finite_state(const State &s)
+DEVICE INLINE bool finite_state(const State<kEddyCurrentModeCount> &s)
 {
     return real_isfinite(static_cast<real_t>(s.down_disk_angle)) &&
            real_isfinite(static_cast<real_t>(s.pos.x)) && real_isfinite(static_cast<real_t>(s.pos.y)) &&
@@ -30,7 +30,7 @@ DEVICE INLINE bool finite_state(const State &s)
            real_isfinite(static_cast<real_t>(s.q.z));
 }
 
-DEVICE INLINE bool observables(const State &s, const SolverParams &params,
+DEVICE INLINE bool observables(const State<kEddyCurrentModeCount> &s, const SolverParams &params,
                                real_t &v, real_t &omega, real_t &phase_rate,
                                real_t &abs_slip, real_t &abs_q)
 {
@@ -64,7 +64,7 @@ DEVICE INLINE int analyze(real_t v0, real_t s0, real_t dt, int steps, int window
     const real_t m = static_cast<real_t>(magnet_number / 2);
     const real_t omega0 = (s0 - v0) / params.alpha;
     if (!real_isfinite(omega0)) return -2;
-    State ball{};
+    State<kEddyCurrentModeCount> ball{};
     ball.pos.x = static_cast<accumulator_t>(m);
     ball.speed.y = static_cast<accumulator_t>(m * v0);
     ball.omega.x = static_cast<accumulator_t>(m * omega0);

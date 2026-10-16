@@ -9,10 +9,10 @@ int main()
 {
     static_assert(kFieldEvalMode == FieldEvalMode::kFourierSpline);
     SolverParams params{};
-    State state{};
+    State<kEddyCurrentModeCount> state{};
     state.pos.x = REAL_LITERAL(7.0);
     state.attitude.real = REAL_LITERAL(1.0);
-    const State before = state;
+    const State<kEddyCurrentModeCount> before = state;
     bool sliding = false;
     Vec2 direction{};
     bool valid = false;

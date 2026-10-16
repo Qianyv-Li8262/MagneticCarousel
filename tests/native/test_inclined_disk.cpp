@@ -29,10 +29,10 @@ int main()
         assert(effective.z == magnetic.z);
     }
 
-    State state{};
+    State<kEddyCurrentModeCount> state{};
     state.pos.x = REAL_LITERAL(4.0);
     state.attitude.real = REAL_LITERAL(1.0);
-    State derivative{};
+    State<kEddyCurrentModeCount> derivative{};
     Vec3 force{}, torque{};
     const Vec2 drive = theta * params.gamma_g * downhill;
 
