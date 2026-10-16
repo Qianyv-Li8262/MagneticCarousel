@@ -28,3 +28,36 @@
 /scripts/
 /results/
 /slow-somega-scan/
+
+# Frozen copies and their data are local archives, not active source.
+/baselines/
+
+# Generated data, charts, reports and binary tables, wherever produced.
+*.json
+*.jsonl
+*.csv
+*.tsv
+*.npz
+*.npy
+*.bin
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+*.mp4
+*.log
+*.txt
+!CMakeLists.txt
+!requirements.txt
+!requirements-*.txt
+
+# Keep audit source code visible; hide its generated evidence and notes.
+/audits/**
+!/audits/**/
+!/audits/**/*.py
+!/audits/**/*.cpp
+!/audits/**/*.cu
+!/audits/**/*.h
+!/audits/**/*.hpp

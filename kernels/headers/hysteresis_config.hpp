@@ -16,7 +16,7 @@ CONFIG_CONST real_t Xi_JA= (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITER
 // Restore the reference magnet moment on 2026-10-13 at the user's request.
 // Beta=0.056999326368103 corresponds to 4.222663 A m^2 per cylinder.
 // The earlier 3.04x moment candidate is retained only in historical audit outputs.
-CONFIG_CONST real_t Beta = REAL_LITERAL(0.056999326368103);
+CONFIG_CONST real_t Beta = REAL_LITERAL(0.0854985);
 // Beta is m k^3 / (4 pi M_s).
 
 // Mechanical parameters
