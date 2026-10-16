@@ -106,6 +106,86 @@ struct FieldCache {
     };
 };
 
+#if !defined(__CUDACC__) && defined(USE_FP64)
+// Four lanes hold A_i, Z_i, A_(i+1), Z_(i+1). Nodes retain their
+// shared CPU/CUDA layout; only registers are rearranged. The odd tail uses
+// a zero node without reading past the final Fourier mode.
+INLINE void evaluate_lut_splines_avx2(const LUTNode *lut, const int interval,
+    const real_t u, const real_t drho2, const real_t inv_drho, FieldCache *cache,
+    LUTInterpolation<false> *samples)
+{
+    const __m256d uv = _mm256_set1_pd(u);
+    const __m256d two = _mm256_set1_pd(2.0);
+    const __m256d three = _mm256_set1_pd(3.0);
+    const __m256d inv_dr = _mm256_set1_pd(inv_drho);
+    const __m256d zero = _mm256_setzero_pd();
+    const bool hit = kLUTCacheMode != LUTCacheMode::kNoCache && cache->interval_eff == interval;
+    for (int mode = 0; mode < kFieldFourierModeCount; mode += 2) {
+        const bool has_second = mode + 1 < kFieldFourierModeCount;
+        __m256d a, b, c, d;
+        if (kLUTCacheMode == LUTCacheMode::kCacheCoeffs && hit) {
+            const CubicCoeff &a0 = cache->coeffs.A[mode], &z0 = cache->coeffs.Z[mode];
+            const CubicCoeff empty{};
+            const CubicCoeff &a1 = has_second ? cache->coeffs.A[mode + 1] : empty;
+            const CubicCoeff &z1 = has_second ? cache->coeffs.Z[mode + 1] : empty;
+            a = _mm256_setr_pd(a0.a, z0.a, a1.a, z1.a);
+            b = _mm256_setr_pd(a0.b, z0.b, a1.b, z1.b);
+            c = _mm256_setr_pd(a0.c, z0.c, a1.c, z1.c);
+            d = _mm256_setr_pd(a0.d, z0.d, a1.d, z1.d);
+        } else {
+            __m256d left[2] = {zero, zero}, right[2] = {zero, zero};
+            for (int j = 0; j < 2 && mode + j < kFieldFourierModeCount; ++j) {
+                const int index = mode + j;
+                const LUTNode *l = lut + index * kSplineNodes + interval;
+                const LUTNode *r = l + 1;
+                if constexpr (kLUTCacheMode == LUTCacheMode::kCacheNode) {
+                    if (!hit) {
+                        cache->nodes.left[index] = *l;
+                        cache->nodes.right[index] = *r;
+                    }
+                    l = &cache->nodes.left[index];
+                    r = &cache->nodes.right[index];
+                }
+                left[j] = _mm256_loadu_pd(&l->A);
+                right[j] = _mm256_loadu_pd(&r->A);
+            }
+            // unpack gives [A_i,A_j,Z_i,Z_j]; permute interleaves A/Z.
+            a = _mm256_permute4x64_pd(_mm256_unpacklo_pd(left[0], left[1]), 0xd8);
+            const __m256d ml = _mm256_permute4x64_pd(_mm256_unpackhi_pd(left[0], left[1]), 0xd8);
+            const __m256d r = _mm256_permute4x64_pd(_mm256_unpacklo_pd(right[0], right[1]), 0xd8);
+            const __m256d mr = _mm256_permute4x64_pd(_mm256_unpackhi_pd(right[0], right[1]), 0xd8);
+            b = _mm256_sub_pd(_mm256_sub_pd(r, a),
+                _mm256_div_pd(_mm256_mul_pd(_mm256_set1_pd(drho2),
+                    _mm256_add_pd(_mm256_mul_pd(two, ml), mr)), _mm256_set1_pd(6.0)));
+            c = _mm256_div_pd(_mm256_mul_pd(_mm256_set1_pd(drho2), ml), two);
+            d = _mm256_div_pd(_mm256_mul_pd(_mm256_set1_pd(drho2), _mm256_sub_pd(mr, ml)),
+                _mm256_set1_pd(6.0));
+            if constexpr (kLUTCacheMode == LUTCacheMode::kCacheCoeffs) {
+                alignas(32) double coeff[4][4];
+                _mm256_store_pd(coeff[0], a); _mm256_store_pd(coeff[1], b);
+                _mm256_store_pd(coeff[2], c); _mm256_store_pd(coeff[3], d);
+                for (int j = 0; j < 2 && mode + j < kFieldFourierModeCount; ++j) {
+                    cache->coeffs.A[mode+j] = {coeff[0][2*j], coeff[1][2*j], coeff[2][2*j], coeff[3][2*j]};
+                    cache->coeffs.Z[mode+j] = {coeff[0][2*j+1], coeff[1][2*j+1], coeff[2][2*j+1], coeff[3][2*j+1]};
+                }
+            }
+        }
+        const __m256d value = _mm256_add_pd(a, _mm256_mul_pd(uv,
+            _mm256_add_pd(b, _mm256_mul_pd(uv, _mm256_add_pd(c, _mm256_mul_pd(uv, d))))));
+        const __m256d d1 = _mm256_mul_pd(_mm256_add_pd(b, _mm256_mul_pd(uv,
+            _mm256_add_pd(_mm256_mul_pd(two, c), _mm256_mul_pd(_mm256_mul_pd(three, d), uv)))), inv_dr);
+        const __m256d d2 = _mm256_mul_pd(_mm256_mul_pd(_mm256_add_pd(_mm256_mul_pd(two, c),
+            _mm256_mul_pd(_mm256_mul_pd(_mm256_set1_pd(6.0), d), uv)), inv_dr), inv_dr);
+        alignas(32) double v[4], first[4], second[4];
+        _mm256_store_pd(v, value); _mm256_store_pd(first, d1); _mm256_store_pd(second, d2);
+        for (int j = 0; j < 2 && mode + j < kFieldFourierModeCount; ++j) {
+            samples[mode+j] = {{v[2*j], first[2*j], second[2*j]},
+                              {v[2*j+1], first[2*j+1], second[2*j+1]}};
+        }
+    }
+}
+#endif
+
 // MARK: H&F calc
 
 
@@ -181,9 +261,15 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
         const real_t step_cos = mode_cos * mode_cos - mode_sin * mode_sin;
         const real_t step_sin = REAL_LITERAL(2.0) * mode_sin * mode_cos;
 
+#if !defined(__CUDACC__) && defined(USE_FP64)
+        LUTInterpolation<false> samples[kFieldFourierModeCount];
+        evaluate_lut_splines_avx2(LUTptr, left_node_index, u, drho2, inv_drho, cache, samples);
+#else
         const LUTNode *left_node = nullptr;
         const LUTNode *right_node = nullptr;
+#endif
         for (int i = 0; i < kFieldFourierModeCount; i++) {
+#if defined(__CUDACC__) || !defined(USE_FP64)
             CubicCoeff local_A;
             CubicCoeff local_Z;
             CubicCoeff *coeffsA = &local_A;
@@ -216,6 +302,10 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
         CACHE_HIT_COEFFICIENTS:
             const Spline012 A = evaluate_spline(*coeffsA, u, inv_drho);
             const Spline012 Z = evaluate_spline(*coeffsZ, u, inv_drho);
+#else
+            const Spline012 A = samples[i].A;
+            const Spline012 Z = samples[i].Z;
+#endif
 
             const int harmonic_int = (2 * i + 1) * magnet_number / 2;
             const real_t harmonic = static_cast<real_t>(harmonic_int);
