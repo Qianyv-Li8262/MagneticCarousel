@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
 project(iypt16_hysteresis_2d LANGUAGES CXX)
 
+# CPU State arithmetic uses AVX; CUDA uses scalar arrays.
+if(MSVC)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/arch:AVX>")
+else()
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-mavx>")
+endif()
+
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 # Use pybind11 from the same Python environment as the extension.

@@ -45,7 +45,8 @@ int main(int argc, char **argv) {
         auto derivative=[&](double t, Vec3 q) {
             State<kEddyCurrentModeCount> trial=state,rhs{};trial.down_disk_angle=(1-u)*t;trial.q=q;
             const Vec2 direction{};
-            if (!eval_rhs<false>(trial,rhs,params,false,direction,&cache,lut.data()))
+            Vec3 hb_dot;
+            if (!eval_rhs<false>(trial,rhs, hb_dot,params,false,direction,&cache,lut.data()))
                 throw std::runtime_error("Negative normal load on prescribed orbit");
             return rhs.q+cross(frame_spin,q);
         };
@@ -61,7 +62,8 @@ int main(int argc, char **argv) {
             State<kEddyCurrentModeCount> sample=state,rhs{};sample.q=mid;sample.down_disk_angle=(1-u)*(t+.5*dt);
             const auto f=eval_mag_field_and_force(params,sample.pos,mid,sample.down_disk_angle,&cache,lut.data());
             const Vec3 torque=-params.gamma_m*E*cross(mid,f.h);
-            eval_rhs<false>(sample,rhs,params,false,Vec2{},&cache,lut.data());
+            Vec3 hb_dot;
+            eval_rhs<false>(sample,rhs, hb_dot,params,false,Vec2{},&cache,lut.data());
             const double scale=mass*length_unit*omega*omega*1000;
             const double inward=-f.Force.x*scale;
             sums[0]+=inward;

@@ -204,12 +204,13 @@ State<kEddyCurrentModeCount> magnetize_held_ball(const State<kEddyCurrentModeCou
     for (int i = 0; i < steps; ++i) {
         state.down_disk_angle = start_angle + static_cast<real_t>(i) * dt;
         State<kEddyCurrentModeCount> first{}, second{};
-        if (!eval_rhs<false>(state, first, params, false, zero, &cache, trajectory_lut()))
+        Vec3 hb_dot_first, hb_dot_second;
+        if (!eval_rhs<false>(state, first, hb_dot_first, params, false, zero, &cache, trajectory_lut()))
             throw std::runtime_error("magnetize: ball lost contact");
         State<kEddyCurrentModeCount> mid = state;
         mid.q = state.q + first.q * (dt * REAL_LITERAL(0.5));
         mid.down_disk_angle = start_angle + (static_cast<real_t>(i) + REAL_LITERAL(0.5)) * dt;
-        if (!eval_rhs<false>(mid, second, params, false, zero, &cache, trajectory_lut()))
+        if (!eval_rhs<false>(mid, second, hb_dot_second, params, false, zero, &cache, trajectory_lut()))
             throw std::runtime_error("magnetize: ball lost contact");
         state.q = state.q + second.q * dt;
         if (!real_isfinite(length(state.q)))

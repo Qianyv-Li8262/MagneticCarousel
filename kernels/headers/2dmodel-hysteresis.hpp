@@ -347,7 +347,8 @@ DEVICE INLINE Vec3 add_gaussian_rolling_resistance(const SolverParams &params, c
 
 // MARK: RHS eval
 template <bool ExportFM>
-DEVICE NOINLINE bool eval_rhs(const State<kEddyCurrentModeCount> &in, State<kEddyCurrentModeCount> &out, const SolverParams &params, const bool &sliding,
+DEVICE NOINLINE bool eval_rhs(const State<kEddyCurrentModeCount> &in, State<kEddyCurrentModeCount> &out, Vec3 &hb_dot,
+                              const SolverParams &params, const bool &sliding,
                               const Vec2 &sliding_dir, FieldCache *cache = nullptr, const LUTNode *LUTptr = nullptr,
                               const FieldResult *H_cache = nullptr, Vec3 *Fext = nullptr, Vec3 *Mext = nullptr)
 {
@@ -387,6 +388,7 @@ DEVICE NOINLINE bool eval_rhs(const State<kEddyCurrentModeCount> &in, State<kEdd
     }
 
     const auto h_ext_dot = eval_body_field_derivative(in, h, field_force.hGrad3d);
+    hb_dot = vec_cast<real_t>(h_ext_dot);
 
     Vec3 h0_dot = h_ext_dot * (REAL_LITERAL(3.0) / (Mu_r + REAL_LITERAL(2.0)));
     // assume ReLU use the 0 branch
@@ -556,23 +558,24 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         Vec3 F_start;
         Vec3 M_start;
         State<kEddyCurrentModeCount> Statedot_start;
+        Vec3 hb_dot_start;
         if (isHCacheValid) {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
+                if (!eval_rhs<true>(in, Statedot_start, hb_dot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
                                     &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             } else {
-                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache, &F_start,
+                if (!eval_rhs<true>(in, Statedot_start, hb_dot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache, &F_start,
                                     &M_start))
                     return AdvanceStepResult::kStepBallFly;
             }
         } else {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr,
+                if (!eval_rhs<true>(in, Statedot_start, hb_dot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr,
                                     &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             } else {
-                if (!eval_rhs<true>(in, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr, &F_start,
+                if (!eval_rhs<true>(in, Statedot_start, hb_dot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr, &F_start,
                                     &M_start))
                     return AdvanceStepResult::kStepBallFly;
             }
@@ -595,6 +598,7 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     return AdvanceStepResult::kStepNumericalUnstable;
                 State<kEddyCurrentModeCount> state_at_halftc = in + tc * REAL_LITERAL(0.5) * Statedot_start;
                 State<kEddyCurrentModeCount> dot_estimate;
+                Vec3 hb_dot_estimate;
                 Vec2 s_mid =
                     vec_cast<real_t>(state_at_halftc.speed +
                                      params.alpha * make_Vec2(-state_at_halftc.omega.y, state_at_halftc.omega.x));
@@ -609,11 +613,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                         return AdvanceStepResult::kStepLUTOutOfDomain;
                 }
                 if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                    if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, nullptr, nullptr,
+                    if (!eval_rhs<false>(state_at_halftc, dot_estimate, hb_dot_estimate, params, sliding, sliddir_mid, nullptr, nullptr,
                                          nullptr))
                         return AdvanceStepResult::kStepBallFly;
                 } else {
-                    if (!eval_rhs<false>(state_at_halftc, dot_estimate, params, sliding, sliddir_mid, cache, LUTptr,
+                    if (!eval_rhs<false>(state_at_halftc, dot_estimate, hb_dot_estimate, params, sliding, sliddir_mid, cache, LUTptr,
                                          nullptr))
                         return AdvanceStepResult::kStepBallFly;
                 }
@@ -655,13 +659,15 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     const bool ksliding = false;
                     const Vec2 no_sliding_dir = make_Vec2(REAL_LITERAL(0.0), REAL_LITERAL(0.0));
                     State<kEddyCurrentModeCount> dot_rolling_start;
+                    Vec3 hb_dot_rolling_start;
                     State<kEddyCurrentModeCount> dot_rolling_mid;
+                    Vec3 hb_dot_rolling_mid;
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, ksliding, no_sliding_dir, nullptr,
+                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, hb_dot_rolling_start, params, ksliding, no_sliding_dir, nullptr,
                                              nullptr, &final_field))
                             return AdvanceStepResult::kStepBallFly;
                     } else {
-                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, params, ksliding, no_sliding_dir, cache,
+                        if (!eval_rhs<false>(state_at_tc, dot_rolling_start, hb_dot_rolling_start, params, ksliding, no_sliding_dir, cache,
                                              LUTptr, &final_field))
                             return AdvanceStepResult::kStepBallFly;
                     }
@@ -671,11 +677,11 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                             return AdvanceStepResult::kStepLUTOutOfDomain;
                     }
                     if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                        if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, nullptr,
+                        if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, hb_dot_rolling_mid, params, ksliding, no_sliding_dir, nullptr,
                                              nullptr, nullptr))
                             return AdvanceStepResult::kStepBallFly;
                     } else {
-                        if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, params, ksliding, no_sliding_dir, cache,
+                        if (!eval_rhs<false>(rolling_mid, dot_rolling_mid, hb_dot_rolling_mid, params, ksliding, no_sliding_dir, cache,
                                              LUTptr, nullptr))
                             return AdvanceStepResult::kStepBallFly;
                     }
@@ -767,12 +773,13 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
             Vec3 F_mid;
             Vec3 M_mid;
             State<kEddyCurrentModeCount> Statedot_mid;
+            Vec3 hb_dot_mid;
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, nullptr, nullptr, nullptr,
+                if (!eval_rhs<true>(rk2midpoint, Statedot_mid, hb_dot_mid, params, sliding, sliddir_mid, nullptr, nullptr, nullptr,
                                     &F_mid, &M_mid))
                     return AdvanceStepResult::kStepBallFly;
             } else {
-                if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, sliding, sliddir_mid, cache, LUTptr, nullptr,
+                if (!eval_rhs<true>(rk2midpoint, Statedot_mid, hb_dot_mid, params, sliding, sliddir_mid, cache, LUTptr, nullptr,
                                     &F_mid, &M_mid))
                     return AdvanceStepResult::kStepBallFly;
             }
@@ -842,23 +849,24 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         Vec3 F_start;
         Vec3 M_start;
         State<kEddyCurrentModeCount> Statedot_start;
+        Vec3 hb_dot_start;
         if (isHCacheValid) {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
+                if (!eval_rhs<true>(start, Statedot_start, hb_dot_start, params, sliding, sliding_dir, nullptr, nullptr, H_cache,
                                     &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             } else {
-                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache,
+                if (!eval_rhs<true>(start, Statedot_start, hb_dot_start, params, sliding, sliding_dir, cache, LUTptr, H_cache,
                                     &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             }
         } else {
             if constexpr (kFieldEvalMode == FieldEvalMode::kExact) {
-                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr,
+                if (!eval_rhs<true>(start, Statedot_start, hb_dot_start, params, sliding, sliding_dir, nullptr, nullptr, nullptr,
                                     &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             } else {
-                if (!eval_rhs<true>(start, Statedot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr,
+                if (!eval_rhs<true>(start, Statedot_start, hb_dot_start, params, sliding, sliding_dir, cache, LUTptr, nullptr,
                                     &F_start, &M_start))
                     return AdvanceStepResult::kStepBallFly;
             }
@@ -882,9 +890,10 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 return AdvanceStepResult::kStepLUTOutOfDomain;
         }
         State<kEddyCurrentModeCount> Statedot_mid;
+        Vec3 hb_dot_mid;
         Vec3 F_mid;
         Vec3 M_mid;
-        if (!eval_rhs<true>(rk2midpoint, Statedot_mid, params, krolling, no_sliding_dir, cache, LUTptr, nullptr, &F_mid,
+        if (!eval_rhs<true>(rk2midpoint, Statedot_mid, hb_dot_mid, params, krolling, no_sliding_dir, cache, LUTptr, nullptr, &F_mid,
                             &M_mid))
             return AdvanceStepResult::kStepBallFly;
         const Vec2 G_mid = make_Vec2(F_mid.x, F_mid.y) - params.delta * length(rk2midpoint.speed) * rk2midpoint.speed;
@@ -958,7 +967,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                     return AdvanceStepResult::kStepLUTOutOfDomain;
             }
             State<kEddyCurrentModeCount> dot_estimate;
-            if (!eval_rhs<false>(state_at_halftr, dot_estimate, params, krolling, no_sliding_dir, cache, LUTptr,
+            Vec3 hb_dot_estimate;
+            if (!eval_rhs<false>(state_at_halftr, dot_estimate, hb_dot_estimate, params, krolling, no_sliding_dir, cache, LUTptr,
                                  nullptr))
                 return AdvanceStepResult::kStepBallFly;
             state_at_tr = start + tr * dot_estimate;
@@ -1007,7 +1017,8 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
         bool final_sliding = true;
         if (remaining > REAL_LITERAL(0.0)) {
             State<kEddyCurrentModeCount> dot_sliding_start;
-            if (!eval_rhs<false>(state_at_tr, dot_sliding_start, params, ksliding, launch_dir, cache, LUTptr,
+            Vec3 hb_dot_sliding_start;
+            if (!eval_rhs<false>(state_at_tr, dot_sliding_start, hb_dot_sliding_start, params, ksliding, launch_dir, cache, LUTptr,
                                  &event_field))
                 return AdvanceStepResult::kStepBallFly;
             const State<kEddyCurrentModeCount> sliding_mid = state_at_tr + remaining * REAL_LITERAL(0.5) * dot_sliding_start;
@@ -1059,8 +1070,9 @@ DEVICE NOINLINE AdvanceStepResult try_advance_1_step(const real_t dt, const Solv
                 }
             }
             State<kEddyCurrentModeCount> dot_sliding_mid;
+            Vec3 hb_dot_sliding_mid;
             const Vec2 mid_sliding_dir = a_sliding_mid / A_sliding_mid;
-            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, params, ksliding, mid_sliding_dir, cache, LUTptr,
+            if (!eval_rhs<false>(sliding_mid, dot_sliding_mid, hb_dot_sliding_mid, params, ksliding, mid_sliding_dir, cache, LUTptr,
                                  &mid_field))
                 return AdvanceStepResult::kStepBallFly;
             final_state = state_at_tr + remaining * dot_sliding_mid;

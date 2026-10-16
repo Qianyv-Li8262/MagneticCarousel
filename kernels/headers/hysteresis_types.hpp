@@ -530,21 +530,50 @@ struct State {
 template <int n>
 DEVICE HOST INLINE State<n> operator+(const State<n> &a, const State<n> &b)
 {
-    return {a.down_disk_angle + b.down_disk_angle,
+    State<n> out{a.down_disk_angle + b.down_disk_angle,
             a.pos + b.pos,
             a.speed + b.speed,
             a.attitude + b.attitude,
             a.omega + b.omega,
             // a. + b.phase,
             {a.q.x + b.q.x, a.q.y + b.q.y, a.q.z + b.q.z}};
+#ifndef __CUDACC__
+    for (int i = 0; i < n; ++i) {
+        out.yx[i] = _mm256_add_pd(a.yx[i], b.yx[i]);
+        out.yy[i] = _mm256_add_pd(a.yy[i], b.yy[i]);
+        out.yz[i] = _mm256_add_pd(a.yz[i], b.yz[i]);
+    }
+#else
+    for (int i = 0; i < n * 4; ++i) {
+        out.yx[i] = a.yx[i] + b.yx[i];
+        out.yy[i] = a.yy[i] + b.yy[i];
+        out.yz[i] = a.yz[i] + b.yz[i];
+    }
+#endif
+    return out;
 }
 
 template <int n>
 DEVICE HOST INLINE State<n> operator*(const real_t a, const State<n> &b)
 {
     const accumulator_t scale = static_cast<accumulator_t>(a);
-    return {scale * b.down_disk_angle, scale * b.pos, scale * b.speed,
+    State<n> out{scale * b.down_disk_angle, scale * b.pos, scale * b.speed,
             scale * b.attitude, scale * b.omega, scale * b.q};
+#ifndef __CUDACC__
+    const __m256d avx_scale = _mm256_set1_pd(static_cast<double>(a));
+    for (int i = 0; i < n; ++i) {
+        out.yx[i] = _mm256_mul_pd(avx_scale, b.yx[i]);
+        out.yy[i] = _mm256_mul_pd(avx_scale, b.yy[i]);
+        out.yz[i] = _mm256_mul_pd(avx_scale, b.yz[i]);
+    }
+#else
+    for (int i = 0; i < n * 4; ++i) {
+        out.yx[i] = a * b.yx[i];
+        out.yy[i] = a * b.yy[i];
+        out.yz[i] = a * b.yz[i];
+    }
+#endif
+    return out;
 }
 
 template <int n>

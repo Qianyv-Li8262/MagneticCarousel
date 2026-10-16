@@ -34,10 +34,11 @@ int main()
     state.attitude.real = REAL_LITERAL(1.0);
     State<kEddyCurrentModeCount> derivative{};
     Vec3 force{}, torque{};
+    Vec3 hb_dot;
     const Vec2 drive = theta * params.gamma_g * downhill;
 
     // With no magnetic field force or drag, pure rolling has a = g*theta/(1+eta).
-    assert(eval_rhs<true>(state, derivative, params, false, downhill,
+    assert(eval_rhs<true>(state, derivative, hb_dot, params, false, downhill,
                           nullptr, nullptr, nullptr, &force, &torque));
     close(force.x, drive.x);
     close(force.y, drive.y);
@@ -48,7 +49,7 @@ int main()
     close(derivative.speed.y, -params.alpha * derivative.omega.x);
 
     // Sliding uses the same drive and retains mu*gamma_g as the friction magnitude.
-    assert(eval_rhs<true>(state, derivative, params, true, downhill,
+    assert(eval_rhs<true>(state, derivative, hb_dot, params, true, downhill,
                           nullptr, nullptr, nullptr, &force, &torque));
     close(derivative.speed.x, drive.x - Mu * params.gamma_g * downhill.x);
     close(derivative.speed.y, drive.y - Mu * params.gamma_g * downhill.y);

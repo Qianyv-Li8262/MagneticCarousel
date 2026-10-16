@@ -35,7 +35,8 @@ int main() {
         x.down_disk_angle=0.31*t;
         x.q={0.35*std::sin(2*t),0.4*std::cos(1.1*t),0.3*std::sin(0.7*t+1)};
         State<kEddyCurrentModeCount> dx{}; Vec3 F{},M{};
-        assert(eval_rhs<true>(x,dx,p,false,Vec2{},nullptr,nullptr,nullptr,&F,&M));
+        Vec3 hb_dot_rhs;
+        assert(eval_rhs<true>(x,dx, hb_dot_rhs,p,false,Vec2{},nullptr,nullptr,nullptr,&F,&M));
         const Vec2 G={F.x-p.delta*length(x.speed)*x.speed.x,F.y-p.delta*length(x.speed)*x.speed.y};
         const Vec2 friction=dx.speed-G;
         const Vec3 reconstructed=M+make_Vec3(friction.y,-friction.x,0)/(Eta*alpha);
@@ -76,7 +77,8 @@ int main() {
     p.gamma_m=0; p.gamma=0; p.delta=0;
     State<kEddyCurrentModeCount> x{}; x.pos.x=4; x.speed.x=0.2; x.omega.y=x.speed.x/alpha; x.attitude.real=1;
     State<kEddyCurrentModeCount> dx{};
-    assert(eval_rhs<false>(x,dx,p,false,Vec2{}));
+    Vec3 hb_dot_rhs;
+    assert(eval_rhs<false>(x,dx, hb_dot_rhs,p,false,Vec2{}));
     const double reg=x.omega.y/std::sqrt(x.omega.y*x.omega.y+kRollingOmegaEpsilon*kRollingOmegaEpsilon);
     assert(residual(dx.speed.x,-kRollingMuLow*p.gamma_g/(1+Eta)*reg)<1e-12);
     std::puts("rolling_resistance_definition=PASS");
@@ -85,7 +87,7 @@ int main() {
     x={}; x.pos={4,0.1}; x.speed={0.02,-0.2};
     x.omega={-x.speed.y/alpha,x.speed.x/alpha,0.7};
     x.attitude.real=1; x.q={0.01,0.02,-0.03}; x.down_disk_angle=0.58;
-    auto rhs=[&](const State<kEddyCurrentModeCount> &s) { State<kEddyCurrentModeCount> d{}; assert(eval_rhs<false>(s,d,p,false,Vec2{})); return d; };
+    auto rhs=[&](const State<kEddyCurrentModeCount> &s) { State<kEddyCurrentModeCount> d{}; Vec3 hb_dot_rhs; assert(eval_rhs<false>(s,d, hb_dot_rhs,p,false,Vec2{})); return d; };
     auto error=[](const State<kEddyCurrentModeCount> &u,const State<kEddyCurrentModeCount> &v) {
         return length(u.pos-v.pos)+length(u.speed-v.speed)+length(u.q-v.q)+length(u.omega-v.omega)+
                std::abs(u.attitude.real-v.attitude.real)+length(u.attitude.imagine-v.attitude.imagine);
