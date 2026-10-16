@@ -10,8 +10,8 @@
 #include <vector>
 
 int main(int argc, char **argv) {
-    if (argc != 12) {
-        std::cerr << "lut dt field_cycles period_s rpm spin_z_rad_s r_min_mm r_max_mm dr_mm alpha gamma_g\n";
+    if (argc != 11) {
+        std::cerr << "lut dt field_cycles period_s rpm spin_z_rad_s r_min_mm r_max_mm dr_mm sr\n";
         return 2;
     }
     std::vector<LUTNode> lut(kFieldFourierModeCount * kSplineNodes);
@@ -21,11 +21,15 @@ int main(int argc, char **argv) {
     const double requested_dt=std::stod(argv[2]), cycles=std::stod(argv[3]);
     const double period=std::stod(argv[4]), rpm=std::stod(argv[5]), wz_si=std::stod(argv[6]);
     const double rmin=std::stod(argv[7]), rmax=std::stod(argv[8]), dr=std::stod(argv[9]);
-    const double alpha=std::stod(argv[10]), gamma_g=std::stod(argv[11]);
-    const double pi=std::acos(-1.), omega=rpm*2*pi/60, u=-2*pi/(period*omega);
-    const double length_unit=.070/(magnet_number/2.), mass=7850*4*pi/3*std::pow(.006,3);
-    const double gamma=17302.6849037817/std::pow(rpm/100,2)*std::pow(magnet_number/8.,2);
-    const SolverParams params{alpha,8.02199442675159e-5,gamma_g,gamma, gamma/(Eta*alpha*alpha)};
+    const double sr=std::stod(argv[10]);
+    const double pi=hysteresis_physics::pi, omega=rpm*2*pi/60, u=-2*pi/(period*omega);
+    if (!std::isfinite(sr) || sr <= 0 || !std::isfinite(omega) || omega <= 0)
+        throw std::invalid_argument("sr and rpm must be finite and positive");
+    const double radius=hysteresis_physics::Rref*sr;
+    const double length_unit=hysteresis_physics::L/(magnet_number/2.);
+    const double mass=hysteresis_physics::rho_b*4*pi/3*radius*radius*radius;
+    const SolverParams params=make_solver_params(magnet_number, sr, omega/hysteresis_physics::omega_ref, Eta);
+    const double alpha=params.alpha;
     const double field_period=2*pi/(magnet_number/2.)/(1-u);
     const long steps=static_cast<long>(std::ceil(cycles*field_period/requested_dt));
     const double dt=cycles*field_period/steps;

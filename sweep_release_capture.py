@@ -19,8 +19,7 @@ OUTPUT = ROOT / 'runs' / 'legacy-release-capture'
 
 def worker(source, output, label, seconds, dt, phi_values, speed_values):
     sys.path.insert(0, str(source))
-    from animate_one_trajectory import (read_build_config, load_hysteresis,
-        scaled_model_parameters, make_initial_state)
+    from animate_one_trajectory import read_build_config, load_hysteresis, make_initial_state
     from scipy.ndimage import uniform_filter1d
     config = read_build_config(kahan=False)
     module = load_hysteresis()
@@ -29,13 +28,12 @@ def worker(source, output, label, seconds, dt, phi_values, speed_values):
     summaries = []
     for phi0 in phi_values:
         for somega in speed_values:
-            values = scaled_model_parameters(module.magnet_number, sr=5/6, somega=somega)
-            params = module.SolverParams(*values)
+            params = module.SolverParams(sr=5/6, somega=somega)
             disk_omega = 100 * 2 * np.pi / 60 * somega
             sample_steps = max(1, round(.002 * disk_omega / dt))
             sample_dt = sample_steps * dt / disk_omega
             chunks = round(seconds / sample_dt)
-            state = make_initial_state(module, alpha=values[0], phi0=phi0)
+            state = make_initial_state(module, alpha=params.alpha, phi0=phi0)
             data = [np.r_[0., state, 0.]]
             sliding, direction = None, None
             failure = None

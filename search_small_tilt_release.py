@@ -3,7 +3,7 @@ import argparse
 import json
 import numpy as np
 from scipy.optimize import differential_evolution
-from search_prepared_release import OUT,simulate,load_hysteresis,scaled_model_parameters
+from search_prepared_release import OUT, simulate, load_hysteresis
 
 NAME='small_tilt'
 
@@ -19,7 +19,7 @@ def main():
     p=argparse.ArgumentParser()
     p.add_argument('--stage',choices=['c38','free','radius','verify'],default='c38')
     args=p.parse_args()
-    mod=load_hysteresis();params=mod.SolverParams(*scaled_model_parameters(8,sr=5/6,somega=1))
+    mod=load_hysteresis();params=mod.SolverParams(sr=5/6, somega=1)
     rows=[];best=[None]
     if args.stage=='verify':
         pool=[]

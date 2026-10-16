@@ -15,7 +15,7 @@ import math
 
 import numpy as np
 
-from animate_one_trajectory import scaled_model_parameters, timestep_for_magnets
+from animate_one_trajectory import timestep_for_magnets
 from compare_magnet_counts_exact import COUNTS, DATA_DIR, SAMPLE_TIME, TOTAL_TIME, load_extension, SOURCE_DIR
 
 
@@ -37,7 +37,7 @@ def main():
         raise RuntimeError("Sample time is not aligned with refined integration step")
     state = np.zeros(module.state_size, dtype=module.real_dtype)
     state[1], state[5] = radius0, 1
-    params = module.SolverParams(*scaled_model_parameters(count))
+    params = module.SolverParams(sr=1.0, somega=1.0)
     sliding = direction = None
     rows = []
     for index in range(round(TOTAL_TIME / SAMPLE_TIME) + 1):

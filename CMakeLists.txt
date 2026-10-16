@@ -321,6 +321,7 @@ foreach(target IN ITEMS hysteresis_fp64 hysteresis_fp32_kahan)
         DEPENDS ${target} "$<TARGET_FILE:${target}>" ${cpu_manifest_dependencies}
                 "${CMAKE_CURRENT_SOURCE_DIR}/write_build_config.py"
                 "${KERNEL_DIR}/headers/hysteresis_config_field.hpp"
+                "${KERNEL_DIR}/headers/hysteresis_physics.hpp"
                 "${KERNEL_DIR}/headers/hysteresis_config.hpp"
         VERBATIM)
     add_custom_target(${target}_manifest ALL DEPENDS "${cpu_manifest}")
@@ -351,6 +352,17 @@ if(BUILD_TESTING)
     add_native_test(test_boost_multiprecision)
     target_link_libraries(test_boost_multiprecision PRIVATE Boost::multiprecision)
     add_native_test(test_lut_interpolation)
+    add_native_test(test_solver_params)
+    add_executable(test_solver_params_fp64 "${CMAKE_CURRENT_SOURCE_DIR}/tests/native/test_solver_params.cpp")
+    target_compile_features(test_solver_params_fp64 PRIVATE cxx_std_17)
+    target_include_directories(test_solver_params_fp64 PRIVATE "${KERNEL_DIR}/headers")
+    target_compile_definitions(test_solver_params_fp64 PRIVATE USE_FP64)
+    if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(test_solver_params_fp64 PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(test_solver_params_fp64 PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME test_solver_params_fp64 COMMAND test_solver_params_fp64)
     add_native_test(test_fourier_field_reconstruction)
     target_compile_definitions(test_fourier_field_reconstruction PRIVATE FIELD_EVAL_MODE=1)
     foreach(model IN ITEMS point cylinder)

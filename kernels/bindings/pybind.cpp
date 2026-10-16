@@ -94,7 +94,7 @@ py::tuple evolve_numpy(const py::array_t<real_t, py::array::c_style | py::array:
 py::tuple scan_initial_numpy(const py::array_t<real_t, py::array::c_style> &v0,
                              const py::array_t<real_t, py::array::c_style> &s0,
                              real_t dt, int steps, int window_steps, int sample_stride,
-                             real_t sr, real_t somega, const SolverParams &reference,
+                             real_t sr, real_t somega,
                              int num_threads)
 {
     if (v0.ndim() != 1 || s0.ndim() != 1 || v0.size() != s0.size() ||
@@ -121,7 +121,7 @@ py::tuple scan_initial_numpy(const py::array_t<real_t, py::array::c_style> &v0,
         py::gil_scoped_release release;
         scan_initial_grid_cpu(v0.data(), s0.data(), static_cast<std::size_t>(k),
                               dt, steps, window_steps, sample_stride, sr, somega,
-                              reference, num_threads, status_ptr, metrics_ptr, states_ptr);
+                              num_threads, status_ptr, metrics_ptr, states_ptr);
     }
     return py::make_tuple(std::move(status), std::move(metrics), std::move(states));
 }
@@ -134,16 +134,56 @@ PYBIND11_MODULE(MODULE_NAME, m)
     m.attr("magnet_number") = magnet_number;
     m.attr("field_mode") = kFieldEvalMode == FieldEvalMode::kExact ? "exact" : "fourier-spline";
     py::class_<SolverParams>(m, "SolverParams")
-        .def(py::init<real_t, real_t, real_t, real_t, real_t>(),
-             py::arg("alpha"), py::arg("delta"), py::arg("gamma_g"),
-             py::arg("gamma"), py::arg("gamma_m"))
-        .def_readwrite("alpha", &SolverParams::alpha)
-        .def_readwrite("delta", &SolverParams::delta)
-        .def_readwrite("gamma_g", &SolverParams::gamma_g)
-        .def_readwrite("gamma", &SolverParams::gamma)
-        .def_readwrite("gamma_m", &SolverParams::gamma_m)
+        .def(py::init([](real_t sr, real_t somega) {
+            if (!real_isfinite(sr) || sr <= REAL_LITERAL(0.0) ||
+                !real_isfinite(somega) || somega <= REAL_LITERAL(0.0))
+                throw py::value_error("sr and somega must be finite and positive");
+            const auto p = make_solver_params(magnet_number, sr, somega, Eta);
+            if (!real_isfinite(p.alpha) || p.alpha <= REAL_LITERAL(0.0) ||
+                !real_isfinite(p.delta) || !real_isfinite(p.gamma_g) ||
+                !real_isfinite(p.gamma) || !real_isfinite(p.gamma_m) ||
+                !real_isfinite(p.eddy_current_scale) || p.eddy_current_scale <= REAL_LITERAL(0.0))
+                throw py::value_error("sr/somega exceed the solver's numeric range");
+            return p;
+        }), py::arg("sr") = REAL_LITERAL(1.0), py::arg("somega") = REAL_LITERAL(1.0))
+        .def_readonly("alpha", &SolverParams::alpha)
+        .def_readonly("delta", &SolverParams::delta)
+        .def_readonly("gamma_g", &SolverParams::gamma_g)
+        .def_readonly("gamma", &SolverParams::gamma)
+        .def_readonly("gamma_m", &SolverParams::gamma_m)
+        .def_readonly("eddy_current_scale", &SolverParams::eddy_current_scale)
         .def_readwrite("reverse_push_acceleration", &SolverParams::reverse_push_acceleration,
                        "Following reverse tangential COM acceleration; zero disables the external push.");
+    m.attr("reference_ball_radius_m") = hysteresis_physics::Rref;
+    m.attr("reference_disk_omega_rad_s") = hysteresis_physics::omega_ref;
+    m.def("physical_units", [](double sr, double somega) {
+        if (!std::isfinite(sr) || sr <= 0 || !std::isfinite(somega) || somega <= 0)
+            throw py::value_error("sr and somega must be finite and positive");
+        const double radius = hysteresis_physics::Rref * sr;
+        const double mass = hysteresis_physics::rho_b * (4.0 * hysteresis_physics::pi / 3.0) * radius * radius * radius;
+        const double omega = hysteresis_physics::omega_ref * somega;
+        const double length = hysteresis_physics::L / (magnet_number / 2.0);
+        if (!std::isfinite(mass) || mass <= 0 || !std::isfinite(omega) || omega <= 0)
+            throw py::value_error("physical unit conversion exceeds numeric range");
+        py::dict units;
+        units["ball_radius_m"] = radius;
+        units["ball_mass_kg"] = mass;
+        units["disk_omega_rad_s"] = omega;
+        units["length_unit_m"] = length;
+        return units;
+    }, py::arg("sr") = 1.0, py::arg("somega") = 1.0);
+    m.def("push_acceleration", [](double force_mn, double sr, double somega) {
+        if (!std::isfinite(force_mn) || force_mn < 0 ||
+            !std::isfinite(sr) || sr <= 0 || !std::isfinite(somega) || somega <= 0)
+            throw py::value_error("invalid push force or runtime scales");
+        const double r = hysteresis_physics::Rref * sr;
+        const double mass = hysteresis_physics::rho_b * 4.0 * hysteresis_physics::pi / 3.0 * r * r * r;
+        const double omega = hysteresis_physics::omega_ref * somega;
+        const double length = hysteresis_physics::L / (magnet_number / 2.0);
+        const real_t acceleration = static_cast<real_t>(force_mn * 1e-3 / mass / length / (omega * omega));
+        if (!real_isfinite(acceleration)) throw py::value_error("push acceleration exceeds numeric range");
+        return acceleration;
+    }, py::arg("force_mn"), py::arg("sr"), py::arg("somega"));
     m.def("evolve_trajectory", &evolve_numpy, py::arg("initial"), py::arg("dt"),
           py::arg("steps"), py::arg("params"), py::arg("sliding") = py::none(),
           py::arg("sliding_dir") = py::none(), py::arg("start_step") = 0,
@@ -169,7 +209,7 @@ PYBIND11_MODULE(MODULE_NAME, m)
     m.def("scan_initial_grid", &scan_initial_numpy,
           py::arg("v0").noconvert(), py::arg("s0").noconvert(),
           py::arg("dt"), py::arg("steps"), py::arg("window_steps"), py::arg("sample_stride"),
-          py::arg("sr"), py::arg("somega"), py::arg("reference_params"),
+          py::arg("sr"), py::arg("somega"),
           py::arg("num_threads") = 0,
           "Scan an initial (v0,S0) grid with C++ worker threads; return status, metrics, states. "
           "v0 and s0 must be contiguous arrays with the module's real_dtype. "

@@ -40,9 +40,8 @@ def compile_tool():
 
 
 def calculate(config,period,rpm,spin=0,dt=.0005,cycles=256,rmin=35,rmax=105,dr=.5):
-    p=animation.scaled_model_parameters(config['magnet_number'],somega=rpm/100)
     result=subprocess.run([str(BINARY),config['lut'],str(dt),str(cycles),str(period),str(rpm),
-        str(spin),str(rmin),str(rmax),str(dr),str(p[0]),str(p[2])],
+        str(spin),str(rmin),str(rmax),str(dr),"1.0"],
         check=True,capture_output=True,text=True)
     return np.atleast_2d(np.loadtxt(io.StringIO(result.stdout),delimiter=',',skiprows=1))
 
@@ -109,7 +108,7 @@ def main():
     from audit_animation_period import Field
     field=Field(config)
     module=animation.load_hysteresis()
-    params=module.SolverParams(*animation.scaled_model_parameters(8,somega=2))
+    params=module.SolverParams(sr=1.0, somega=2)
     state=animation.make_initial_state(module,alpha=params.alpha)
     sums=[]
     field_period=np.pi/2

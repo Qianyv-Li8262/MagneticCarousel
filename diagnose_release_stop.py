@@ -5,18 +5,16 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from animate_one_trajectory import (read_build_config, load_hysteresis,
-    make_initial_state, scaled_model_parameters)
+from animate_one_trajectory import read_build_config, load_hysteresis, make_initial_state
 from project_paths import RUNS_DIR, SCRATCH_DIR
 
 
 def run(module, phi0, dt, seconds=20.0):
     sr = 5 / 6  # experimental radius 5 mm; reference radius 6 mm
-    values = scaled_model_parameters(module.magnet_number, sr=sr, somega=1)
-    params = module.SolverParams(*values)
+    params = module.SolverParams(sr=sr, somega=1)
     omega_disk = 100 * 2 * np.pi / 60
     k = (module.magnet_number / 2) / .07
-    state = make_initial_state(module, alpha=values[0], phi0=phi0)
+    state = make_initial_state(module, alpha=params.alpha, phi0=phi0)
     stride = round(.02 / dt)
     count = round(seconds * omega_disk / (stride * dt))
     rows = [np.r_[0., state, 0.]]
@@ -102,7 +100,7 @@ def main():
     fig.savefig(plots / 'release_trajectories.png', dpi=160)
     plt.close(fig)
     (output / 'summary.json').write_text(json.dumps(dict(build=config,
-        parameters=scaled_model_parameters(module.magnet_number, sr=5/6),
+        parameters=dict(sr=5/6, somega=1),
         runs=summaries), indent=2), encoding='utf-8')
 
 

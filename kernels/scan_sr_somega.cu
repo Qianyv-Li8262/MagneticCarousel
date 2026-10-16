@@ -80,9 +80,7 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
     const real_t somega_lower, const real_t somega_upper,
     const int k, const real_t dt, const int steps,
     const int window_steps, const int sample_stride,
-    const real_t reference_alpha, const real_t reference_delta,
-    const real_t reference_gamma_g, const real_t reference_gamma,
-    const real_t reference_gamma_m, const LUTNode *lut_global,
+    const LUTNode *lut_global,
     real_t *output_state, int *output_status, real_t *output_metrics)
 {
 #if FIELD_EVAL_MODE == 1
@@ -130,23 +128,12 @@ extern "C" __launch_bounds__(128, 3) GLOBAL void scan_sr_somega_cuda(
         return;
     }
 
-    // Keep the 8-magnet reference physics fixed while scaling radius and
-    // drive frequency, matching scaled_model_parameters() in the CPU runner.
-    const real_t inv_sr = REAL_LITERAL(1.0) / sr;
-    const real_t inv_somega2 = REAL_LITERAL(1.0) / (somega * somega);
-    const real_t magnet_time_scale = static_cast<real_t>(magnet_number) / REAL_LITERAL(8.0);
-    const real_t magnet_time_scale2 = magnet_time_scale * magnet_time_scale;
-    const SolverParams params = {
-        reference_alpha * sr,
-        reference_delta * inv_sr,
-        reference_gamma_g * inv_somega2 * magnet_time_scale2,
-        reference_gamma * inv_somega2 * magnet_time_scale2,
-        reference_gamma_m * inv_sr * inv_sr * inv_somega2 * magnet_time_scale2,
-    };
+    const SolverParams params = make_solver_params(magnet_number, sr, somega, Eta);
     if (!real_isfinite(params.alpha) || params.alpha <= REAL_LITERAL(0.0) ||
         !real_isfinite(params.delta) || params.delta < REAL_LITERAL(0.0) ||
         !real_isfinite(params.gamma_g) || !real_isfinite(params.gamma) ||
-        !real_isfinite(params.gamma_m)) {
+        !real_isfinite(params.gamma_m) || !real_isfinite(params.eddy_current_scale) ||
+        params.eddy_current_scale <= REAL_LITERAL(0.0)) {
         output_status[output_index] = -2;
         return;
     }

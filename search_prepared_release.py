@@ -16,7 +16,7 @@ ROOT=Path(__file__).resolve().parent
 SOURCE=ROOT/'scratch'/'legacy-release-source'
 OUT=ROOT/'runs'/'prepared-release-fit'
 sys.path.insert(0,str(SOURCE))
-from animate_one_trajectory import read_build_config,load_hysteresis,make_initial_state,scaled_model_parameters
+from animate_one_trajectory import read_build_config, load_hysteresis, make_initial_state
 
 
 def initial(module,params,phase,turns,dt,radius_mm=70.):
@@ -142,7 +142,7 @@ def main():
     OUT.mkdir(parents=True,exist_ok=True)
     config=read_build_config(kahan=False)
     module=load_hysteresis()
-    params=module.SolverParams(*scaled_model_parameters(8,sr=5/6,somega=1))
+    params=module.SolverParams(sr=5/6, somega=1)
     phases=np.arange(8)*np.pi/32
     records=[]
     if args.stage=='coarse':

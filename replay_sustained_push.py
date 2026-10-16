@@ -22,7 +22,7 @@ def main():
     args=parser.parse_args()
     protocol=json.loads(args.protocol.read_text(encoding='utf-8'))
     case,mod=load_case(args.protocol.parent/protocol['force_capable_case'])
-    params=mod.SolverParams(*case['solver_parameters'])
+    params=mod.SolverParams(**case['solver_parameters'])
     dt=protocol['dt']
     if not np.isclose(case['disk_angular_speed_rad_s'],100*2*np.pi/60):
         raise ValueError('This replay protocol uses the archived 100 rpm conversion.')

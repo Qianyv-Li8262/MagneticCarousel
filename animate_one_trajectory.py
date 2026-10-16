@@ -30,9 +30,6 @@ from build_metadata import print_build_metadata
 DT_AT_EIGHT_MAGNETS = 5.0e-4
 STEPS_PER_FRAME = 700
 FPS = 30
-MAGNET_DIAMETER_MM = 28.0
-MAGNET_THICKNESS_MM = 15.0
-MAGNET_RING_RADIUS_MM = 70.0
 FAST_BATCH_SIZE = 5
 FAST_GRAPH_UPDATE_EVERY = 5
 FAST_RESCALE_EVERY = 20
@@ -47,16 +44,6 @@ MAGNETIZE_TURNS = 2.0
 DISK_PHASE = 0.58
 DEFAULT_BLOW_FORCE_MN = 0.7
 
-# These are the 8-magnet references. The field period rate is N/2 per
-# revolution, so the three acceleration coefficients scale as (N/8)**2.
-# Ring radius 70 mm; rho_ball=7850 kg/m^3, Ms=1.1e6 A/m,
-# rho_air=1.225 kg/m^3, Cd=0.47, g=9.81 m/s^2, Eta=0.4.
-# Beta remains independently configured in hysteresis_config.hpp.
-ALPHA = 0.342857142857143
-DELTA = 8.02199442675159e-5
-GAMMA_G = 5.11179845930400
-GAMMA = 17302.6849037817
-GAMMA_M = 367982.448040497
 
 
 def file_sha256(path: Path) -> str:
@@ -109,7 +96,8 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
 
     count = config["magnet_number"]
     effective_dt = timestep_for_magnets(count) if dt is None else dt
-    parameters = scaled_model_parameters(count, sr=sr, somega=somega)
+    runtime_module = load_hysteresis(kahan=config["precision"] == "fp32-kahan")
+    parameters = runtime_module.SolverParams(sr=sr, somega=somega)
     print("\n=== 2D CPU animation | effective configuration ===")
     print_build_metadata(config)
     section("Build")
@@ -131,7 +119,8 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
     row("Magnetic mechanical power", show_work)
     row("Blow start / duration (2D)", "disabled" if blow_start is None else f"{blow_start:g} / {blow_duration:g}")
     row("Blow force (mN)", blow_force)
-    for label, value in zip(("alpha", "delta", "gamma_g", "gamma", "gamma_m"), parameters):
+    for label, value in zip(("alpha", "delta", "gamma_g", "gamma", "gamma_m", "eddy_current_scale"),
+                            (getattr(parameters, key) for key in ("alpha", "delta", "gamma_g", "gamma", "gamma_m", "eddy_current_scale"))):
         row(label, f"{value:.9g}")
     row("dt", f"{effective_dt:.12g}")
     row("Steps per frame", steps_per_frame)
@@ -143,27 +132,6 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
     row("Manifest", extension_dir(config["precision"]) / "build_config.json")
     row("Extension", extension_dir(config["precision"]) / config["binary"])
     print(flush=True)
-
-
-def scaled_model_parameters(magnet_count: int, *, sr=SR, somega=SOMEGA) -> tuple[float, float, float, float, float]:
-    """Scale the apparatus reference for the compiled magnet count."""
-    if magnet_count < 2 or magnet_count % 2:
-        raise ValueError("magnet count must be positive and even")
-    if not np.isfinite(sr) or sr <= 0.0:
-        raise ValueError("SR must be finite and positive")
-    if not np.isfinite(somega) or somega <= 0.0:
-        raise ValueError("SOMEGA must be finite and positive")
-
-    inverse_sr = 1.0 / sr
-    inverse_somega_squared = 1.0 / (somega * somega)
-    magnet_time_scale_squared = (magnet_count / 8.0) ** 2
-    return (
-        ALPHA * sr,
-        DELTA * inverse_sr,
-        GAMMA_G * inverse_somega_squared * magnet_time_scale_squared,
-        GAMMA * inverse_somega_squared * magnet_time_scale_squared,
-        GAMMA_M * inverse_sr * inverse_sr * inverse_somega_squared * magnet_time_scale_squared,
-    )
 
 
 def timestep_for_magnets(magnet_count: int) -> float:
@@ -189,6 +157,7 @@ def load_hysteresis(*, kahan=False):
     sources = (
         kernels / "headers" / "2dmodel-hysteresis.hpp",
         kernels / "headers" / "hysteresis_types.hpp",
+        kernels / "headers" / "hysteresis_physics.hpp",
         kernels / "headers" / "hysteresis_config.hpp",
         kernels / "headers" / "hysteresis_config_field.hpp",
         kernels / "2dmodel-hysteresis.cpp",
@@ -284,13 +253,11 @@ class BlowSchedule:
                  force_mn=DEFAULT_BLOW_FORCE_MN):
         validate_blow(start, duration, force_mn)
         self.module, self.params, self.dt = module, params, dt
-        self.omega = (100 * 2 * np.pi / 60) * somega
+        units = module.physical_units(sr=sr, somega=somega)
+        self.omega = units["disk_omega_rad_s"]
         self.start = start
         self.end = None if start is None else start + duration
-        # F/m converted with length unit R_ring/(N/2) and disk angular time.
-        mass = 7850 * (4 * np.pi / 3) * (0.006 * sr) ** 3
-        length_unit_m = 0.070 / (module.magnet_number / 2)
-        self.acceleration = force_mn * 1e-3 / mass / length_unit_m / self.omega**2
+        self.acceleration = module.push_acceleration(force_mn, sr, somega)
         self.elapsed = 0.0
         self.steps = 0
         if not hasattr(params, "reverse_push_acceleration"):
@@ -354,7 +321,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         raise ValueError("path_max_points must be non-negative (0 keeps every point)")
     if not all(np.isfinite(value) for value in (v0, s0, phi0)):
         raise ValueError("initial values must be finite")
-    params = module.SolverParams(*scaled_model_parameters(magnet_count, sr=sr, somega=somega))
+    params = module.SolverParams(sr=sr, somega=somega)
     blowing = BlowSchedule(module, params, dt, sr=sr, somega=somega,
                           start=blow_start, duration=blow_duration, force_mn=blow_force)
     state = prepare_initial_state(module, params, dt, v0=v0, s0=s0, phi0=phi0,
@@ -372,12 +339,14 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     if sample_callback is not None:
         sample_callback(time, state.copy(), sliding)
     magnet_radius = magnet_count / 2
-    length_unit_mm = MAGNET_RING_RADIUS_MM / magnet_radius
-    magnet_body_radius = MAGNET_DIAMETER_MM / (2 * length_unit_mm)
+    units = module.physical_units(sr=sr, somega=somega)
+    length_unit_mm = units["length_unit_m"] * 1000
     geometry = (expected_config or read_build_config(kahan=kahan)).get("magnet_geometry")
-    if geometry is not None and (not np.isclose(float(geometry["radius"]), magnet_body_radius)
-            or not np.isclose(float(geometry["thickness"]), MAGNET_THICKNESS_MM / length_unit_mm)):
-        raise RuntimeError("Animation's fixed 28 mm x 15 mm magnets disagree with the compiled magnet geometry")
+    magnet_body_radius = float(geometry["radius"]) if geometry is not None else 0.1
+    magnet_description = (
+        f"diameter {2 * magnet_body_radius * length_unit_mm:g} mm, "
+        f"thickness {float(geometry['thickness']) * length_unit_mm:g} mm"
+        if geometry is not None else "point dipoles")
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count if show_magnets else None
 
     fig = plt.figure(figsize=(14, 11 if show_work else 9), **({} if fast else {"layout": "constrained"}))
@@ -409,7 +378,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     scene.add_patch(ball)
     status = scene.text(0.02, 0.98, "", transform=scene.transAxes, va="top", family="monospace",
                         fontsize=9, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
-    scene.set_title(f"Top view · {magnet_count} magnets: diameter 28 mm, thickness 15 mm\nDashed circle: magnet centres, radius 70 mm")
+    scene.set_title(f"Top view 路 {magnet_count} magnets: diameter 28 mm, thickness 15 mm\nDashed circle: magnet centres, radius 70 mm")
 
     times = [time]
     radial = [float(np.hypot(state[1], state[2]))]
@@ -429,8 +398,8 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     (speed_line,) = velocity_axis.plot(times, speeds, color="tab:orange", label="COM speed |v|")
     (tangential_line,) = velocity_axis.plot(times, tangential_speeds, color="tab:red", label="signed tangential v")
     radial_axis.set_ylabel("r(t)")
-    angular_axis.set_ylabel("φ(t) [rad]")
-    displacement_axis.set_ylabel("x_eq = mean(r) Δφ")
+    angular_axis.set_ylabel("蠁(t) [rad]")
+    displacement_axis.set_ylabel("x_eq = mean(r) 螖蠁")
     velocity_axis.set(xlabel="time (2D units)", ylabel="velocity (2D units)")
     velocity_axis.legend(loc="upper right", fontsize=8)
     velocity_axis.axhline(0, color="0.5", linewidth=0.7)
@@ -448,7 +417,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         work_axis.grid(alpha=0.25)
     for axis in (radial_axis, angular_axis, displacement_axis, velocity_axis):
         axis.grid(alpha=0.25)
-    fig.suptitle(f"Single 2D trajectory · sr={sr:g}, sω={somega:g}")
+    fig.suptitle(f"Single 2D trajectory 路 sr={sr:g}, s蠅={somega:g}")
 
     def render(*, update_graphs=True, rescale=True):
         if magnets:
@@ -487,7 +456,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         status.set_text(
             f"t = {time:.3f}  (1D t = {magnet_radius * time:.3f})\n"
             f"r = {radial[-1]:.6f}  mean(r) = {mean_radial[-1]:.6f}\n"
-            f"φ = {polar[-1]:.6f}  x_eq = {equivalent_x[-1]:.6f}\n"
+            f"蠁 = {polar[-1]:.6f}  x_eq = {equivalent_x[-1]:.6f}\n"
             f"v = ({float(state[3]):.6f}, {float(state[4]):.6f})\n"
             f"|v| = {speeds[-1]:.6f}  v_tan = {tangential_speeds[-1]:.6f}\n"
             f"v_tan / {magnet_radius:g} (1D units) = {tangential_speeds[-1] / magnet_radius:.6f}\n"

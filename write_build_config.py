@@ -114,7 +114,8 @@ def main() -> None:
         "source_sha256": {
             str(path.relative_to(args.source_dir)).replace("\\", "/"): sha256(path)
             for path in (field_header, model_header, headers / "2dmodel-hysteresis.hpp",
-                         headers / "hysteresis_types.hpp", args.source_dir / "kernels/2dmodel-hysteresis.cpp",
+                         headers / "hysteresis_types.hpp", headers / "hysteresis_physics.hpp",
+                         args.source_dir / "kernels/scan_initial_cpu.cpp", args.source_dir / "kernels/2dmodel-hysteresis.cpp",
                          args.source_dir / "kernels/bindings/pybind.cpp")
         },
     }

@@ -64,7 +64,7 @@ def main():
     for tilt in args.angles:
         started=time.perf_counter();tag=f'tilt_{tilt:.9f}';folder=out/tag;folder.mkdir(exist_ok=True)
         mod.configure_laser_tilt(tilt,np.pi/2)
-        params=mod.SolverParams(*defaults.scaled_model_parameters(8,sr=args.diameter_mm/12,somega=args.rpm/100))
+        params=mod.SolverParams(sr=args.diameter_mm/12, somega=args.rpm/100)
         release_v0=args.v0 if args.v0 is not None else -args.initial_speed_mm_s/1000/.07/omega
         state=defaults.prepare_initial_state(mod,params,args.dt,v0=release_v0);mode=None;direction=None
         def advance(seconds,force):

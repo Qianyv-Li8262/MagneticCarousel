@@ -8,7 +8,7 @@ import argparse
 import json
 import numpy as np
 from scipy.optimize import differential_evolution
-from search_prepared_release import OUT,simulate,load_hysteresis,scaled_model_parameters
+from search_prepared_release import OUT, simulate, load_hysteresis
 
 
 def cost(r):
@@ -24,7 +24,7 @@ def main():
     p.add_argument('--stage',choices=['old','free','zero_old','zero_free','verify'],default='zero_old')
     args=p.parse_args()
     mod=load_hysteresis()
-    params=mod.SolverParams(*scaled_model_parameters(8,sr=5/6,somega=1))
+    params=mod.SolverParams(sr=5/6, somega=1)
     records=[];best=[None]
     old=[2292.6667,.0032,.38,.0010909091]
     if args.stage=='verify':

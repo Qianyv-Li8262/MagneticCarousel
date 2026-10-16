@@ -19,7 +19,7 @@ def main():
     free=table[indices]
     case,ordinary=load_case(DEST/'reverse_running_initial_state.json')
     assert not hasattr(ordinary,'configure_air_push'), 'Expected the ordinary archived build.'
-    params=ordinary.SolverParams(*case['solver_parameters'])
+    params=ordinary.SolverParams(**case['solver_parameters'])
     state=np.asarray(case['initial_state'],dtype=ordinary.real_dtype)
     mode=case['initial_sliding'];direction=np.asarray(case['initial_sliding_direction'],dtype=ordinary.real_dtype)
     differences=[float(np.max(np.abs(np.r_[state,float(mode)]-free[0,1:17])))]

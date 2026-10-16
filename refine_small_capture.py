@@ -1,12 +1,12 @@
 """Follow the small-tilt captured branch, rather than scoring a turning point."""
 import json
-from search_prepared_release import OUT,simulate,load_hysteresis,scaled_model_parameters
+from search_prepared_release import OUT, simulate, load_hysteresis
 from search_small_tilt_release import cost
 
 
 def main():
     seed=json.loads((OUT/'small_stop_candidate.json').read_text(encoding='utf-8'))
-    mod=load_hysteresis();p=mod.SolverParams(*scaled_model_parameters(8,sr=5/6,somega=1))
+    mod=load_hysteresis();p=mod.SolverParams(sr=5/6, somega=1)
     rows=[]
     for c in [seed['settings'][2],.38]:
         for tilt in [.006,.010,.014,.017]:

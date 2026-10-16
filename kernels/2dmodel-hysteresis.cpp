@@ -49,6 +49,7 @@ void validate_params(const SolverParams &p)
     if (!real_isfinite(p.alpha) || p.alpha <= REAL_LITERAL(0.0) ||
         !real_isfinite(p.delta) || p.delta < REAL_LITERAL(0.0) ||
         !real_isfinite(p.gamma_g) || !real_isfinite(p.gamma) || !real_isfinite(p.gamma_m) ||
+        !real_isfinite(p.eddy_current_scale) || p.eddy_current_scale <= REAL_LITERAL(0.0) ||
         !real_isfinite(p.reverse_push_acceleration) || p.reverse_push_acceleration < REAL_LITERAL(0.0))
         throw std::invalid_argument("evolve: invalid solver parameters");
 }

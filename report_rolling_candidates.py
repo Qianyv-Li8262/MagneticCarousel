@@ -9,7 +9,7 @@ import animate_one_trajectory as animation
 from laser_tilt_experiment import summarize
 root=Path(__file__).resolve().parent;run=root/'runs/laser-tilt-20261009'
 out=run/'rolling_candidates';out.mkdir(exist_ok=True)
-module=animation.load_hysteresis();params=module.SolverParams(*animation.scaled_model_parameters(8,somega=2))
+module=animation.load_hysteresis();params=module.SolverParams(sr=1.0, somega=2)
 omega=200*2*np.pi/60
 fig,axes=plt.subplots(3,1,figsize=(11,9),constrained_layout=True)
 records=[];table_rows=[]

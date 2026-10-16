@@ -7,10 +7,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from project_paths import RUNS_DIR, SCRATCH_DIR, extension_dir
-from scan_sr_somega_2d_gpu import (
-    REFERENCE_ALPHA, REFERENCE_DELTA, REFERENCE_GAMMA_G,
-    REFERENCE_GAMMA, REFERENCE_GAMMA_M,
-)
 
 source = np.load(RUNS_DIR / "phase-behavior" / "initial_2d_cpu_fp64.npz")
 directory = extension_dir("fp64")
@@ -18,8 +14,7 @@ manifest = json.loads((directory / "build_config.json").read_text())
 spec = importlib.util.spec_from_file_location("hysteresis", directory / manifest["binary"])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-params = module.SolverParams(REFERENCE_ALPHA, REFERENCE_DELTA,
-    REFERENCE_GAMMA_G, REFERENCE_GAMMA, REFERENCE_GAMMA_M)
+params = module.SolverParams()
 rows = (38, 39, 43, 44, 48, 51, 56, 61)
 times = (1500, 3000, 6000, 12000, 24000)
 dt = float(source["dt"])
@@ -35,7 +30,7 @@ with (out / "long_horizon.csv").open("w", encoding="utf-8") as file:
         for T in times:
             status, metrics, _ = module.scan_initial_grid(v0, s0, dt,
                 round(T/dt), round(500/dt), round(0.05/dt),
-                float(source["sr"]), float(source["somega"]), params, 1)
+                float(source["sr"]), float(source["somega"]),  1)
             m = metrics[0,0]
             record = (row,float(v0[0]),float(s0[0]),T,500,m[0],m[3],m[12],m[13],m[1],m[4],status[0,0])
             result.append(record)

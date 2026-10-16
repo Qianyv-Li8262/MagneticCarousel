@@ -10,7 +10,7 @@ OUT=Path(__file__).parent/('current_blow_halfstep' if args.half_step else 'curre
 OUT.mkdir(exist_ok=True)
 config=a.read_build_config(kahan=False)
 mod=a.load_hysteresis()
-p=mod.SolverParams(*a.scaled_model_parameters(mod.magnet_number,somega=2))
+p=mod.SolverParams(sr=1.0, somega=2)
 dt=.00025 if args.half_step else .0005
 s=a.prepare_initial_state(mod,p,dt,v0=a.ANIMATION_V0,s0=0,phi0=0,disk_phase=a.DISK_PHASE,magnetize_turns=a.MAGNETIZE_TURNS)
 schedule=a.BlowSchedule(mod,p,dt,sr=1,somega=2,start=75,duration=200,force_mn=.7)

@@ -60,6 +60,7 @@ DEVICE INLINE int analyze(real_t v0, real_t s0, real_t dt, int steps, int window
     if (!real_isfinite(v0) || !real_isfinite(s0) || !real_isfinite(params.alpha) ||
         !real_isfinite(params.delta) || !real_isfinite(params.gamma_g) ||
         !real_isfinite(params.gamma) || !real_isfinite(params.gamma_m) ||
+        !real_isfinite(params.eddy_current_scale) || params.eddy_current_scale <= REAL_LITERAL(0.0) ||
         params.alpha <= REAL_LITERAL(0.0) || params.delta < REAL_LITERAL(0.0)) return -2;
     const real_t m = static_cast<real_t>(magnet_number / 2);
     const real_t omega0 = (s0 - v0) / params.alpha;

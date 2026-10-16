@@ -31,7 +31,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from animate_one_trajectory import scaled_model_parameters, timestep_for_magnets
+from animate_one_trajectory import timestep_for_magnets
 from project_paths import RESULTS_DIR, RUNS_DIR, SCRATCH_DIR
 
 
@@ -116,7 +116,7 @@ def simulate(count: int, total_time: float) -> dict:
         raise RuntimeError(f"Incorrect 2D build: N={module2.magnet_number}, field={module2.field_mode}")
     with (DATA_DIR / "reference_1d.csv").open(newline="", encoding="utf-8") as source:
         reference = list(csv.DictReader(source))
-    p2 = module2.SolverParams(*scaled_model_parameters(count))
+    p2 = module2.SolverParams(sr=1.0, somega=1.0)
     radius0 = count / 2
     dt2 = timestep_for_magnets(count)
     two_steps = round(SAMPLE_TIME / (radius0 * dt2))

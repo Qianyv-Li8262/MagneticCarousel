@@ -92,7 +92,7 @@ class Field:
 def theory(config):
     field = Field(config)
     module = animation.load_hysteresis()
-    params = module.SolverParams(*animation.scaled_model_parameters(8, somega=2))
+    params = module.SolverParams(sr=1.0, somega=2)
     state = animation.prepare_initial_state(module, params, .0005, v0=-.05)
     # Validate the independent field reconstruction against production magnetic F.v.
     _, force = field.evaluate(state)
@@ -187,7 +187,7 @@ def run_case(case, seconds, dt, field, config):
         mag_acc=force/MASS
         speed=state[:,3:5]*LENGTH*OMEGA
         module=animation.load_hysteresis()
-        params=module.SolverParams(*animation.scaled_model_parameters(8,somega=2))
+        params=module.SolverParams(sr=1.0, somega=2)
         # Magnetic power includes magnetic spin torque, from the production API.
         power=np.array([module.magnetic_power(s,params) for s in state[::5]]) * MASS*LENGTH**2*OMEGA**3
         met.update(mean_inward_magnetic_force_mN=float(inward.mean()*1000),

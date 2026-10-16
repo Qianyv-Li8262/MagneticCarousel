@@ -16,6 +16,8 @@ DEFAULT=ROOT/'results'/'small-tilt-release-fit'/'release_case.json'
 
 def load_case(path):
     case=json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(case.get('solver_parameters'), dict) or set(case['solver_parameters']) != {'sr','somega'}:
+        raise ValueError('Legacy mechanical-parameter protocol: rebuild/re-export using sr and somega.')
     directory=ROOT/case['extension_directory']
     manifest=json.loads((directory/'build_config.json').read_text(encoding='utf-8'))
     binary=directory/manifest['binary']
@@ -102,7 +104,7 @@ def main():
         p.error('Time must be positive; kick time must lie inside the run; reverse kick must be nonnegative.')
     if args.kick_mm_s and args.kick_at is None:p.error('Specify --kick-at for an after-capture impulse.')
     case,mod=load_case(args.case)
-    params=mod.SolverParams(*case['solver_parameters'])
+    params=mod.SolverParams(**case['solver_parameters'])
     state=np.array(case['initial_state'],dtype=mod.real_dtype)
     mode=case['initial_sliding'];direction=np.array(case['initial_sliding_direction'],dtype=mod.real_dtype)
     dt=case['dt'];omega=case['disk_angular_speed_rad_s'];stride=case['sample_stride']

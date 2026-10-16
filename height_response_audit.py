@@ -5,7 +5,7 @@ import numpy as np
 import material_response_audit as common
 ROOT=Path(__file__).resolve().parent;OUT=ROOT/'runs/height-response-20261013'
 BINARY=next((ROOT/'scratch/height-response-20261013-source').glob('height_audit*.pyd'));spec=importlib.util.spec_from_file_location('height_audit',BINARY);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-P=m.SolverParams(*[getattr(common.params,key) for key in ['alpha','delta','gamma_g','gamma','gamma_m']]);P.reverse_push_acceleration=0;OMEGA=common.OMEGA;K=common.KSPACE
+P=m.SolverParams(sr=1, somega=common.OMEGA/m.reference_disk_omega_rad_s);P.reverse_push_acceleration=0;OMEGA=common.OMEGA;K=common.KSPACE
 def config(height):
  m.configure_height_table(str(OUT/f'height_{height:g}_fp64.bin'));m.configure_material(*common.BASE);m.configure_magnet_moment_scale(1.);m.configure_laser_tilt(common.TILT,np.pi/2);m.configure_rolling_resistance(1e-5,1e-4,.004)
 def fieldstats(height):

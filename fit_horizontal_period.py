@@ -47,10 +47,7 @@ def run(values, rpm=TARGETS[1]['disk_rpm'], seconds=180., dt=.0005,
         assert tuple(mod.measured_rolling_parameters)==(.00490,.00490,1.5,.002,0.)
         assert not mod.inclined_disk_enabled
     omega = rpm * 2*np.pi/60
-    alpha = KSPACE * BALL_R
-    gamma = 3*(4*np.pi*1e-7)*MS**2*KSPACE**2/(DENSITY*omega**2)
-    p = mod.SolverParams(alpha, 3*1.225*.47/(8*DENSITY*BALL_R*KSPACE),
-                         KSPACE*9.81/omega**2, gamma, gamma/(.4*alpha**2))
+    p = mod.SolverParams(sr=BALL_R/mod.reference_ball_radius_m, somega=omega/mod.reference_disk_omega_rad_s)
     p.reverse_push_acceleration = 0
     mod.configure_material(*values[:4])
     mod.configure_magnet_moment_scale(1.)

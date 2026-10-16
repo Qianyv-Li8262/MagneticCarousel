@@ -8,8 +8,7 @@ ROOT=Path(__file__).resolve().parent;OUT=ROOT/'runs/material-response-20261013';
 BINARY=next((ROOT/'scratch/material-response-20261013-source').glob('material_audit*.pyd'))
 spec=importlib.util.spec_from_file_location('material_audit',BINARY);mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 BASE=np.array([605.8974337495617,.0021323083849413885,.22415154978863677,.005375927782155882]);OMEGA=199.8313400018371*2*np.pi/60;KSPACE=4/.07;RHO=7850;A=.006;MS=1.1e6;V=4*np.pi*A**3/3;MASS=RHO*V;MU0=4*np.pi*1e-7
-ALPHA=KSPACE*A;GAMMA=3*MU0*MS*MS*KSPACE*KSPACE/(RHO*OMEGA*OMEGA)
-params=mod.SolverParams(ALPHA,3*1.225*.47/(8*RHO*A*KSPACE),KSPACE*9.81/OMEGA**2,GAMMA,GAMMA/(.4*ALPHA**2));params.reverse_push_acceleration=0
+params=mod.SolverParams(sr=A/mod.reference_ball_radius_m, somega=OMEGA/mod.reference_disk_omega_rad_s);params.reverse_push_acceleration=0
 TILT=.5*np.arctan(4/930)
 def configure(material,moment=1.):
  mod.configure_material(*material);mod.configure_magnet_moment_scale(moment);mod.configure_laser_tilt(TILT,np.pi/2);mod.configure_rolling_resistance(1e-5,1e-4,.004)
@@ -31,7 +30,7 @@ def static_well(moment):
 static=[]
 
 def loop(material):
- configure(material);s=animation.make_initial_state(mod,alpha=ALPHA);s[0]=0;dt=.0005;out=[]
+ configure(material);s=animation.make_initial_state(mod,alpha=params.alpha);s[0]=0;dt=.0005;out=[]
  for j in range(6*160):
   steps=round((j+1)*2*np.pi/(160*dt))-round(j*2*np.pi/(160*dt));s=mod.magnetize_held_ball(s,dt,steps,params)
   if j>=4*160:out.append(diag(s))

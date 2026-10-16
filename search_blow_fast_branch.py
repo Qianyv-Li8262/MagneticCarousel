@@ -14,10 +14,8 @@ MASS=4*np.pi/3*f.BALL_R**3*f.DENSITY
 SEED_ROWS=np.load(f.OUT/(BASE['key']+'.npz'))['rows']
 
 def config():
-    v=BASE['parameters'];alpha=f.KSPACE*f.BALL_R
-    gamma=3*4*np.pi*1e-7*f.MS**2*f.KSPACE**2/(f.DENSITY*OMEGA**2)
-    p=f.mod.SolverParams(alpha,3*1.225*.47/(8*f.DENSITY*f.BALL_R*f.KSPACE),
-                         f.KSPACE*9.81/OMEGA**2,gamma,gamma/(.4*alpha**2))
+    v=BASE['parameters']
+    p=f.mod.SolverParams(sr=f.BALL_R/f.mod.reference_ball_radius_m, somega=OMEGA/f.mod.reference_disk_omega_rad_s)
     p.reverse_push_acceleration=0
     f.mod.configure_material(*[v[k] for k in f.KEYS[:4]])
     f.mod.configure_magnet_moment_scale(1.)

@@ -11,12 +11,14 @@ from time import perf_counter
 import numpy as np
 
 from project_paths import extension_dir
-from animate_one_trajectory import read_build_config, scaled_model_parameters, timestep_for_magnets
+from animate_one_trajectory import read_build_config, timestep_for_magnets
 from build_metadata import print_build_metadata
 
 
 # Edit these values, then run: python src2d/benchmark.py
 X = 1000000
+SR = 1.0
+SOMEGA = 1.0
 
 # [disk angle, pos x/y, speed x/y, quaternion w/x/y/z,
 #  omega x/y/z, hysteresis q x/y/z]
@@ -54,7 +56,7 @@ def main():
     dt = timestep_for_magnets(magnet_count)
     state = np.array(INITIAL_STATE, dtype=module.real_dtype)
     state[1] = magnet_count / 2
-    params = module.SolverParams(*scaled_model_parameters(magnet_count))
+    params = module.SolverParams(sr=SR, somega=SOMEGA)
 
     # Zero steps initializes any lazy LUT without advancing the initial state.
     module.evolve_trajectory(state, dt, 0, params)

@@ -10,7 +10,7 @@ root=Path(__file__).resolve().parent
 build=root/'scratch/laser-tilt-20261009-source/build-no-rolling'
 spec=importlib.util.spec_from_file_location('hysteresis',next(build.glob('hysteresis*.pyd')))
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-params=mod.SolverParams(*defaults.scaled_model_parameters(8,sr=1,somega=1))
+params=mod.SolverParams(sr=1, somega=1)
 k=4/.07;omega=100*2*np.pi/60;mass=4*np.pi/3*.006**3*7850
 out=root/'runs/laser-tilt-20261009';fig,axes=plt.subplots(2,2,figsize=(11,8),constrained_layout=True)
 records=[]

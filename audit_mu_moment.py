@@ -59,8 +59,7 @@ def run(mu, scale, seconds=240, dt=.0005, lam=.004, save=False, tilt=TILT, rpm=2
     mod.configure_laser_tilt(tilt,np.pi/2)
     # Recompute from SI inputs rather than reusing launcher constants.
     a=.006;rho=7850;M=1.1e6;eta=.4;mu0=4*np.pi*1e-7
-    alpha=K*a;gamma=3*mu0*M*M*K*K/(rho*OMEGA*OMEGA)
-    p=mod.SolverParams(alpha,3*1.225*.47/(8*rho*a*K),K*9.81/OMEGA**2,gamma,gamma/(eta*alpha**2))
+    p=mod.SolverParams(sr=a/mod.reference_ball_radius_m, somega=OMEGA/mod.reference_disk_omega_rad_s)
     p.reverse_push_acceleration=0
     state=animation.prepare_initial_state(mod,p,dt,v0=-.075)
     mode=direction=None

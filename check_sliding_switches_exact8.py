@@ -32,7 +32,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-from animate_one_trajectory import scaled_model_parameters  # noqa: E402
+  # noqa: E402
 
 
 DT_VALUES = (0.004, 0.002, 0.001, 0.0005, 0.00025, 0.000125, 0.0000625)
@@ -144,7 +144,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=ROOT / "runs/sliding-switches-exact8")
     args = parser.parse_args()
     module = load_module(args.module_dir)
-    params = module.SolverParams(*scaled_model_parameters(8, sr=0.428571, somega=0.1))
+    params = module.SolverParams(sr=0.428571, somega=0.1)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary = {"module": str(Path(module.__file__).resolve()),
                "field": "exact", "magnets": 8, "precision": "float64",

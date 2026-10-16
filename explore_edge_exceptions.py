@@ -7,8 +7,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from project_paths import RUNS_DIR, SCRATCH_DIR, extension_dir
-from scan_sr_somega_2d_gpu import (REFERENCE_ALPHA, REFERENCE_DELTA,
-    REFERENCE_GAMMA_G, REFERENCE_GAMMA, REFERENCE_GAMMA_M)
 
 scan=np.load(RUNS_DIR/"phase-behavior"/"initial_2d_cpu_fp64.npz")
 if int(scan["steps"]) != 7_000_000: raise ValueError("Expected the user's T=7000 scan")
@@ -17,11 +15,7 @@ manifest=json.loads((directory/"build_config.json").read_text())
 spec=importlib.util.spec_from_file_location("hysteresis",directory/manifest["binary"])
 module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 sr,somega=float(scan["sr"]),float(scan["somega"])
-alpha=REFERENCE_ALPHA*sr
-scale=(module.magnet_number/8)**2/somega**2
-params=module.SolverParams(alpha,REFERENCE_DELTA/sr,
-    REFERENCE_GAMMA_G*scale,REFERENCE_GAMMA*scale,
-    REFERENCE_GAMMA_M*scale/sr**2)
+params=module.SolverParams(sr=sr, somega=somega)
 m=module.magnet_number/2
 rows=(1,2,60,63)
 labels=[f"S0={float(scan['s0'][i]):.2f}" for i in rows]
@@ -52,7 +46,7 @@ start=time.perf_counter()
 for i,label in zip(rows,labels):
     v0=float(scan["v0"][-1]); s0=float(scan["s0"][i])
     state=np.zeros(15,dtype=np.float64)
-    state[1],state[4],state[5],state[9]=m,m*v0,1,m*(s0-v0)/alpha
+    state[1],state[4],state[5],state[9]=m,m*v0,1,m*(s0-v0)/params.alpha
     states=[state.copy()]
     sliding=direction=None
     for step in range(0,total_steps,sample_steps):

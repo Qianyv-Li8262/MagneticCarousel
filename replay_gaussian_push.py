@@ -66,7 +66,7 @@ def main():
         ap.error('--min-push-seconds must lie between zero and --max-push-seconds.')
     args.output.mkdir(parents=True,exist_ok=True)
     config=default.read_build_config(kahan=False);module=default.load_hysteresis()
-    params=module.SolverParams(*default.scaled_model_parameters(module.magnet_number))
+    params=module.SolverParams(sr=1.0, somega=1.0)
     # Derive mass from the unchanged reference radius, never from the historical
     # 10 mm experimental scripts.
     radius=params.alpha/SCALE;mass=4*np.pi/3*radius**3*7850

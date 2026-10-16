@@ -36,7 +36,7 @@ const LUTNode *scan_lut()
 
 void scan_initial_grid_cpu(const real_t *v0_values, const real_t *s0_values, std::size_t k,
                            real_t dt, int steps, int window_steps, int sample_stride,
-                           real_t sr, real_t somega, const SolverParams &reference,
+                           real_t sr, real_t somega,
                            int num_threads, std::int32_t *status, real_t *metrics,
                            real_t *states)
 {
@@ -45,14 +45,7 @@ void scan_initial_grid_cpu(const real_t *v0_values, const real_t *s0_values, std
         !real_isfinite(sr) || sr <= REAL_LITERAL(0.0) || !real_isfinite(somega) ||
         somega <= REAL_LITERAL(0.0))
         throw std::invalid_argument("initial scan: invalid grid, time, scale, or thread settings");
-    const real_t inv_sr = REAL_LITERAL(1.0) / sr;
-    const real_t inv_somega2 = REAL_LITERAL(1.0) / (somega * somega);
-    const real_t scale = static_cast<real_t>(magnet_number) / REAL_LITERAL(8.0);
-    const real_t scale2 = scale * scale;
-    const SolverParams params = {reference.alpha * sr, reference.delta * inv_sr,
-        reference.gamma_g * inv_somega2 * scale2,
-        reference.gamma * inv_somega2 * scale2,
-        reference.gamma_m * inv_sr * inv_sr * inv_somega2 * scale2};
+    const SolverParams params = make_solver_params(magnet_number, sr, somega, Eta);
     const LUTNode *field_lut = scan_lut();
     const std::size_t cells = k * k;
     const unsigned available = std::max(1u, std::thread::hardware_concurrency());

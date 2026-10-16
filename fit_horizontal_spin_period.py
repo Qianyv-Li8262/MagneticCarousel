@@ -21,7 +21,7 @@ def check():
     omega=f.TARGETS[1]['disk_rpm']*2*np.pi/60
     f.mod.configure_material(*VALUES[:4]);f.mod.configure_magnet_moment_scale(1e-12)
     f.mod.configure_rolling_resistance(0,0,0);f.mod.configure_normal_spin_damping(1/omega)
-    p=f.mod.SolverParams(f.KSPACE*f.BALL_R,0,f.KSPACE*9.81/omega**2,1e-20,1e-20)
+    p=f.mod.SolverParams(sr=f.BALL_R/f.mod.reference_ball_radius_m, somega=omega/f.mod.reference_disk_omega_rad_s)
     state=np.zeros(15);state[1]=4;state[5]=1;state[11]=10/omega
     dt=.0005;n=round(3*omega/dt)
     state,_,_=f.mod.evolve_trajectory(state,dt,n,p,None,None,0)

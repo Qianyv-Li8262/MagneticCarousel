@@ -5,12 +5,12 @@ The external impulse is an instantaneous velocity increment along -e_phi.
 """
 import json
 import numpy as np
-from search_prepared_release import OUT,simulate,load_hysteresis,scaled_model_parameters
+from search_prepared_release import OUT, simulate, load_hysteresis
 from search_impulse_release import cost
 
 
 def main():
-    mod=load_hysteresis();params=mod.SolverParams(*scaled_model_parameters(8,sr=5/6,somega=1))
+    mod=load_hysteresis();params=mod.SolverParams(sr=5/6, somega=1)
     pool=[]
     for name in ['coarse','refine','optimize','wide_optimize','impulse_zero_free']:
         path=OUT/(name+'.json')

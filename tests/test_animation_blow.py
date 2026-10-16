@@ -16,6 +16,14 @@ class RecordingSolver:
     def __init__(self):
         self.calls = []
 
+    @staticmethod
+    def physical_units(*, sr, somega):
+        return {"disk_omega_rad_s": 10.0 * somega}
+
+    @staticmethod
+    def push_acceleration(force_mn, sr, somega):
+        return force_mn * 2.0 * sr / somega
+
     def evolve_trajectory(self, state, dt, steps, params, sliding, direction, offset):
         self.calls.append((dt * steps, params.reverse_push_acceleration, sliding, direction))
         return state + dt * steps * params.reverse_push_acceleration, True, direction
@@ -29,7 +37,7 @@ class BlowTests(unittest.TestCase):
                                 start=.013, duration=.019)
         direction = object()
         state, mode, returned_direction = schedule.evolve(0., 10, False, direction)
-        expected = .7e-3 / (7850 * 4 * np.pi / 3 * .006**3) / .0175 / schedule.omega**2
+        expected = module.push_acceleration(.7, 1, 2)
         self.assertAlmostEqual(schedule.acceleration, expected)
         self.assertAlmostEqual(state, expected * .019)
         self.assertAlmostEqual(sum(call[0] for call in module.calls), 1.)

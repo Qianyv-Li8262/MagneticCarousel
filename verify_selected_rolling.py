@@ -10,7 +10,7 @@ ap=argparse.ArgumentParser();ap.add_argument('--output-dir',type=Path,default=ro
 out=args.output_dir;out.mkdir(parents=True,exist_ok=True)
 config=animation.read_build_config(kahan=False)
 mod=animation.load_hysteresis();omega=200*2*np.pi/60;dt=.0005
-params=mod.SolverParams(*animation.scaled_model_parameters(8,somega=2))
+params=mod.SolverParams(sr=1.0, somega=2)
 state=animation.prepare_initial_state(mod,params,dt,v0=-.075)
 initial=state.copy();mode=None;direction=None;step=0;count=round(args.free_seconds*omega/dt)
 rows=[np.r_[0,state,0,0]];started=time.perf_counter()

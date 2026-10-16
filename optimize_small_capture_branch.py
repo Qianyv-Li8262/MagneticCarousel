@@ -2,7 +2,7 @@
 import json
 import numpy as np
 from scipy.optimize import differential_evolution
-from search_prepared_release import OUT,simulate,load_hysteresis,scaled_model_parameters
+from search_prepared_release import OUT, simulate, load_hysteresis
 
 
 def cost(r):
@@ -13,7 +13,7 @@ def cost(r):
 
 
 def main():
-    mod=load_hysteresis();p=mod.SolverParams(*scaled_model_parameters(8,sr=5/6,somega=1))
+    mod=load_hysteresis();p=mod.SolverParams(sr=5/6, somega=1)
     rows=[];best=[None]
     def objective(x):
         settings=[10**x[0],10**x[1],x[2],10**x[3],x[4],x[5]]

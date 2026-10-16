@@ -15,7 +15,6 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 import numpy as np
 
 from project_paths import extension_dir, RUNS_DIR, SCRATCH_DIR
-from scan_sr_somega_2d_gpu import REFERENCE_ALPHA, REFERENCE_DELTA, REFERENCE_GAMMA_G, REFERENCE_GAMMA, REFERENCE_GAMMA_M
 
 
 POINT_ROWS = (38, 39, 43, 44, 48, 51, 56, 61)
@@ -37,17 +36,13 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     m = module.magnet_number / 2
-    scale = (module.magnet_number / 8) ** 2 / somega**2
-    alpha = REFERENCE_ALPHA * sr
-    params = module.SolverParams(alpha, REFERENCE_DELTA / sr,
-        REFERENCE_GAMMA_G * scale, REFERENCE_GAMMA * scale,
-        REFERENCE_GAMMA_M * scale / sr**2)
+    params = module.SolverParams(sr=sr, somega=somega)
     histories = []
     rows = []
     for row in POINT_ROWS:
         v0, s0 = float(source["v0"][POINT_COL]), float(source["s0"][row])
         state = np.zeros(15, dtype=np.float64)
-        state[1], state[4], state[5], state[9] = m, m*v0, 1, m*(s0-v0)/alpha
+        state[1], state[4], state[5], state[9] = m, m*v0, 1, m*(s0-v0)/params.alpha
         states = [state.copy()]
         sliding = direction = None
         for step in range(0, count, SAMPLE_STEPS):

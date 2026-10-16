@@ -167,7 +167,7 @@ def main():
     p.add_argument('--capture-after',type=float,default=45.)
     args=p.parse_args();OUT.mkdir(parents=True,exist_ok=True)
     mod=load_hysteresis();case=json.loads(CASE.read_text(encoding='utf-8'))
-    params=mod.SolverParams(*case['solver_parameters'])
+    params=mod.SolverParams(**case['solver_parameters'])
     captured=baseline(mod,params,case)
     save_trace(OUT/'unforced_baseline.npz',captured[0])
     reference=np.load(ROOT/'results'/'small-tilt-release-fit'/'trajectory.npz')

@@ -56,16 +56,6 @@ SHOW_PLOT = False
 SAVE_PATH: str | Path | None = None  # Set below after reading the header.
 SAVE_DATA_PATH: str | Path | None = None
 SAVE_DPI = 180
-# 8-magnet reference parameters from animate_one_trajectory.py. The CUDA
-# kernel applies (N/8)^2 to the three acceleration coefficients.
-# 12 mm ball, 100 rpm, 70 mm ring radius; rho_ball=7850 kg/m^3,
-# Ms=1.1e6 A/m, rho_air=1.225 kg/m^3, Cd=0.47, g=9.81 m/s^2.
-# Beta remains independently configured in hysteresis_config.hpp.
-REFERENCE_ALPHA = 0.342857142857143
-REFERENCE_DELTA = 8.02199442675159e-5
-REFERENCE_GAMMA_G = 5.11179845930400
-REFERENCE_GAMMA = 17302.6849037817
-REFERENCE_GAMMA_M = 367982.448040497
 # ========================================================================
 
 
@@ -198,9 +188,7 @@ def run_scan():
         dtype.type(SOMEGA_LOWER), dtype.type(SOMEGA_UPPER),
         np.int32(K), dtype.type(DT), np.int32(steps),
         np.int32(window_steps), np.int32(sample_stride),
-        dtype.type(REFERENCE_ALPHA), dtype.type(REFERENCE_DELTA),
-        dtype.type(REFERENCE_GAMMA_G), dtype.type(REFERENCE_GAMMA),
-        dtype.type(REFERENCE_GAMMA_M), lut_gpu,
+        lut_gpu,
         states_gpu, status_gpu, metrics_gpu,
     )
 
@@ -383,11 +371,6 @@ def print_run_config(*, profile: bool) -> None:
     row("Phase lock", f"{LOCK_THRESHOLD:g}")
     row("Speed near 1", f"{SPEED_ONE_THRESHOLD:g}")
     row("Radius tolerance", f"{RADIUS_TOLERANCE:g}")
-    section("Reference coefficients at N=8")
-    for label, value in (("alpha", REFERENCE_ALPHA), ("delta", REFERENCE_DELTA),
-                         ("gamma_g", REFERENCE_GAMMA_G), ("gamma", REFERENCE_GAMMA),
-                         ("gamma_m", REFERENCE_GAMMA_M)):
-        row(label, f"{value:.9g}")
     section("Files")
     row("CUDA build", cubin)
     row("Magnet source", CONFIG_HEADER)

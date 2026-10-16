@@ -8,8 +8,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 ROOT=Path(__file__).resolve().parent;OUT=ROOT/'runs/material-response-20261013'
 binary=next((ROOT/'scratch/material-response-20261013-static-source').glob('material_audit*.pyd'));spec=importlib.util.spec_from_file_location('material_audit',binary);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-base=np.array([605.8974337495617,.0021323083849413885,.22415154978863677,.005375927782155882]);k=4/.07;omega=199.8313400018371*2*np.pi/60;alpha=k*.006;gamma=3*4*np.pi*1e-7*(1.1e6)**2*k*k/(7850*omega**2)
-p=m.SolverParams(alpha,3*1.225*.47/(8*7850*.006*k),k*9.81/omega**2,gamma,gamma/(.4*alpha**2));p.reverse_push_acceleration=0
+base=np.array([605.8974337495617,.0021323083849413885,.22415154978863677,.005375927782155882]);k=4/.07;omega=199.8313400018371*2*np.pi/60
+p=m.SolverParams(sr=1, somega=omega/m.reference_disk_omega_rad_s);p.reverse_push_acceleration=0
 m.configure_disk_rate(0.);m.configure_laser_tilt(0.,np.pi/2)
 records=[];fig,ax=plt.subplots(2,1,figsize=(11,7),layout='constrained')
 cases=[('reference',base,1.,0.001),('reference, 3 mm',base,1.,.003),('mur=1e6',np.array([1e6,*base[1:]]),1.,.001),('previous 3.04x moment',base,3.04,.001)]

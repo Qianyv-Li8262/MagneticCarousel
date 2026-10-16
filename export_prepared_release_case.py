@@ -16,9 +16,9 @@ def main():
     ext=Path('scratch/legacy-release-source/build/release/extensions/fp64')
     manifest=json.loads((ROOT/ext/'build_config.json').read_text(encoding='utf-8'))
     # Import only scaling; it does not load another extension.
-    from animate_one_trajectory import scaled_model_parameters
+
     names=['Mu_r','Alpha_JA','C_JA','K','kTiltAngleRad','kTiltAxisAzimuthRad']
-    case=dict(schema_version=1,status='partial_candidate_not_full_experimental_fit',
+    case=dict(schema_version=2,status='partial_candidate_not_full_experimental_fit',
         experiment_sequence='zero-speed release; 5–10 s of near arrest; then a reverse air impulse; sustained reverse rolling',
         matches=['initial reverse motion','eventual local capture near -1.03 rad'],
         mismatches=['large rebound before capture','late capture onset','large fitted tilt',
@@ -30,8 +30,8 @@ def main():
                              'quaternion_y','quaternion_z','omega_x','omega_y','omega_z','q_x','q_y','q_z'],
         initial_state=record['initial_state'],initial_sliding=record['initial_sliding'],
         initial_sliding_direction=record['initial_sliding_direction'],
-        solver_parameters=list(scaled_model_parameters(8,sr=5/6,somega=1)),
-        solver_parameter_order=['alpha','delta','gamma_g','gamma','gamma_m'],
+        solver_parameters=dict(sr=5/6,somega=1),
+
         disk_rpm=100,disk_angular_speed_rad_s=100*2*np.pi/60,
         dt=.0005,sample_stride=20,pre_magnetization_disk_revolutions=2,
         pre_magnetization='fixed center and attitude; evolve JA q only; zero center speed/spin until release',

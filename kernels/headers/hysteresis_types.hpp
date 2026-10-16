@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Qianyv-Li8262
 
 #pragma once
+#include "hysteresis_physics.hpp"
 #ifndef __CUDACC__
 #include <immintrin.h>
 #endif
@@ -558,6 +559,45 @@ struct SolverParams {
     real_t gamma_g;
     real_t gamma;  // We should ensure that gamma = Eta * params.alpha * params.alpha * params.gamma_m!!!!!!!!!
     real_t gamma_m;
+    // tau_star[j] = eddy_current_scale * tau_ref_star[j].
+    // Reference: 6 mm ball radius and 100 rpm; runtime scale = somega * sr^2.
+    real_t eddy_current_scale = REAL_LITERAL(1.0);
     // Optional following reverse COM force, in solver acceleration units.
     real_t reverse_push_acceleration = REAL_LITERAL(0.0);
 };
+
+// Physical radius = Rref * sr, disk rate = omega_ref * somega.
+// At the reference magnet count: x* = k*x, k = (Nref/2)/L, t* = Omega*t.
+// Preserve the existing model's magnet-count scaling convention:
+// multiply gamma_g, gamma and gamma_m by (magnet_count/Nref)^2, while
+// alpha and delta keep their reference-count normalization.
+// Preconditions: magnet_count is positive and even; sr and somega are finite
+// and positive, as is eta. Pass the existing Eta from hysteresis_config.hpp;
+// its value is not duplicated in the physical reference configuration.
+// Callers validate their runtime inputs before using this helper.
+// Magnet count is explicit to avoid a dependency cycle with the field config.
+DEVICE HOST INLINE SolverParams make_solver_params(const int magnet_count,
+                                                   const real_t sr, const real_t somega,
+                                                   const real_t eta)
+{
+    namespace physics = hysteresis_physics;
+    const real_t radius = static_cast<real_t>(physics::Rref) * sr;
+    const real_t omega = static_cast<real_t>(physics::omega_ref) * somega;
+    const real_t k = static_cast<real_t>(physics::reference_magnet_count) /
+                     (REAL_LITERAL(2.0) * static_cast<real_t>(physics::L));
+    const real_t count_scale = static_cast<real_t>(magnet_count) /
+                              static_cast<real_t>(physics::reference_magnet_count);
+    const real_t count_scale2 = count_scale * count_scale;
+    const real_t alpha = k * radius;
+    const real_t omega2 = omega * omega;
+    const real_t magnetization = static_cast<real_t>(physics::M_ref);
+    const real_t gamma = REAL_LITERAL(3.0) * static_cast<real_t>(physics::mu0) *
+                         magnetization * magnetization * k * k /
+                         (static_cast<real_t>(physics::rho_b) * omega2) * count_scale2;
+    const real_t delta = REAL_LITERAL(3.0) * static_cast<real_t>(physics::rho_air) *
+                         static_cast<real_t>(physics::Cd) /
+                         (REAL_LITERAL(8.0) * static_cast<real_t>(physics::rho_b) * radius * k);
+    return {alpha, delta, k * static_cast<real_t>(physics::g) / omega2 * count_scale2, gamma,
+            gamma / (eta * alpha * alpha),
+            somega * sr * sr, REAL_LITERAL(0.0)};
+}

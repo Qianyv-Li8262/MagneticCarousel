@@ -8,7 +8,7 @@ a=b.a;ROOT=a.ROOT;OUT=ROOT/'runs/spin-damping-20261013';OUT.mkdir(exist_ok=True)
 binary=next((ROOT/'scratch/spin-damping-20261013-source').glob('spin_damping_audit*.pyd'))
 spec=importlib.util.spec_from_file_location('spin_damping_audit',binary)
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-P=m.SolverParams(*[getattr(a.P,key) for key in ['alpha','delta','gamma_g','gamma','gamma_m']]);P.reverse_push_acceleration=0
+P=m.SolverParams(sr=1, somega=a.OMEGA/m.reference_disk_omega_rad_s);P.reverse_push_acceleration=0
 INERTIA=.4*a.common.MASS*.006**2
 # Provisional calibration from the user's 1--2 s spin-period observation.
 # This is an isolated trial value, conditional on the original field/material.

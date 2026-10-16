@@ -15,7 +15,6 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / 'runs/cylinder8-spotcheck'
-REFERENCE = (.33333333, 1.7212357e-4, 2.64965696, 7830.34224, 176182.704)
 
 
 def classify(status, metrics):
@@ -84,7 +83,6 @@ def run(args):
     module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     dtype=np.dtype(module.real_dtype)
     zero=np.zeros(1,dtype=dtype)
-    params=module.SolverParams(*REFERENCE)
     points=json.loads((OUT/'points.json').read_text())
     if args.select:
         points=[p for p in points if p['label'] in args.select]
@@ -97,7 +95,7 @@ def run(args):
         actual_dt=float(dtype.type(dt))
         start=time.perf_counter()
         status,metrics,state=module.scan_initial_grid(zero,zero,actual_dt,
-            round(horizon/dt),round(500/dt),round(.05/dt),p['sr'],p['somega'],params,1)
+            round(horizon/dt),round(500/dt),round(.05/dt),p['sr'],p['somega'],1)
         status=int(status[0,0]); m=metrics[0,0].astype(float)
         s=state[0,0].astype(float); r=float(np.linalg.norm(s[1:3]))
         return dict(label=p['label'],sr=p['sr'],somega=p['somega'],dt=dt,

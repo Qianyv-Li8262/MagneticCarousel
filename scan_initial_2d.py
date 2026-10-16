@@ -58,10 +58,7 @@ def run_gpu(args, v0, s0, steps, window, stride):
     states_gpu = cp.zeros((k * k, len(reference.STATE_NAMES)), dtype=dtype)
     status_gpu = cp.full(k * k, -2, dtype=cp.int32)
     metrics_gpu = cp.full((k * k, len(reference.METRIC_NAMES)), cp.nan, dtype=dtype)
-    params = (dtype.type(args.sr), dtype.type(args.somega),
-              dtype.type(reference.REFERENCE_ALPHA), dtype.type(reference.REFERENCE_DELTA),
-              dtype.type(reference.REFERENCE_GAMMA_G), dtype.type(reference.REFERENCE_GAMMA),
-              dtype.type(reference.REFERENCE_GAMMA_M))
+    params = (dtype.type(args.sr), dtype.type(args.somega))
     block = (reference.BLOCK_X, reference.BLOCK_Y, 1)
     grid = ((k + block[0] - 1) // block[0], (k + block[1] - 1) // block[1], 1)
     start, stop = cp.cuda.Event(), cp.cuda.Event()
@@ -109,12 +106,9 @@ def run_cpu(args, v0, s0, steps, window, stride):
         raise RuntimeError(f"CPU module lacks scan_initial_grid; rebuild {binary}")
     if np.dtype(module.real_dtype) != v0.dtype or int(module.magnet_number) != reference.MAGNET_NUMBER:
         raise RuntimeError("CPU module precision or magnet count differs from this scan")
-    parameters = module.SolverParams(reference.REFERENCE_ALPHA, reference.REFERENCE_DELTA,
-                                     reference.REFERENCE_GAMMA_G, reference.REFERENCE_GAMMA,
-                                     reference.REFERENCE_GAMMA_M)
     start = time.perf_counter()
     result = module.scan_initial_grid(v0, s0, args.dt, steps, window, stride,
-                                      args.sr, args.somega, parameters, args.threads)
+                                      args.sr, args.somega, args.threads)
     print(f"CPU worker pool: {time.perf_counter() - start:.3f} s", flush=True)
     return result
 

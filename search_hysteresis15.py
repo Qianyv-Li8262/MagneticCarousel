@@ -45,9 +45,8 @@ def run(task):
     key=hashlib.sha256(json.dumps(dict(cfg=cfg,binary=MANIFEST['binary_sha256'],version=1),sort_keys=True).encode()).hexdigest()[:20]
     path=OUT/(key+'.json')
     if path.exists():return json.loads(path.read_text())
-    omega=cfg['rpm']*2*np.pi/60;alpha=KS*R
-    gamma=3*4*np.pi*1e-7*1.1e6**2*KS**2/(DENSITY*omega**2)
-    p=mod.SolverParams(alpha,3*1.225*.47/(8*DENSITY*R*KS),KS*9.81/omega**2,gamma,gamma/(.4*alpha**2))
+    omega=cfg['rpm']*2*np.pi/60
+    p=mod.SolverParams(sr=R/mod.reference_ball_radius_m, somega=omega/mod.reference_disk_omega_rad_s)
     mod.configure_material(*cfg['material'])
     if SHARP:mod.configure_trial_rolling(cfg['low'],cfg['high'],cfg['transition'],cfg.get('exponent',2.))
     else:mod.configure_trial_rolling(cfg['low'],cfg['high'],cfg['transition'])
