@@ -53,6 +53,18 @@ CONFIG_CONST real_t kRollingLambda = REAL_LITERAL(0.0);
 // AVX groups, four scalar memory modes per group (3 groups = 12 modes).
 CONFIG_CONST int kEddyCurrentModeCount = 3;
 
+enum class AvxExpMode {
+    kExact,
+    kExpansion,
+};
+
+// Exact uses vector range reduction and a fixed high-order polynomial.
+// Expansion is a direct small-|x| Taylor approximation without range reduction;
+// order 1 means exp(x) ~= 1 + x. Both paths avoid scalar exp/expm1 calls.
+CONFIG_CONST AvxExpMode kAvxExpMode = AvxExpMode::kExact;
+CONFIG_CONST int kAvxExpExpansionOrder = 1;
+static_assert(kAvxExpExpansionOrder >= 1, "AVX exponential expansion order must be positive");
+
 // Fixed tilt axis measured from +x; positive tilt follows the right-hand rule.
 // Small-angle model: add theta * (gamma_g - F_mag.z) along the downhill direction.
 // This assumes the normal magnetic attraction contributes to the downslope drive.

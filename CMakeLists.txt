@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 project(iypt16_hysteresis_2d LANGUAGES CXX)
 
-# CPU State arithmetic uses AVX; CUDA uses scalar arrays.
+# CPU State arithmetic and software exponentials use AVX2; CUDA uses scalar arrays.
 if(MSVC)
-    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/arch:AVX>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>")
 else()
-    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-mavx>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-mavx2>")
 endif()
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
