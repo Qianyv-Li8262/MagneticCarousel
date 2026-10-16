@@ -49,6 +49,7 @@
 *.mp4
 *.log
 *.txt
+*.etl
 !CMakeLists.txt
 !requirements.txt
 !requirements-*.txt
@@ -61,3 +62,4 @@
 !/audits/**/*.cu
 !/audits/**/*.h
 !/audits/**/*.hpp
+/cpu-hotspots*/

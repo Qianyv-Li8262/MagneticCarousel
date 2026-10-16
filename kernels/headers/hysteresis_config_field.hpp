@@ -9,9 +9,9 @@
 #define IYPT16_REAL_LITERAL_IMPL(value) REAL_LITERAL(value)
 #define IYPT16_REAL_LITERAL(value) IYPT16_REAL_LITERAL_IMPL(value)
 
-// Caliper geometry 2026-10-09: ball centre minus magnet centre plane
-// Both measured from lower plate TOP: ball centre = 42.62 - 3 + 12/2;
-// magnet centre = 15/2 - 1.5; separation = 39.62 mm; k = 4 / 70 mm.
+// Active comparison: restore the earlier ball-centre to magnet-centre height, 39.62 mm.
+// This corresponds to upper plate TOP to lower plate BOTTOM spacing 42.62 mm.
+// Video spacing 35 mm instead gives h=32 mm (32 / 17.5).
 #define IYPT16_FIELD_HEIGHT 2.264
 #define IYPT16_LUT_LOWER_BOUND_RATIO 0.5
 #define IYPT16_LUT_UPPER_BOUND_RATIO 1.5

@@ -16,7 +16,7 @@ CONFIG_CONST real_t Xi_JA= (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITER
 // Restore the reference magnet moment on 2026-10-13 at the user's request.
 // Beta=0.056999326368103 corresponds to 4.222663 A m^2 per cylinder.
 // The earlier 3.04x moment candidate is retained only in historical audit outputs.
-CONFIG_CONST real_t Beta = REAL_LITERAL(0.0854985);
+CONFIG_CONST real_t Beta = REAL_LITERAL(0.0569993);
 // Beta is m k^3 / (4 pi M_s).
 
 // Mechanical parameters
@@ -56,7 +56,7 @@ CONFIG_CONST int kEddyCurrentModeCount = 3;
 // Set to 1 and rebuild to include eddy-current dynamics and magnetic loads.
 // The default-off build retains the legacy 15-value external state format.
 #ifndef IYPT16_ENABLE_EDDY_CURRENTS
-#define IYPT16_ENABLE_EDDY_CURRENTS 0
+#define IYPT16_ENABLE_EDDY_CURRENTS 1
 #endif
 CONFIG_CONST bool kEnableEddyCurrents = IYPT16_ENABLE_EDDY_CURRENTS != 0;
 inline constexpr int kSerializedStateSize = 15 + (IYPT16_ENABLE_EDDY_CURRENTS ? 12 * kEddyCurrentModeCount : 0);

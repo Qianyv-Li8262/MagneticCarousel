@@ -28,7 +28,7 @@ from build_metadata import print_build_metadata
 
 
 DT_AT_EIGHT_MAGNETS = 5.0e-4
-STEPS_PER_FRAME = 700
+STEPS_PER_FRAME = 3000
 FPS = 30
 FAST_BATCH_SIZE = 5
 FAST_GRAPH_UPDATE_EVERY = 5
@@ -37,10 +37,10 @@ FAST_MAX_PLOT_POINTS = 2000
 
 # Multipliers relative to the 12 mm ball and 100 rpm apparatus reference.
 SR = 1.0
-SOMEGA = 1.0
+SOMEGA = 0.5
 ANIMATION_SOMEGA = 2.0
-ANIMATION_V0 = -0.05
-MAGNETIZE_TURNS = 2.0
+ANIMATION_V0 = -0.00
+MAGNETIZE_TURNS = 0
 DISK_PHASE = 0.58
 DEFAULT_BLOW_FORCE_MN = 0.7
 
@@ -82,9 +82,10 @@ def read_build_config(*, kahan: bool) -> dict:
 
 def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
                      frames: int | None, pre: float, fast: bool, show_magnets: bool,
-                     show_work=False, sr=SR, somega=ANIMATION_SOMEGA, v0=ANIMATION_V0, s0=0.0, phi0=0.0,
+                     show_work=False, sr=SR, somega=ANIMATION_SOMEGA, v0=ANIMATION_V0, s0=0.0, phi0=0.0, oz=0.0,
                      magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE, fps=FPS,
-                     blow_start=None, blow_duration=None, blow_force=DEFAULT_BLOW_FORCE_MN) -> None:
+                     blow_start=None, blow_duration=None, blow_force=DEFAULT_BLOW_FORCE_MN,
+                     spin_resets=()) -> None:
     def row(label: str, value: object) -> None:
         print(f"  {label:<28} {value}")
 
@@ -114,6 +115,8 @@ def print_run_config(config: dict, *, dt: float | None, steps_per_frame: int,
     section("Trajectory")
     row("s_r / s_omega", f"{sr:g} / {somega:g}")
     row("Initial v0 / S0 / phi0", f"{v0:.12g} / {s0:.12g} / {phi0:.12g}")
+    row("Initial omega_z (2D)", f"{oz:.12g}")
+    row("Timed omega_z resets (2D)", list(spin_resets) or "disabled")
     row("Held magnetization turns", magnetize_turns)
     row("Disk phase at release", disk_phase)
     row("Magnetic mechanical power", show_work)
@@ -180,7 +183,9 @@ def load_hysteresis(*, kahan=False):
     return module
 
 
-def make_initial_state(module, *, alpha=None, v0=0.0, s0=0.0, phi0=0.0):
+def make_initial_state(module, *, alpha=None, v0=0.0, s0=0.0, phi0=0.0, oz=0.0):
+    if not np.isfinite(oz):
+        raise ValueError("initial omega_z must be finite")
     state = np.zeros(module.state_size, dtype=module.real_dtype)
     radius = module.magnet_number / 2
     radial_direction = np.array([np.cos(phi0), np.sin(phi0)])
@@ -190,11 +195,12 @@ def make_initial_state(module, *, alpha=None, v0=0.0, s0=0.0, phi0=0.0):
         state[9:11] = radius * (s0 - v0) / alpha * radial_direction
     elif v0 != 0 or s0 != 0:
         raise ValueError("alpha is required for a nonzero initial velocity or slip")
+    state[11] = oz
     state[5] = 1  # identity attitude quaternion, (w, x, y, z)
     return state
 
 
-def prepare_initial_state(module, params, dt, *, v0=0.0, s0=0.0, phi0=0.0,
+def prepare_initial_state(module, params, dt, *, v0=0.0, s0=0.0, phi0=0.0, oz=0.0,
                           magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE):
     """Prepare magnetic memory at the requested position, then set release velocities."""
     if not np.isfinite(dt) or dt <= 0:
@@ -205,7 +211,7 @@ def prepare_initial_state(module, params, dt, *, v0=0.0, s0=0.0, phi0=0.0,
     if not np.isfinite(step_count) or step_count > np.iinfo(np.int32).max:
         raise ValueError("held magnetization exceeds the C++ step limit")
     steps = int(round(step_count))
-    state = make_initial_state(module, alpha=params.alpha, v0=v0, s0=s0, phi0=phi0)
+    state = make_initial_state(module, alpha=params.alpha, v0=v0, s0=s0, phi0=phi0, oz=oz)
     speed, spin = state[3:5].copy(), state[9:12].copy()
     state[0] = disk_phase - steps * dt
     if steps:
@@ -247,11 +253,21 @@ def validate_blow(blow_start, blow_duration, blow_force):
             raise ValueError("blowing end time must be finite")
 
 
+def parse_spin_reset(value):
+    try:
+        time, oz = map(float, value.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected TIME,OMEGA_Z, for example 2000,-5") from None
+    if not np.isfinite(time) or time < 0 or not np.isfinite(oz):
+        raise argparse.ArgumentTypeError("reset time must be finite and non-negative; omega_z must be finite")
+    return time, oz
+
+
 class BlowSchedule:
     """Split solver chunks at 2D-time force switches, including --pre."""
 
     def __init__(self, module, params, dt, *, sr, somega, start=None, duration=None,
-                 force_mn=DEFAULT_BLOW_FORCE_MN):
+                 force_mn=DEFAULT_BLOW_FORCE_MN, spin_resets=()):
         validate_blow(start, duration, force_mn)
         self.module, self.params, self.dt = module, params, dt
         units = module.physical_units(sr=sr, somega=somega)
@@ -261,6 +277,10 @@ class BlowSchedule:
         self.acceleration = module.push_acceleration(force_mn, sr, somega)
         self.elapsed = 0.0
         self.steps = 0
+        self.spin_resets = sorted((parse_spin_reset(f"{t},{oz}") for t, oz in spin_resets),
+                                  key=lambda event: event[0])
+        self.next_reset = 0
+        self.reset_samples = []
         if not hasattr(params, "reverse_push_acceleration"):
             raise RuntimeError("Rebuild the CPU extension to expose reverse_push_acceleration")
         params.reverse_push_acceleration = 0.0
@@ -268,10 +288,23 @@ class BlowSchedule:
     def active(self, time):
         return self.start is not None and self.start <= time < self.end
 
+    def apply_resets(self, state):
+        while self.next_reset < len(self.spin_resets):
+            reset_time, oz = self.spin_resets[self.next_reset]
+            if reset_time > self.elapsed:
+                break
+            state = state.copy()
+            self.reset_samples.append((reset_time, float(state[11]), oz))
+            state[11] = oz
+            self.next_reset += 1
+        return state
+
     def evolve(self, state, steps, sliding=None, sliding_dir=None):
+        state = self.apply_resets(state)
         target = self.elapsed + steps * self.dt
-        boundaries = [value for value in (self.start, self.end)
-                      if value is not None and self.elapsed < value < target]
+        boundaries = sorted({value for value in (self.start, self.end,
+                            *(t for t, _ in self.spin_resets[self.next_reset:]))
+                            if value is not None and self.elapsed < value < target})
         for stop in [*boundaries, target]:
             self.params.reverse_push_acceleration = self.acceleration if self.active(self.elapsed) else 0.0
             span = stop - self.elapsed
@@ -288,17 +321,18 @@ class BlowSchedule:
                         state, step_dt, step_count, self.params, sliding, sliding_dir, self.steps)
                     self.steps += step_count
             self.elapsed = stop
+            state = self.apply_resets(state)
         self.params.reverse_push_acceleration = self.acceleration if self.active(target) else 0.0
         return state, sliding, sliding_dir
 
 
 def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magnets=True, fast=False, pre=0.0,
             kahan=False, expected_config=None, show_work=False,
-            sr=SR, somega=ANIMATION_SOMEGA, v0=ANIMATION_V0, s0=0.0, phi0=0.0,
+            sr=SR, somega=ANIMATION_SOMEGA, v0=ANIMATION_V0, s0=0.0, phi0=0.0, oz=0.0,
             magnetize_turns=MAGNETIZE_TURNS, disk_phase=DISK_PHASE,
             path_max_points=FAST_MAX_PLOT_POINTS, fps=FPS,
             blow_start=None, blow_duration=None, blow_force=DEFAULT_BLOW_FORCE_MN,
-            sample_callback=None):
+            sample_callback=None, spin_resets=()):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
     from matplotlib.patches import Circle
@@ -320,15 +354,17 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         raise ValueError("pre must be finite and non-negative")
     if path_max_points < 0:
         raise ValueError("path_max_points must be non-negative (0 keeps every point)")
-    if not all(np.isfinite(value) for value in (v0, s0, phi0)):
+    if not all(np.isfinite(value) for value in (v0, s0, phi0, oz)):
         raise ValueError("initial values must be finite")
     params = module.SolverParams(sr=sr, somega=somega)
     blowing = BlowSchedule(module, params, dt, sr=sr, somega=somega,
-                          start=blow_start, duration=blow_duration, force_mn=blow_force)
-    state = prepare_initial_state(module, params, dt, v0=v0, s0=s0, phi0=phi0,
+                          start=blow_start, duration=blow_duration, force_mn=blow_force,
+                          spin_resets=spin_resets)
+    state = prepare_initial_state(module, params, dt, v0=v0, s0=s0, phi0=phi0, oz=oz,
                                   magnetize_turns=magnetize_turns, disk_phase=disk_phase)
     sliding = None
     sliding_dir = None
+    state = blowing.apply_resets(state)
     pre_step_count = pre / dt
     if not np.isfinite(pre_step_count) or pre_step_count > np.iinfo(np.int32).max + 0.5:
         raise ValueError("pre-evolution exceeds the C++ solver's maximum steps per call")
@@ -350,14 +386,15 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         if geometry is not None else "point dipoles")
     base_angles = 2 * np.pi * np.arange(magnet_count) / magnet_count if show_magnets else None
 
-    fig = plt.figure(figsize=(14, 11 if show_work else 9), **({} if fast else {"layout": "constrained"}))
-    grid = fig.add_gridspec(5 if show_work else 4, 2, width_ratios=(1.3, 1.0))
+    fig = plt.figure(figsize=(14, 13 if show_work else 11), **({} if fast else {"layout": "constrained"}))
+    grid = fig.add_gridspec(6 if show_work else 5, 2, width_ratios=(1.3, 1.0))
     scene = fig.add_subplot(grid[:, 0])
     radial_axis = fig.add_subplot(grid[0, 1])
     angular_axis = fig.add_subplot(grid[1, 1], sharex=radial_axis)
     displacement_axis = fig.add_subplot(grid[2, 1], sharex=radial_axis)
     velocity_axis = fig.add_subplot(grid[3, 1], sharex=radial_axis)
-    work_axis = fig.add_subplot(grid[4, 1], sharex=radial_axis) if show_work else None
+    spin_axis = fig.add_subplot(grid[4, 1], sharex=radial_axis)
+    work_axis = fig.add_subplot(grid[5, 1], sharex=radial_axis) if show_work else None
 
     extent = magnet_radius + 1.0
     scene.set(xlim=(-extent, extent), ylim=(-extent, extent), xlabel="x", ylabel="y")
@@ -379,7 +416,7 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     scene.add_patch(ball)
     status = scene.text(0.02, 0.98, "", transform=scene.transAxes, va="top", family="monospace",
                         fontsize=9, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
-    scene.set_title(f"Top view 路 {magnet_count} magnets: diameter 28 mm, thickness 15 mm\nDashed circle: magnet centres, radius 70 mm")
+    scene.set_title(f"Top view | {magnet_count} magnets: diameter 28 mm, thickness 15 mm\nDashed circle: magnet centres, radius 70 mm")
 
     times = [time]
     radial = [float(np.hypot(state[1], state[2]))]
@@ -391,6 +428,8 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     equivalent_x = [0.0]
     speeds = [float(np.hypot(state[3], state[4]))]
     tangential_speeds = [float((state[1] * state[4] - state[2] * state[3]) / radial[0])]
+    spins_z = [float(state[11])]
+    spin_times = [time]
     xs = [float(state[1])]
     ys = [float(state[2])]
     (radial_line,) = radial_axis.plot(times, radial, color="tab:blue")
@@ -398,12 +437,17 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
     (displacement_line,) = displacement_axis.plot(times, equivalent_x, color="tab:green")
     (speed_line,) = velocity_axis.plot(times, speeds, color="tab:orange", label="COM speed |v|")
     (tangential_line,) = velocity_axis.plot(times, tangential_speeds, color="tab:red", label="signed tangential v")
+    (spin_line,) = spin_axis.plot(times, spins_z, color="tab:brown")
     radial_axis.set_ylabel("r(t)")
-    angular_axis.set_ylabel("蠁(t) [rad]")
-    displacement_axis.set_ylabel("x_eq = mean(r) 螖蠁")
+    angular_axis.set_ylabel(r"$\phi(t)$ [rad]")
+    displacement_axis.set_ylabel(r"$x_{eq} = \mathrm{mean}(r)\,\Delta\phi$")
     velocity_axis.set(xlabel="time (2D units)", ylabel="velocity (2D units)")
     velocity_axis.legend(loc="upper right", fontsize=8)
     velocity_axis.axhline(0, color="0.5", linewidth=0.7)
+    spin_axis.set(xlabel="time (2D units)", ylabel=r"$\omega_z$ (2D units)")
+    spin_axis.axhline(0, color="0.5", linewidth=0.7)
+    for reset_time, _ in blowing.spin_resets:
+        spin_axis.axvline(reset_time, color="0.5", linewidth=0.7, linestyle=":")
     power_values = []
     power_lines = []
     if show_work:
@@ -416,9 +460,9 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         work_axis.axhline(0, color="0.5", linewidth=0.7)
         work_axis.legend(loc="upper right", fontsize=8)
         work_axis.grid(alpha=0.25)
-    for axis in (radial_axis, angular_axis, displacement_axis, velocity_axis):
+    for axis in (radial_axis, angular_axis, displacement_axis, velocity_axis, spin_axis):
         axis.grid(alpha=0.25)
-    fig.suptitle(f"Single 2D trajectory 路 sr={sr:g}, s蠅={somega:g}")
+    fig.suptitle(rf"Single 2D trajectory | sr={sr:g}, $s_\omega$={somega:g}")
 
     def render(*, update_graphs=True, rescale=True):
         if magnets:
@@ -444,10 +488,13 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
                 display_times, display_values = (minmax_downsample(times, values, FAST_MAX_PLOT_POINTS)
                                                  if fast else (times, values))
                 line.set_data(display_times, display_values)
+            # Preserve both sides of each instantaneous reset, even in fast mode.
+            spin_line.set_data(spin_times, spins_z)
         if rescale:
             radial_axis.set_xlim(0, max(1.0, time * 1.05))
             limits = [(radial_axis, radial), (angular_axis, polar),
-                      (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds)]
+                      (displacement_axis, equivalent_x), (velocity_axis, speeds + tangential_speeds),
+                      (spin_axis, spins_z)]
             if show_work:
                 limits.append((work_axis, [value for series in power_values for value in series]))
             for axis, values in limits:
@@ -457,21 +504,24 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
         status.set_text(
             f"t = {time:.3f}  (1D t = {magnet_radius * time:.3f})\n"
             f"r = {radial[-1]:.6f}  mean(r) = {mean_radial[-1]:.6f}\n"
-            f"蠁 = {polar[-1]:.6f}  x_eq = {equivalent_x[-1]:.6f}\n"
+            f"phi = {polar[-1]:.6f}  x_eq = {equivalent_x[-1]:.6f}\n"
             f"v = ({float(state[3]):.6f}, {float(state[4]):.6f})\n"
             f"|v| = {speeds[-1]:.6f}  v_tan = {tangential_speeds[-1]:.6f}\n"
             f"v_tan / {magnet_radius:g} (1D units) = {tangential_speeds[-1] / magnet_radius:.6f}\n"
+            f"omega_z = {float(state[11]):.6f} (2D units)\n"
+            f"omega_z = {float(state[11]) * blowing.omega:.6f} rad/s\n"
             f"{'sliding' if sliding else 'rolling'}"
             f"\nrelease time = {time / blowing.omega:.3f} s"
             f"\nblow = {blow_force if blowing.active(blowing.elapsed) else 0:g} mN"
         )
         artists = (ball, path_line, radial_line, polar_line, displacement_line,
-                   speed_line, tangential_line, *power_lines, status)
+                   speed_line, tangential_line, spin_line, *power_lines, status)
         return (*magnets, *artists)
 
     def update(_frame):
         nonlocal state, sliding, sliding_dir, time, radius_sum
         for _ in range(FAST_BATCH_SIZE if fast else 1):
+            reset_count = len(blowing.reset_samples)
             state, sliding, sliding_dir = blowing.evolve(state, steps_per_frame, sliding, sliding_dir)
             time = blowing.elapsed
             xs.append(float(state[1]))
@@ -484,6 +534,11 @@ def animate(*, dt=None, steps_per_frame=STEPS_PER_FRAME, frames=None, show_magne
             mean_radial.append(radius_sum / len(radial))
             equivalent_x.append(mean_radial[-1] * (polar[-1] - initial_angle))
             speeds.append(float(np.hypot(state[3], state[4])))
+            for reset_time, before, after in blowing.reset_samples[reset_count:]:
+                spin_times.extend((reset_time, reset_time))
+                spins_z.extend((before, after))
+            spin_times.append(time)
+            spins_z.append(float(state[11]))
             tangential_speeds.append(
                 float((state[1] * state[4] - state[2] * state[3]) / radial[-1])
                 if radial[-1] > 0.0 else float("nan")
@@ -527,6 +582,11 @@ def main():
     parser.add_argument("--v0", type=float, default=ANIMATION_V0, help="initial signed tangential speed in 1D units")
     parser.add_argument("--s0", type=float, default=0.0, help="initial signed tangential slip in 1D units; omega0=(s0-v0)/alpha")
     parser.add_argument("--phi0", type=float, default=0.0, help="initial orbital angle in radians")
+    parser.add_argument("-oz", type=float, default=0.0,
+                        help="initial omega_z in 2D units, matching the spin graph (default: 0)")
+    parser.add_argument("--t,oz", dest="spin_resets", type=parse_spin_reset, action="append", default=[],
+                        metavar="TIME,OMEGA_Z",
+                        help="instantly reset omega_z at this release-relative 2D time, e.g. 2000,-5; repeatable")
     parser.add_argument("--disk-phase", type=float, default=DISK_PHASE, help="magnet-disk angle at release, in radians")
     parser.add_argument("--magnetize-turns", type=float, default=MAGNETIZE_TURNS,
                         help="hold the ball fixed for this many magnet-disk turns before release (default: 2)")
@@ -545,7 +605,7 @@ def main():
         parser.error(str(error))
     if args.path_max_points < 0:
         parser.error("--path-max-points must be non-negative")
-    if not all(np.isfinite(value) for value in (args.sr, args.somega, args.v0, args.s0, args.phi0)):
+    if not all(np.isfinite(value) for value in (args.sr, args.somega, args.v0, args.s0, args.phi0, args.oz)):
         parser.error("parameters and initial values must be finite")
     if args.sr <= 0 or args.somega <= 0:
         parser.error("--sr and --somega must be positive")
@@ -565,9 +625,10 @@ def main():
     print_run_config(config, dt=args.dt, steps_per_frame=args.steps_per_frame,
                      frames=args.frames, pre=args.pre, fast=args.fast,
                      show_magnets=not args.hide_magnets, show_work=args.show_work,
-                     sr=args.sr, somega=args.somega, v0=args.v0, s0=args.s0, phi0=args.phi0,
+                     sr=args.sr, somega=args.somega, v0=args.v0, s0=args.s0, phi0=args.phi0, oz=args.oz,
                      magnetize_turns=args.magnetize_turns, disk_phase=args.disk_phase, fps=args.fps,
-                     blow_start=args.blow_start, blow_duration=args.blow_duration, blow_force=args.blow_force)
+                     blow_start=args.blow_start, blow_duration=args.blow_duration, blow_force=args.blow_force,
+                     spin_resets=args.spin_resets)
     if args.dry_run:
         return
     import matplotlib.pyplot as plt
@@ -581,10 +642,11 @@ def main():
         kahan=args.kahan,
         expected_config=config,
         show_work=args.show_work, sr=args.sr, somega=args.somega,
-        v0=args.v0, s0=args.s0, phi0=args.phi0,
+        v0=args.v0, s0=args.s0, phi0=args.phi0, oz=args.oz,
         magnetize_turns=args.magnetize_turns, disk_phase=args.disk_phase,
         path_max_points=args.path_max_points, fps=args.fps,
         blow_start=args.blow_start, blow_duration=args.blow_duration, blow_force=args.blow_force,
+        spin_resets=args.spin_resets,
     )
     plt.show()
 
