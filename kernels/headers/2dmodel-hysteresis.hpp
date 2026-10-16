@@ -174,6 +174,13 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
         const real_t inv_rho = REAL_LITERAL(1.0) / rho;
         const real_t inv_rho2 = inv_rho * inv_rho;
 
+        // Odd Fourier harmonics theta, 3 theta, ... share a 2 theta rotation.
+        const real_t theta = static_cast<real_t>(R_magnet) * (phi - down_disk_angle);
+        real_t mode_cos = real_cos(theta);
+        real_t mode_sin = real_sin(theta);
+        const real_t step_cos = mode_cos * mode_cos - mode_sin * mode_sin;
+        const real_t step_sin = REAL_LITERAL(2.0) * mode_sin * mode_cos;
+
         const LUTNode *left_node = nullptr;
         const LUTNode *right_node = nullptr;
         for (int i = 0; i < kFieldFourierModeCount; i++) {
@@ -213,13 +220,6 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
             const int harmonic_int = (2 * i + 1) * magnet_number / 2;
             const real_t harmonic = static_cast<real_t>(harmonic_int);
 
-            // The Fourier phase follows the magnet pattern, whereas the
-            // cylindrical basis is fixed by the laboratory position.  Keep
-            // these two angles separate when the lower disk is rotated.
-            const real_t mode_angle = harmonic * (phi - down_disk_angle);
-            const real_t mode_cos = real_cos(mode_angle);
-            const real_t mode_sin = real_sin(mode_angle);
-
             // Phi_i = A_i(rho, z) cos(m_i (phi - disk_angle)); h = -grad Phi.
             h_rho -= A.d1 * mode_cos;
             h_phi += harmonic * A.value * inv_rho * mode_sin;
@@ -233,6 +233,12 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
             gradient_rho_z -= Z.d1 * mode_cos;
             gradient_phi_phi += (harmonic * harmonic * A.value * inv_rho2 - A.d1 * inv_rho) * mode_cos;
             gradient_phi_z += harmonic * Z.value * inv_rho * mode_sin;
+            if (i + 1 < kFieldFourierModeCount) {
+                const real_t next_cos = mode_cos * step_cos - mode_sin * step_sin;
+                const real_t next_sin = mode_sin * step_cos + mode_cos * step_sin;
+                mode_cos = next_cos;
+                mode_sin = next_sin;
+            }
         }
         if constexpr (kLUTCacheMode == LUTCacheMode::kCacheCoeffs || kLUTCacheMode == LUTCacheMode::kCacheNode) {
             cache->interval_eff = left_node_index;
@@ -241,8 +247,8 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
         // Rotate the vector and rank-2 tensor from the local cylindrical
         // basis into laboratory Cartesian coordinates.  This rotation uses
         // phi, not the relative Fourier phase phi - down_disk_angle.
-        const real_t cos_phi = real_cos(phi);
-        const real_t sin_phi = real_sin(phi);
+        const real_t cos_phi = pos.x * inv_rho;
+        const real_t sin_phi = pos.y * inv_rho;
         const real_t cos_phi2 = cos_phi * cos_phi;
         const real_t sin_phi2 = sin_phi * sin_phi;
         const real_t sin_cos_phi = sin_phi * cos_phi;
