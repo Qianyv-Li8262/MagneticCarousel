@@ -11,7 +11,14 @@
 #include "radial_overshoot_diagnostics.hpp"
 #endif
 int main(int argc,char** argv) {
+#ifdef IYPT16_FIT_ROLLING
+    if(argc!=21) return 2;
+    kRollingMuLow=std::stod(argv[18]);
+    kRollingMuHigh=std::stod(argv[19]);
+    kRollingTransitionOmega=std::stod(argv[20]);
+#else
     if(argc!=18) return 2;
+#endif
     Mu_r=std::stod(argv[15]);
     std::ifstream eddy(argv[17],std::ios::binary);
     eddy.read(reinterpret_cast<char*>(eddy_coefficients::aj),12*sizeof(double));

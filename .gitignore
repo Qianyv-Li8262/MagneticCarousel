@@ -27,6 +27,7 @@
 # Local scripts and analysis outputs.
 /scripts/
 /results/
+/experiments/
 /slow-somega-scan/
 
 # Frozen copies and their data are local archives, not active source.

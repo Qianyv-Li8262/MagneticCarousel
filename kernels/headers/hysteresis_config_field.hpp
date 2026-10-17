@@ -9,10 +9,9 @@
 #define IYPT16_REAL_LITERAL_IMPL(value) REAL_LITERAL(value)
 #define IYPT16_REAL_LITERAL(value) IYPT16_REAL_LITERAL_IMPL(value)
 
-// Active comparison: restore the earlier ball-centre to magnet-centre height, 39.62 mm.
-// This corresponds to upper plate TOP to lower plate BOTTOM spacing 42.62 mm.
-// Video spacing 35 mm instead gives h=32 mm (32 / 17.5).
-#define IYPT16_FIELD_HEIGHT 2.264
+// Active 56c6 reduced-overshoot fit: upper plate TOP to lower plate BOTTOM = 35 mm.
+// Ball-centre to magnet-centre height h=32 mm; code height=32/17.5.
+#define IYPT16_FIELD_HEIGHT 1.8285714285714285
 #define IYPT16_LUT_LOWER_BOUND_RATIO 0.5
 #define IYPT16_LUT_UPPER_BOUND_RATIO 1.5
 // Manually configured model parameters.

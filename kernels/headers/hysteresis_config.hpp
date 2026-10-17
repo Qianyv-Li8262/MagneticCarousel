@@ -3,13 +3,13 @@
 
 #pragma once
 #include "hysteresis_types.hpp"
-// Fixed Q235 linearized Fig. 10 baseline, selected by the user on 2026-10-06.
-// See research/q235/FIXED_PARAMETERS.md; M_ref remains 1.1e6 A/m.
-// Baseline values retained here; user reauthorized isolated material scans on 2026-10-13.
-CONFIG_CONST real_t Mu_r = REAL_LITERAL(605.8974337495617);
-CONFIG_CONST real_t Alpha_JA = REAL_LITERAL(0.0021323083849413885);
-CONFIG_CONST real_t C_JA = REAL_LITERAL(0.22415154978863677);
-CONFIG_CONST real_t K = REAL_LITERAL(0.005375927782155882);
+// Active 56c6 reduced-overshoot fit, selected by the user on 2026-10-17.
+// Conditional fit values, not measured material properties; M_ref stays 1.1e6 A/m.
+// Original Q235 baseline: research/q235/FIXED_PARAMETERS.md.
+CONFIG_CONST real_t Mu_r = REAL_LITERAL(144.7026012439737);
+CONFIG_CONST real_t Alpha_JA = REAL_LITERAL(0.002081136707547583);
+CONFIG_CONST real_t C_JA = REAL_LITERAL(0.4928880388429773);
+CONFIG_CONST real_t K = REAL_LITERAL(0.0016276793884410028);
 
 CONFIG_CONST real_t Xi_JA= (REAL_LITERAL(1.0) - (REAL_LITERAL(1.0) / (REAL_LITERAL(1.0) + Alpha_JA * (Mu_r - REAL_LITERAL(1.0)))));
 
@@ -40,12 +40,13 @@ CONFIG_CONST real_t Mu = REAL_LITERAL(0.2);
 // Rates use disk-angular time; lambda=c/(I*Omega_disk). No added normal-spin drag.
 // Pre-measurement defaults (historical model, not measured):
 // low=0.00001; high=0.0001; transition=1.5; epsilon=0.002; lambda=0.004.
-// Equal measured low/high remove the Gaussian speed dependence; lambda=0
-// adds no linear rolling loss. The near-zero regularization is retained.
+// Active 56c6 fit: vc=0.22218599283313184 m/s at R=6mm and 200rpm.
+// omega_c_code=vc/(R*Omega_disk); the horizontal spin determines rolling loss.
+// These fitted values differ from the measured baseline preserved above.
 CONFIG_CONST bool kEnableRollingResistance = true;
-CONFIG_CONST real_t kRollingMuLow = REAL_LITERAL(0.00490);
-CONFIG_CONST real_t kRollingMuHigh = REAL_LITERAL(0.00490);
-CONFIG_CONST real_t kRollingTransitionOmega = REAL_LITERAL(1.5);
+CONFIG_CONST real_t kRollingMuLow = REAL_LITERAL(0.007556264150617018);
+CONFIG_CONST real_t kRollingMuHigh = REAL_LITERAL(0.005764652328562314);
+CONFIG_CONST real_t kRollingTransitionOmega = REAL_LITERAL(1.768099952258668);
 CONFIG_CONST real_t kRollingOmegaEpsilon = REAL_LITERAL(0.002);
 CONFIG_CONST real_t kRollingLambda = REAL_LITERAL(0.0);
 

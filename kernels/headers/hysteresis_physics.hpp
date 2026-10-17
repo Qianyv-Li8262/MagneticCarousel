@@ -19,8 +19,8 @@ inline constexpr double Cd = 0.47;                       // Quadratic drag coeff
 inline constexpr double g = 9.81;                        // Gravity [m/s^2].
 inline constexpr double M_ref = 1.1e6;                   // Magnetization unit [A/m], not fitted Ms.
 inline constexpr double mu0 = 4.0 * pi * 1.0e-7;         // Model permeability convention [H/m].
-// Estimated resistivity 0.15 micro-ohm m; not a measured ball property.
-inline constexpr double sigma = 9.0e6;         // Electrical conductivity [S/m].
+// Active 56c6 reduced-overshoot fit; not a measured ball property.
+inline constexpr double sigma = 9331270.9871829;         // Electrical conductivity [S/m].
 
 static_assert(Rref > 0.0 && L > 0.0 && omega_ref > 0.0 && rho_b > 0.0);
 static_assert(rho_air >= 0.0 && Cd >= 0.0 && g > 0.0 && M_ref > 0.0 && mu0 > 0.0);
