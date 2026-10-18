@@ -47,6 +47,7 @@
 *.gif
 *.svg
 *.pdf
+*.cmd
 *.mp4
 *.log
 *.txt

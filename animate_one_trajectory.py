@@ -36,8 +36,8 @@ FAST_RESCALE_EVERY = 20
 FAST_MAX_PLOT_POINTS = 2000
 
 # Multipliers relative to the 12 mm ball and 100 rpm apparatus reference.
-SR = 1.0
-SOMEGA = 0.5
+SR = 1.66666666666
+SOMEGA = 2.0
 ANIMATION_SOMEGA = 2.0
 ANIMATION_V0 = -0.00
 MAGNETIZE_TURNS = 0

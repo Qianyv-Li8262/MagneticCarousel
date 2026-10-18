@@ -463,7 +463,7 @@ DEVICE INLINE Vec3 add_gaussian_rolling_resistance(const SolverParams &params, c
     const real_t normal = params.gamma_g - force.z;
     const real_t regularized_w = real_sqrt(w2 + kRollingOmegaEpsilon * kRollingOmegaEpsilon);
     const real_t damping = mu * normal / (Eta * params.alpha * regularized_w) + kRollingLambda;
-    return magnetic - make_Vec3(damping * omega.x, damping * omega.y,0.0);
+    return magnetic - make_Vec3(damping * omega.x, damping * omega.y,REAL_LITERAL(0.00)*omega.z);
 #endif
 }
 

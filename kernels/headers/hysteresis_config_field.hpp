@@ -9,9 +9,10 @@
 #define IYPT16_REAL_LITERAL_IMPL(value) REAL_LITERAL(value)
 #define IYPT16_REAL_LITERAL(value) IYPT16_REAL_LITERAL_IMPL(value)
 
-// Active 56c6 reduced-overshoot fit: upper plate TOP to lower plate BOTTOM = 35 mm.
-// Ball-centre to magnet-centre height h=32 mm; code height=32/17.5.
-#define IYPT16_FIELD_HEIGHT 1.8285714285714285
+// 2026-10-18 measured upper plate TOP to lower plate TOP = 32.5 mm.
+// 20 mm ball: center height = 32.5 + 10 - (15/2 - 1.5) = 36.5 mm.
+// Length unit is 17.5 mm; the runtime ball-radius multiplier does not change this height.
+#define IYPT16_FIELD_HEIGHT 2.085714285714286
 #define IYPT16_LUT_LOWER_BOUND_RATIO 0.5
 #define IYPT16_LUT_UPPER_BOUND_RATIO 1.5
 // Manually configured model parameters.
