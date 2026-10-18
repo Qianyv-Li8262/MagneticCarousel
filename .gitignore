@@ -4,7 +4,7 @@
 /runs/
 /scratch/
 /tmp/
-**/__pycache__/
+/__pycache__/
 *.pyc
 *.pyd
 *.ps1
