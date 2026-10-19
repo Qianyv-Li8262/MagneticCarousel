@@ -150,8 +150,9 @@ void write_lut(const std::string &path, const std::vector<SplineNode<mp_real>> &
         throw;
     }
 }
-template <typename Factory>
-int generate_lut(int argc, char **argv, Factory factory)
+template <typename Factory, typename Prepare>
+int generate_lut(int argc, char **argv, Factory factory, Prepare prepare,
+                 const char *sample_stage = "sample")
 {
     try {
         const auto run_start = clock_type::now();
@@ -185,6 +186,10 @@ int generate_lut(int argc, char **argv, Factory factory)
         const auto setup_end = clock_type::now();
         double prepare_total = 0, sample_total = 0, solve_a_total = 0, solve_z_total = 0, pack_total = 0;
         std::cout << std::fixed << std::setprecision(4);
+        // Model-wide work must finish before timing individual Fourier modes.
+        prepare(upper);
+        const auto shared_end = clock_type::now();
+        const double shared = elapsed_seconds(setup_end, shared_end);
         for (int mode = 0; mode < kFieldFourierModeCount; ++mode) {
             const auto mode_start = clock_type::now();
             const int harmonic = (2 * mode + 1) * magnet_number / 2;
@@ -231,7 +236,7 @@ int generate_lut(int argc, char **argv, Factory factory)
             solve_z_total += solve_z;
             pack_total += pack;
             std::cout << "mode " << mode << " (harmonic " << harmonic << "): prepare=" << prepare
-                      << " s, sample=" << sample << " s, solve_A=" << solve_a
+                      << " s, " << sample_stage << "=" << sample << " s, solve_A=" << solve_a
                       << " s, solve_Z=" << solve_z << " s, pack=" << pack << " s\n" << std::flush;
         }
 
@@ -240,13 +245,20 @@ int generate_lut(int argc, char **argv, Factory factory)
         const auto write_fp32_end = clock_type::now();
         write_lut<double>(argv[2], nodes, kUseBigEndian);
         const auto write_fp64_end = clock_type::now();
-        std::cout << "stage totals: setup=" << elapsed_seconds(run_start, setup_end)
-                  << " s, prepare=" << prepare_total << " s, sample=" << sample_total
+        const double setup = elapsed_seconds(run_start, setup_end);
+        const double write_fp32 = elapsed_seconds(write_start, write_fp32_end);
+        const double write_fp64 = elapsed_seconds(write_fp32_end, write_fp64_end);
+        const double wall = elapsed_seconds(run_start, write_fp64_end);
+        const double accounted = setup + shared + prepare_total + sample_total + solve_a_total
+                                 + solve_z_total + pack_total + write_fp32 + write_fp64;
+        std::cout << "stage totals: setup=" << setup << " s, shared=" << shared
+                  << " s, mode_prepare=" << prepare_total << " s, " << sample_stage << "=" << sample_total
                   << " s, solve_A=" << solve_a_total << " s, solve_Z=" << solve_z_total
                   << " s, pack=" << pack_total
-                  << " s, write_fp32=" << elapsed_seconds(write_start, write_fp32_end)
-                  << " s, write_fp64=" << elapsed_seconds(write_fp32_end, write_fp64_end)
-                  << " s, wall=" << elapsed_seconds(run_start, write_fp64_end) << " s\n";
+                  << " s, write_fp32=" << write_fp32
+                  << " s, write_fp64=" << write_fp64
+                  << " s, other=" << std::max(0.0, wall - accounted)
+                  << " s, wall=" << wall << " s\n";
         std::cout << "generated " << nodes.size() << " AoS nodes per file (A, M_A, Z, M_Z)\n";
         return 0;
     } catch (const std::exception &error) {

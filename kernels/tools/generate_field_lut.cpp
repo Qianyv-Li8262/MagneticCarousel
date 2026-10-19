@@ -96,5 +96,5 @@ int main(int argc, char **argv)
                                  const field_lut::mp_real &R, int magnets) {
             return evaluate_mode(harmonic, rho, z, R, magnets, factor);
         };
-    });
+    }, [](const field_lut::mp_real &) {});
 }

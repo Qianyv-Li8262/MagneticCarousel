@@ -104,11 +104,24 @@ if(IYPT16_ENABLE_CUDA)
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
         set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures for GPU scan cubins")
     endif()
+    if(WIN32)
+        # Set this before compiler detection so CMake's CUDA try-compiles also
+        # read the toolkit's UTF-8 headers independently of the Windows code page.
+        if(NOT CMAKE_CUDA_FLAGS MATCHES "(^| )-Xcompiler[= ]/utf-8( |$)")
+            string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler=/utf-8")
+        endif()
+    endif()
     enable_language(CUDA)
     if(WIN32)
-        # nvcc invokes MSVC for host code; read CUDA and project UTF-8
-        # headers as UTF-8 instead of the active Windows code page.
-        add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>")
+        # A plain `cmake --build build/release` does not inherit preset env.
+        # Keep the configured host toolchain available to every CUDA target.
+        set(cuda_environment "${CMAKE_BINARY_DIR}/cuda-toolchain-environment.json")
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cuda_compile.py"
+                --capture "${cuda_environment}"
+            COMMAND_ERROR_IS_FATAL ANY)
+        set(CMAKE_CUDA_COMPILER_LAUNCHER
+            "${Python_EXECUTABLE};${CMAKE_CURRENT_SOURCE_DIR}/cmake/cuda_compile.py;--run;${cuda_environment}")
     endif()
 endif()
 if(NOT IYPT16_LUT_CACHE_MODE MATCHES "^[012]$")

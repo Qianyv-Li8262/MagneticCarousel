@@ -142,8 +142,18 @@ int main(int argc, char **argv)
     return field_lut::generate_lut(argc, argv, [&samples](int harmonic, const field_lut::mp_real &upper) {
         const mp_real lower = mp_real(IYPT16_STRINGIZE(IYPT16_LUT_LOWER_BOUND_RATIO))*magnet_number/2;
         const mp_real spacing = (mp_real(upper)-lower)/(kSplineNodes-1);
-        if (!samples) {
+        const int mode = (harmonic-magnet_number/2)/magnet_number;
+        return [samples, lower, spacing, mode](const field_lut::mp_real &rho,
+                    const field_lut::mp_real &, const field_lut::mp_real &, int) {
+            const int node = mp_real(floor((mp_real(rho)-lower)/spacing+mp_real("0.5"))).convert_to<int>();
+            return samples->at(node)[mode];
+        };
+    }, [&samples](const field_lut::mp_real &upper) {
+            const auto start = field_lut::clock_type::now();
+            const mp_real lower = mp_real(IYPT16_STRINGIZE(IYPT16_LUT_LOWER_BOUND_RATIO))*magnet_number/2;
+            const mp_real spacing = (mp_real(upper)-lower)/(kSplineNodes-1);
             auto quadrature = checked_quadrature(mp_real(upper));
+            const auto quadrature_end = field_lut::clock_type::now();
             samples = std::make_shared<Samples>(kSplineNodes);
             std::exception_ptr first_error;
 #pragma omp parallel for schedule(dynamic, 1)
@@ -156,12 +166,10 @@ int main(int argc, char **argv)
                 }
             }
             if (first_error) std::rethrow_exception(first_error);
-        }
-        const int mode = (harmonic-magnet_number/2)/magnet_number;
-        return [samples, lower, spacing, mode](const field_lut::mp_real &rho,
-                    const field_lut::mp_real &, const field_lut::mp_real &, int) {
-            const int node = mp_real(floor((mp_real(rho)-lower)/spacing+mp_real("0.5"))).convert_to<int>();
-            return samples->at(node)[mode];
-        };
-    });
+            const auto sample_end = field_lut::clock_type::now();
+            std::cout << "shared (all harmonics): quadrature_and_validation="
+                      << field_lut::elapsed_seconds(start, quadrature_end)
+                      << " s, sample_all_modes=" << field_lut::elapsed_seconds(quadrature_end, sample_end)
+                      << " s\n" << std::flush;
+    }, "gather_cached");
 }
