@@ -219,7 +219,7 @@ DEVICE NOINLINE FieldResult eval_mag_field(const Vec2 &pos, const real_t down_di
             nabla_h[4] += overall * dk.y * (rhoksq - REAL_LITERAL(4.0) * height * height);
             s *= -1;
         }
-        TracelessSymTensor Grad;
+        [[maybe_unused]] TracelessSymTensor Grad;
         h = h * Beta;
         for (int i = 0; i < 5; i++) {
             nabla_h[i] *= Beta;

@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
+# The current vcpkg dependencies are header-only. Avoid its noisy post-link
+# app-local deployment for every tool and Python extension.
+set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Copy vcpkg DLLs beside build outputs" FORCE)
 project(iypt16_hysteresis_2d LANGUAGES CXX)
 
 # CPU State arithmetic and software exponentials use AVX2; CUDA uses scalar arrays.
@@ -102,6 +105,11 @@ if(IYPT16_ENABLE_CUDA)
         set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures for GPU scan cubins")
     endif()
     enable_language(CUDA)
+    if(WIN32)
+        # nvcc invokes MSVC for host code; read CUDA and project UTF-8
+        # headers as UTF-8 instead of the active Windows code page.
+        add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>")
+    endif()
 endif()
 if(NOT IYPT16_LUT_CACHE_MODE MATCHES "^[012]$")
     message(FATAL_ERROR "IYPT16_LUT_CACHE_MODE must be 0, 1, or 2")
